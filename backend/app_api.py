@@ -17,7 +17,7 @@ from whisper_timestamped import load_model, transcribe
 import paho.mqtt.client as mqtt
 
 # ===== CONFIGURACIÓN MQTT =====
-MQTT_SERVER = "192.168.0.12"          # IP del servidor actual (Ubuntu)
+MQTT_SERVER = "127.0.0.1"          # IP del servidor actual (Ubuntu)
 MQTT_PORT = 1883
 MQTT_TOPIC_LED = "casa/esp32/led"     # Topic para LED simple
 MQTT_TOPIC_RGB = "casa/esp32/rgb"     # Topic para RGB (emociones)
