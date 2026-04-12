@@ -1,149 +1,208 @@
-# Asistente de Voz IoT con Qwen2
+# proy_ia_security
 
-Sistema de asistente de voz inteligente que captura audio desde un navegador móvil, transcribe la voz con Whisper, analiza la intención con el modelo de IA **Qwen2 7B**, y ejecuta acciones físicas en un ESP32 (LED y LED RGB) via MQTT.
+Sistema de asistente de voz IoT para laboratorio local. El flujo actual captura audio desde un navegador Android, lo envía a un backend FastAPI que corre en WSL, transcribe con Whisper, analiza intención y estado de ánimo con Qwen2 vía Ollama, y publica comandos MQTT que un ESP32 consume para controlar un LED simple y un LED RGB.
 
----
+Este README documenta el estado real probado del proyecto para que sea fácil retomarlo sin reconstruir la topología desde cero.
 
-## Arquitectura
+## Estado actual validado
 
-```
-Usuario (Android/Browser)
-        │  voz grabada
-        ▼
-  [Frontend - index.html]
-        │  POST /voice-intent (multipart/form-data)
-        ▼
-  [Backend - FastAPI app_api.py]
-        ├── Whisper (tiny)  →  transcribe audio a texto
-        ├── Qwen2 7B Instruct (Ollama)  →  analiza intención y ánimo
-        └── paho-mqtt  →  publica comandos al broker MQTT
-                                │
-                                ▼
-                        [ESP32 - Hardware IoT]
-                         ├── LED simple   (casa/esp32/led)
-                         └── LED RGB      (casa/esp32/rgb)
-```
+- Frontend móvil apuntando a `http://192.168.0.2:8000`
+- Backend FastAPI ejecutándose en WSL
+- Ollama ejecutándose en WSL con `qwen2:7b-instruct-q4_0`
+- Mosquitto ejecutándose en WSL
+- ESP32 conectado al broker MQTT a través de Windows `portproxy`
+- Topics confirmados:
+  - `casa/esp32/led`
+  - `casa/esp32/rgb`
 
----
+## Arquitectura real del laboratorio
 
-## Requisitos Previos
+```text
+Android Browser
+   |
+   | HTTP -> 192.168.0.2:8000
+   v
+Windows host
+   |
+   | portproxy -> WSL:<IP-interna-actual>:8000
+   v
+WSL
+   |
+   +-- FastAPI (backend/app_api.py)
+   |     |
+   |     +-- Whisper tiny
+   |     +-- Ollama + qwen2:7b-instruct-q4_0
+   |     `-- paho-mqtt
+   |
+   `-- Mosquitto -> 127.0.0.1:1883 para backend
 
-### Software en el servidor (Ubuntu)
-
-| Requisito | Instalación |
-|-----------|-------------|
-| Python 3.12+ | `sudo apt install python3.12` |
-| Ollama | [ollama.com/download](https://ollama.com/download) |
-| Modelo Qwen2 | `ollama pull qwen2:7b-instruct-q4_0` |
-| Broker MQTT (Mosquitto) | `sudo apt install mosquitto mosquitto-clients` |
-
-### Hardware requerido
-- ESP32 conectado al mismo broker MQTT
-- LED en pin GPIO del ESP32 suscrito al topic `casa/esp32/led`
-- LED RGB suscrito al topic `casa/esp32/rgb`
-
----
-
-## Instalación
-
-```bash
-# 1. Clonar el repositorio
-git clone <url-del-repositorio>
-cd proy_ia_security
-
-# 2. Crear entorno virtual
-python3 -m venv venv
-source venv/bin/activate
-
-# 3. Instalar dependencias
-pip install fastapi uvicorn openai-whisper whisper-timestamped paho-mqtt python-multipart
+ESP32
+   |
+   | MQTT -> 192.168.0.2:1883
+   v
+Windows host
+   |
+   | portproxy -> WSL:<IP-interna-actual>:1883
+   v
+Mosquitto en WSL
 ```
 
----
+## Topología de red actual
 
-## Configuración
+### Roles por equipo
 
-Antes de ejecutar, ajusta las siguientes variables en `backend/app_api.py`:
+- `Windows` expone la IP LAN `192.168.0.2`
+- `WSL` corre el backend, Ollama y Mosquitto
+- `Android` consume la API por HTTP usando la IP de Windows
+- `ESP32` consume MQTT usando la IP de Windows
 
-```python
-# IP del broker MQTT (tu servidor Ubuntu)
-MQTT_SERVER = "192.168.0.12"
-MQTT_PORT   = 1883
+### Port forwarding usado
+
+En Windows se está usando `netsh interface portproxy` para reenviar tráfico hacia WSL. El patrón actual es:
+
+```text
+192.168.0.2:8000 -> WSL:<IP-actual>:8000
+192.168.0.2:1883 -> WSL:<IP-actual>:1883
 ```
 
-Y en `frontend/index.html`:
+En una prueba previa también existió una regla para `80`, pero el flujo actual del proyecto usa `8000` para HTTP y `1883` para MQTT.
+
+### Importante sobre la IP de WSL
+
+La IP interna de WSL puede cambiar después de reiniciar WSL o Windows. Si eso ocurre, hay que:
+
+1. Obtener la IP actual de WSL.
+2. Actualizar `portproxy` en Windows para `8000` y `1883`.
+3. Verificar que el firewall de Windows permita ambos puertos.
+
+## Componentes del proyecto
+
+### Frontend
+
+Archivo: [frontend/index.html](/home/abraham/proy_ia_security/frontend/index.html:1)
+
+- HTML + JavaScript vanilla
+- Diseñado para abrir la grabadora nativa del navegador Android con `accept="audio/*"` y `capture`
+- Usa:
+  - `GET /ping` para validar conectividad
+  - `POST /voice-intent` para enviar el audio
+
+Configuración actual:
 
 ```javascript
-// IP del servidor donde corre el backend
-const HOST = "http://172.20.119.33";
+const HOST = "http://192.168.0.2:8000";
 ```
 
-> Reemplaza las IPs con las de tu red local.
+### Backend
 
-### Modelo Whisper
+Archivo: [backend/app_api.py](/home/abraham/proy_ia_security/backend/app_api.py:1)
 
-El modelo por defecto es `"tiny"` (más rápido, menos preciso). Puedes cambiarlo en `app_api.py`:
+Responsabilidades:
+
+- Recibir audio por `multipart/form-data`
+- Guardar el archivo en `audios_recibidos/`
+- Transcribir con Whisper `tiny`
+- Enviar el texto a `ollama run qwen2:7b-instruct-q4_0`
+- Extraer JSON de la respuesta del modelo
+- Publicar acciones MQTT para LED y RGB
+- Responder JSON con trazabilidad del flujo
+
+Configuración actual relevante:
 
 ```python
-whisper_model = load_model("tiny")   # opciones: tiny | base | small | medium | large
+MQTT_SERVER = "127.0.0.1"
+MQTT_PORT = 1883
+MQTT_TOPIC_LED = "casa/esp32/led"
+MQTT_TOPIC_RGB = "casa/esp32/rgb"
 ```
 
----
+Esto es correcto porque el backend corre en WSL y Mosquitto también corre en WSL.
 
-## Cómo Ejecutar
+### Broker MQTT
 
-```bash
-# Activar entorno virtual
-source venv/bin/activate
+Servicio: `mosquitto` en WSL
 
-# Iniciar el backend (desde la raíz del proyecto)
-cd backend
-uvicorn app_api:app --host 0.0.0.0 --port 80
+Configuración clave validada:
+
+```conf
+listener 1883 0.0.0.0
+allow_anonymous true
 ```
 
-El servidor queda disponible en `http://<IP-DEL-SERVIDOR>/`.
+Esto permite que:
 
----
+- el backend use `127.0.0.1:1883`
+- Windows `portproxy` pueda reenviar conexiones externas hacia WSL
+- el ESP32 llegue al broker entrando por `192.168.0.2:1883`
 
-## Uso
+### ESP32
 
-1. Abre el navegador en tu Android y ve a `http://<IP-DEL-SERVIDOR>/`
-2. Presiona **"Probar conexión"** para verificar que el servidor responde
-3. Presiona **"Grabar y enviar"** para abrir la grabadora nativa
-4. Graba un comando de voz (ejemplos abajo)
-5. Guarda la grabación — se envía automáticamente al servidor
-6. La respuesta JSON aparece en pantalla con la transcripción y las acciones ejecutadas
+El sketch del ESP32 no vive todavía dentro de este repo, pero el comportamiento esperado ya está definido y probado.
 
----
+Configuración relevante del ESP32:
 
-## Comandos de Voz Disponibles
+```cpp
+const char* mqtt_server = "192.168.0.2";
+```
 
-### Control de LED
+Topics suscritos:
 
-| Ejemplo de frase | Acción ejecutada |
-|-----------------|-----------------|
-| "Prende la luz" / "Enciende el led" | LED encendido → MQTT: `ON` |
-| "Apaga la luz" / "Apaga el led" | LED apagado → MQTT: `OFF` |
+- `casa/esp32/led`
+- `casa/esp32/rgb`
 
-### Estado de Ánimo (RGB)
+Payloads esperados:
 
-| Ejemplo de frase | Color RGB | MQTT payload |
-|-----------------|-----------|-------------|
-| "Me siento alegre" / "Estoy feliz" | Color alegre | `HAPPY` |
-| "Me siento triste" / "Estoy desanimado" | Color triste | `SAD` |
-| Sin expresión de ánimo | Color neutro | `NEUTRAL` |
+- LED simple:
+  - `ON`
+  - `OFF`
+- RGB:
+  - `HAPPY`
+  - `SAD`
+  - `NEUTRAL`
 
----
+## Flujo funcional
 
-## Endpoints de la API
+1. El usuario abre el frontend en Android.
+2. El frontend prueba conectividad con `GET /ping`.
+3. El usuario graba audio.
+4. El frontend envía el archivo a `POST /voice-intent`.
+5. El backend guarda el audio en `audios_recibidos/`.
+6. Whisper transcribe el audio.
+7. Qwen2 analiza intención y estado de ánimo.
+8. El backend traduce la salida del modelo a comandos MQTT.
+9. Mosquitto distribuye el mensaje al ESP32.
+10. El ESP32 cambia el LED simple o el RGB según el topic y payload recibidos.
+
+## Comandos de voz esperados
+
+### LED simple
+
+| Frase del usuario | Acción lógica | Topic | Payload |
+|---|---|---|---|
+| `prende la luz` | encender LED | `casa/esp32/led` | `ON` |
+| `enciende el led` | encender LED | `casa/esp32/led` | `ON` |
+| `apaga la luz` | apagar LED | `casa/esp32/led` | `OFF` |
+| `apaga el led` | apagar LED | `casa/esp32/led` | `OFF` |
+
+### Estado de ánimo
+
+| Frase del usuario | Estado detectado | Topic | Payload |
+|---|---|---|---|
+| `me siento alegre` | alegre | `casa/esp32/rgb` | `HAPPY` |
+| `estoy feliz` | alegre | `casa/esp32/rgb` | `HAPPY` |
+| `me siento triste` | triste | `casa/esp32/rgb` | `SAD` |
+| `estoy desanimado` | triste | `casa/esp32/rgb` | `SAD` |
+| sin emoción clara | neutral/desconocido | `casa/esp32/rgb` | `NEUTRAL` o sin acción |
+
+## Endpoints actuales
 
 | Método | Ruta | Descripción |
-|--------|------|-------------|
-| `GET` | `/` | Health check — `{"ok": true, "message": "API viva"}` |
-| `GET` | `/ping` | Prueba de conexión — `{"pong": true}` |
-| `POST` | `/voice-intent` | Procesa audio y ejecuta acciones IoT |
+|---|---|---|
+| `GET` | `/` | Health check |
+| `GET` | `/ping` | Prueba rápida de conectividad |
+| `POST` | `/voice-intent` | Procesa audio, llama al modelo y publica acciones MQTT |
 
-### Respuesta de `POST /voice-intent`
+### Respuesta típica de `POST /voice-intent`
 
 ```json
 {
@@ -166,61 +225,170 @@ El servidor queda disponible en `http://<IP-DEL-SERVIDOR>/`.
 }
 ```
 
-### Valores posibles de `accion_mqtt_led`
+### Valores importantes del backend
 
-| Valor | Significado |
-|-------|-------------|
-| `LED_ON_OK` | LED encendido exitosamente |
-| `LED_ON_ERROR` | Error al encender el LED |
-| `LED_OFF_OK` | LED apagado exitosamente |
-| `LED_OFF_ERROR` | Error al apagar el LED |
-| `SIN_ACCION_LED` | No se detectó comando de LED |
-| `SIN_JSON` | Qwen2 no retornó JSON válido |
+`accion_mqtt_led`
 
-### Valores posibles de `accion_mqtt_rgb`
+- `LED_ON_OK`
+- `LED_ON_ERROR`
+- `LED_OFF_OK`
+- `LED_OFF_ERROR`
+- `SIN_ACCION_LED`
+- `SIN_JSON`
 
-| Valor | Significado |
-|-------|-------------|
-| `RGB_ALEGRE_OK` | RGB configurado a modo alegre |
-| `RGB_TRISTE_OK` | RGB configurado a modo triste |
-| `RGB_NEUTRAL_OK` | RGB configurado a modo neutro |
-| `*_ERROR` | Error al publicar en MQTT |
-| `SIN_ACCION_RGB` | No se detectó estado de ánimo |
-| `SIN_JSON` | Qwen2 no retornó JSON válido |
+`accion_mqtt_rgb`
 
----
+- `RGB_ALEGRE_OK`
+- `RGB_ALEGRE_ERROR`
+- `RGB_TRISTE_OK`
+- `RGB_TRISTE_ERROR`
+- `RGB_NEUTRAL_OK`
+- `RGB_NEUTRAL_ERROR`
+- `SIN_ACCION_RGB`
+- `SIN_JSON`
 
-## Estructura del Proyecto
+## Cómo ejecutar el entorno actual
 
+### 1. Activar el entorno virtual
+
+```bash
+cd /home/abraham/proy_ia_security
+source venv/bin/activate
 ```
+
+### 2. Verificar que Mosquitto esté activo en WSL
+
+```bash
+ps -ef | grep mosquitto
+sudo ss -ltnp | grep 1883
+```
+
+Debe aparecer escuchando en `0.0.0.0:1883` o equivalente, no solo en `127.0.0.1:1883`.
+
+### 3. Levantar el backend
+
+```bash
+cd backend
+uvicorn app_api:app --host 0.0.0.0 --port 8000
+```
+
+### 4. Verificar conectividad desde Android
+
+Abrir el frontend y probar `GET /ping` contra:
+
+```text
+http://192.168.0.2:8000
+```
+
+### 5. Verificar conectividad MQTT del ESP32
+
+El ESP32 debe conectarse al broker con:
+
+```cpp
+const char* mqtt_server = "192.168.0.2";
+```
+
+Si todo está bien, dejará de mostrar errores `rc=-2` y se conectará al broker.
+
+## Problema real ya encontrado y resuelto
+
+### Síntoma
+
+El ESP32 mostraba repetidamente:
+
+```text
+Intentando conectar MQTT...falló, rc=-2
+```
+
+### Causa real
+
+Mosquitto estaba corriendo en WSL, pero el servicio seguía escuchando solo en localhost o no había recargado correctamente la configuración. El backend local podía hablar con el broker, pero el tráfico reenviado desde Windows no lograba entrar.
+
+### Solución aplicada
+
+1. Confirmar que existía una configuración válida en WSL:
+
+```conf
+listener 1883 0.0.0.0
+allow_anonymous true
+```
+
+2. Reiniciar `mosquitto` con permisos `sudo`:
+
+```bash
+sudo systemctl restart mosquitto
+```
+
+3. Verificar nuevamente el listener:
+
+```bash
+sudo ss -ltnp | grep 1883
+```
+
+4. Reprobar el ESP32.
+
+Resultado: el ESP32 quedó conectado correctamente.
+
+## Troubleshooting rápido
+
+### El ESP32 no conecta al broker
+
+Revisar en este orden:
+
+1. Que `mosquitto` esté corriendo en WSL.
+2. Que esté escuchando en `0.0.0.0:1883`.
+3. Que Windows siga teniendo `portproxy` hacia la IP actual de WSL.
+4. Que el firewall de Windows permita `1883`.
+5. Que el ESP32 siga usando `192.168.0.2` como broker MQTT.
+
+### El frontend no llega al backend
+
+Revisar:
+
+1. Que `uvicorn` esté corriendo en `0.0.0.0:8000`.
+2. Que la IP LAN de Windows siga siendo `192.168.0.2`.
+3. Que `portproxy` de Windows para `8000` siga apuntando a la IP actual de WSL.
+4. Que el firewall de Windows permita `8000`.
+5. Que `frontend/index.html` siga apuntando a `http://192.168.0.2:8000`.
+
+### Después de reiniciar Windows o WSL algo dejó de funcionar
+
+La primera sospecha debe ser la IP interna de WSL. Si cambió, actualizar `portproxy` y luego volver a validar backend y MQTT.
+
+## Estructura actual del repo
+
+```text
 proy_ia_security/
 ├── backend/
-│   └── app_api.py          # API principal (FastAPI + Whisper + Qwen2 + MQTT)
+│   └── app_api.py
 ├── frontend/
-│   └── index.html          # Interfaz web para Android
-├── audios_recibidos/       # Audios guardados automáticamente (formato: YYYYMMDD-HHMMSS_nombre)
-├── venv/                   # Entorno virtual Python (no versionar)
+│   └── index.html
+├── audios_recibidos/
+├── venv/
 └── README.md
 ```
 
----
+## Dependencias usadas hoy
 
-## Stack Tecnológico
+- Python 3.12
+- FastAPI
+- Uvicorn
+- `whisper-timestamped`
+- `paho-mqtt`
+- `python-multipart`
+- Ollama
+- modelo `qwen2:7b-instruct-q4_0`
+- Mosquitto
 
-| Capa | Tecnología |
-|------|-----------|
-| Frontend | HTML5 + JavaScript (Vanilla, XHR, File API) |
-| Backend | Python 3.12 + FastAPI + Uvicorn |
-| Transcripción de voz | OpenAI Whisper (local, modelo tiny) |
-| IA / LLM | Qwen2 7B Instruct Q4 via Ollama |
-| Comunicación IoT | paho-mqtt → MQTT Broker (Mosquitto) → ESP32 |
-| Aceleración | PyTorch + CUDA (GPU NVIDIA, opcional) |
+Instalación manual actual:
 
----
+```bash
+pip install fastapi uvicorn openai-whisper whisper-timestamped paho-mqtt python-multipart
+```
 
-## Topics MQTT
+## Notas para retomarlo rápido
 
-| Topic | Payloads posibles | Descripción |
-|-------|-------------------|-------------|
-| `casa/esp32/led` | `ON` / `OFF` | Control del LED simple |
-| `casa/esp32/rgb` | `HAPPY` / `SAD` / `NEUTRAL` | Estado de ánimo en LED RGB |
+- El frontend y el ESP32 no deben apuntar a la IP interna de WSL; deben apuntar a la IP LAN de Windows.
+- El backend sí debe seguir apuntando a `127.0.0.1` para MQTT mientras Mosquitto corra dentro de WSL.
+- El punto más frágil de esta topología es `WSL IP + portproxy + restart de mosquitto`.
+- Si el ESP32 falla con `rc=-2`, casi siempre el problema es de reachability TCP hacia `192.168.0.2:1883`, no de lógica en el sketch.
