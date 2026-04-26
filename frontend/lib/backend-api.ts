@@ -5,16 +5,40 @@ export type BackendConnectionState =
   | "uploading"
   | "error";
 
+export type VoiceIntentJson = {
+  texto?: string;
+  intencion?: "control_luces" | "otra" | string;
+  detalle?: string;
+  espacio?: "sala" | "comedor" | "cocina" | "cuarto_principal" | "desconocido" | string;
+  accion?: "ON" | "OFF" | "NONE" | string;
+};
+
+export type MqttLightPayload = {
+  espacio?: string;
+  accion?: string;
+};
+
 export type VoiceIntentResponse = {
   ok?: boolean;
-  texto_transcrito?: string;
-  accion_mqtt_led?: string;
-  accion_mqtt_rgb?: string;
-  ia_json?: {
-    intencion?: string;
-    detalle?: string;
-    estado_animo?: string;
-  } | null;
+  ai_provider?: string;
+  fase_1_audio_guardado?: {
+    filename?: string;
+    saved_path?: string;
+    content_type?: string;
+  };
+  fase_2_transcripcion?: {
+    texto_transcrito?: string;
+  };
+  fase_3_ia_json?: {
+    ia_raw?: string;
+    ia_json_raw?: VoiceIntentJson | null;
+    ia_json?: VoiceIntentJson | null;
+  };
+  fase_4_mqtt?: {
+    accion_mqtt?: string;
+    mqtt_topic?: string;
+    mqtt_payload?: MqttLightPayload | null;
+  };
 };
 
 const DEFAULT_API_BASE_URL = "http://192.168.0.220:8000";

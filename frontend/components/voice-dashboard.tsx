@@ -7,6 +7,7 @@ import {
   pingBackend,
   sendVoiceIntent,
   type BackendConnectionState,
+  type MqttLightPayload,
   type VoiceIntentResponse,
 } from "@/lib/backend-api";
 
@@ -14,54 +15,44 @@ type DeviceCard = {
   id: string;
   title: string;
   count: number;
-  accent: string;
-  label: string;
   description: string;
   status: string;
   items: string[];
+  tone: string;
   Icon: (props: { className?: string }) => ReactElement;
 };
 
 const devices: DeviceCard[] = [
   {
     id: "lights",
-    title: "Luces conectadas",
-    count: 12,
-    accent: "from-[#44c7f4]/30 via-[#44c7f4]/12 to-transparent",
-    label: "Iluminacion",
-    description: "Zonas listas para responder a las ordenes de la IA.",
-    status: "10 activas / 2 en espera",
-    items: ["Laboratorio", "Pasillo", "Acceso principal"],
+    title: "Luces por ambiente",
+    count: 4,
+    description: "Ambientes listos para recibir comandos ON/OFF por MQTT.",
+    status: "4 ambientes mapeados",
+    items: ["Sala", "Comedor", "Cocina", "Cuarto principal"],
+    tone: "text-[#9edfff] bg-[#44c7f4]/10 border-[#44c7f4]/20",
     Icon: LightIcon,
   },
   {
     id: "doors",
     title: "Puertas conectadas",
     count: 4,
-    accent: "from-[#f6c563]/30 via-[#f6c563]/12 to-transparent",
-    label: "Acceso",
     description: "Control visual del perimetro y de los puntos de entrada.",
     status: "3 cerradas / 1 monitoreada",
     items: ["Puerta frontal", "Cuarto tecnico", "Porton lateral"],
+    tone: "text-[#ffe0a3] bg-[#f6c563]/10 border-[#f6c563]/20",
     Icon: DoorIcon,
   },
   {
     id: "cameras",
     title: "Camaras conectadas",
     count: 6,
-    accent: "from-[#8ee89d]/30 via-[#8ee89d]/12 to-transparent",
-    label: "Vigilancia",
     description: "Vision del sistema lista para crecer con nuevos modulos.",
     status: "4 en linea / 2 en standby",
     items: ["Entrada", "Patio", "Zona de pruebas"],
+    tone: "text-[#b4f4be] bg-[#8ee89d]/10 border-[#8ee89d]/20",
     Icon: CameraIcon,
   },
-];
-
-const metrics = [
-  { label: "Nodos visibles", value: "22", helper: "luces, puertas y camaras" },
-  { label: "Estado de red", value: "Estable", helper: "backend IoT disponible" },
-  { label: "Modo actual", value: "Etapa inicial", helper: "voz como nucleo central" },
 ];
 
 export function VoiceDashboard() {
@@ -122,11 +113,13 @@ export function VoiceDashboard() {
 
     try {
       const payload = await sendVoiceIntent(file);
+      const transcript = payload.fase_2_transcripcion?.texto_transcrito;
+
       setResponse(payload);
       setConnection("online");
       setStatusText(
-        payload.texto_transcrito
-          ? `Ultima transcripcion: "${payload.texto_transcrito}".`
+        transcript
+          ? `Ultima transcripcion: "${transcript}".`
           : "Audio enviado correctamente. La IA devolvio una respuesta.",
       );
     } catch (error) {
@@ -139,116 +132,73 @@ export function VoiceDashboard() {
     }
   }
 
-  return (
-    <main className="dashboard-grid min-h-screen overflow-hidden px-4 py-6 text-slate-50 sm:px-6 lg:px-10">
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
-        <section className="panel-surface overflow-hidden rounded-[32px] border border-white/10 shadow-glow">
-          <div className="flex flex-col gap-6 border-b border-white/10 px-6 py-6 lg:flex-row lg:items-end lg:justify-between lg:px-8">
-            <div className="max-w-3xl">
-              <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-accent/30 bg-accent/10 px-3 py-1 text-xs uppercase tracking-[0.28em] text-mist">
-                proy_ia_security
-              </div>
-              <h1 className="font-display text-4xl font-semibold leading-tight text-white sm:text-5xl">
-                Dashboard domotico con IA de voz como nucleo operativo.
-              </h1>
-              <p className="mt-4 max-w-2xl text-sm leading-7 text-slate-300 sm:text-base">
-                La primera etapa del sistema muestra a la IA en el centro y los
-                subsistemas conectados a su alrededor. Ya puedes enviar voz al
-                backend actual mientras dejamos lista una base escalable para el
-                resto de la domotica.
-              </p>
-            </div>
+  const intentJson = response?.fase_3_ia_json?.ia_json;
+  const mqttResult = response?.fase_4_mqtt;
+  const transcript =
+    response?.fase_2_transcripcion?.texto_transcrito ?? "Sin transcripcion";
 
-            <div className="grid gap-3 sm:grid-cols-3">
-              {metrics.map((metric) => (
-                <article
-                  key={metric.label}
-                  className="rounded-3xl border border-white/10 bg-white/5 px-4 py-4"
-                >
-                  <p className="text-xs uppercase tracking-[0.22em] text-slate-400">
-                    {metric.label}
-                  </p>
-                  <p className="mt-3 font-display text-2xl text-white">
-                    {metric.value}
-                  </p>
-                  <p className="mt-2 text-sm text-slate-400">{metric.helper}</p>
-                </article>
-              ))}
-            </div>
+  return (
+    <main className="min-h-screen px-3 py-4 text-slate-50 sm:px-5 lg:px-8 xl:px-10">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 sm:gap-5">
+        <header className="flex flex-col gap-4 border-b border-white/10 pb-4 sm:pb-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-2xl">
+            <p className="text-xs uppercase tracking-[0.2em] text-[#9edfff]">
+              proy_ia_security
+            </p>
+            <h1 className="mt-2 font-display text-2xl font-semibold leading-tight text-white sm:text-3xl lg:text-4xl">
+              Dashboard domotico
+            </h1>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-slate-300">
+              Una vista simple para enviar voz a la IA y ver el estado base de
+              camaras, luces y puertas conectadas.
+            </p>
           </div>
 
-          <div className="grid gap-6 px-6 py-6 lg:grid-cols-[1.5fr_0.9fr] lg:px-8 lg:py-8">
-            <section className="panel-surface rounded-[30px] border border-white/10 p-4 sm:p-6">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-slate-400">
-                    Visualizacion general
-                  </p>
-                  <h2 className="mt-2 font-display text-2xl text-white">
-                    Nucleo de control por voz
-                  </h2>
-                </div>
+          <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-center sm:justify-start lg:justify-end">
+            <StatusBadge connection={connection} />
+            <button
+              type="button"
+              onClick={() => void handlePing()}
+              className="min-h-11 rounded-lg border border-white/15 bg-white/5 px-4 py-2 text-sm text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isChecking}
+            >
+              {isChecking ? "Verificando..." : "Probar API"}
+            </button>
+          </div>
+        </header>
 
-                <div className="flex flex-wrap items-center gap-3">
-                  <StatusBadge connection={connection} />
-                  <button
-                    type="button"
-                    onClick={() => void handlePing()}
-                    className="rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm text-white transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={isChecking}
-                  >
-                    {isChecking ? "Verificando..." : "Probar API"}
-                  </button>
-                </div>
+        <section className="grid gap-3 sm:gap-4 lg:grid-cols-[minmax(0,1fr)_20rem] xl:grid-cols-[minmax(0,1fr)_22rem]">
+          <section className="order-1 rounded-lg border border-white/10 bg-[#08111f]/90 p-4 shadow-glow sm:p-5 lg:col-start-1 lg:row-span-3 lg:min-h-[34rem] lg:p-6 xl:min-h-[36rem]">
+            <div className="grid gap-3 sm:flex sm:items-start sm:justify-between sm:gap-4">
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                  IA central
+                </p>
+                <h2 className="mt-2 font-display text-2xl font-semibold text-white">
+                  Guia IA
+                </h2>
               </div>
+              <SignalPill state={connection} />
+            </div>
 
-              <div className="relative mt-8 min-h-[640px] rounded-[28px] border border-white/10 bg-[#07111f]/80 p-4 sm:p-6">
-                <div className="absolute inset-0 rounded-[28px] bg-[radial-gradient(circle_at_center,rgba(68,199,244,0.12),transparent_42%)]" />
-                <div className="absolute left-1/2 top-1/2 hidden h-[420px] w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-accent/20 xl:block" />
-                <div className="absolute left-1/2 top-1/2 hidden h-[560px] w-[560px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-white/10 2xl:block" />
-
-                <div className="relative z-10 grid gap-4 lg:grid-cols-2 xl:grid-cols-1">
-                  <OrbitCard
-                    className="xl:absolute xl:left-8 xl:top-12 xl:w-[280px]"
-                    device={devices[0]}
-                  />
-                  <OrbitCard
-                    className="xl:absolute xl:right-8 xl:top-14 xl:w-[280px]"
-                    device={devices[1]}
-                  />
-                  <OrbitCard
-                    className="xl:absolute xl:bottom-12 xl:left-1/2 xl:w-[320px] xl:-translate-x-1/2"
-                    device={devices[2]}
-                  />
-                </div>
-
-                <div className="relative z-20 mx-auto mt-6 flex min-h-[420px] max-w-xl items-center justify-center xl:min-h-[580px]">
-                  <div className="absolute h-52 w-52 rounded-full bg-accent/15 blur-3xl sm:h-64 sm:w-64" />
-                  <div className="absolute h-72 w-72 rounded-full border border-accent/15" />
-                  <div className="absolute h-80 w-80 rounded-full border border-white/10" />
-
-                  <button
-                    type="button"
-                    onClick={handleVoiceNodeClick}
-                    className="relative flex h-52 w-52 flex-col items-center justify-center gap-3 rounded-full border border-accent/30 bg-[radial-gradient(circle_at_top,rgba(68,199,244,0.35),rgba(10,20,35,0.98)_70%)] p-6 text-center shadow-[0_0_0_14px_rgba(68,199,244,0.05),0_24px_90px_rgba(0,0,0,0.35)] transition duration-300 hover:scale-[1.02] hover:border-accent/50 sm:h-60 sm:w-60"
-                  >
-                    <div className="absolute inset-4 rounded-full border border-white/10" />
-                    <div className="relative flex h-16 w-16 items-center justify-center rounded-full border border-white/20 bg-white/10">
-                      <MicIcon className="h-8 w-8 text-white" />
-                    </div>
-                    <div className="relative">
-                      <p className="font-display text-xl text-white sm:text-2xl">
-                        Guia IA
-                      </p>
-                      <p className="mt-2 text-sm leading-6 text-slate-300">
-                        Pulsa aqui para enviar voz al sistema.
-                      </p>
-                    </div>
-                    <span className="relative rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs uppercase tracking-[0.24em] text-slate-200">
-                      {isUploading ? "Uploading" : "Audio"}
-                    </span>
-                  </button>
-                </div>
+            <div className="mt-6 grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)] lg:items-start xl:grid-cols-[17rem_minmax(0,1fr)]">
+              <div>
+                <button
+                  type="button"
+                  onClick={handleVoiceNodeClick}
+                  className="mx-auto flex h-40 w-40 flex-col items-center justify-center gap-2 rounded-full border border-[#44c7f4]/40 bg-[#061727] p-5 text-center shadow-[0_0_45px_rgba(68,199,244,0.18)] transition hover:scale-[1.02] hover:bg-[#092036] disabled:cursor-not-allowed disabled:opacity-70 sm:h-48 sm:w-48 lg:h-52 lg:w-52 xl:h-56 xl:w-56"
+                  disabled={isUploading}
+                >
+                  <span className="flex h-12 w-12 items-center justify-center rounded-full border border-white/15 bg-white/10 sm:h-14 sm:w-14">
+                    <MicIcon className="h-6 w-6 text-white sm:h-7 sm:w-7" />
+                  </span>
+                  <span className="font-display text-lg text-white sm:text-xl">
+                    {isUploading ? "Procesando" : "Enviar voz"}
+                  </span>
+                  <span className="text-xs uppercase tracking-[0.18em] text-slate-400">
+                    {isUploading ? "Audio activo" : "Audio"}
+                  </span>
+                </button>
 
                 <input
                   ref={inputRef}
@@ -258,113 +208,74 @@ export function VoiceDashboard() {
                   className="hidden"
                   onChange={(event) => void handleAudioSelected(event)}
                 />
+
+                <p className="mt-5 text-center text-sm leading-6 text-slate-300">
+                  {statusText}
+                </p>
+
+                {errorText ? (
+                  <p className="mt-4 rounded-lg border border-rose-400/25 bg-rose-400/10 px-3 py-2 text-sm leading-6 text-rose-200">
+                    {errorText}
+                  </p>
+                ) : null}
               </div>
-            </section>
 
-            <aside className="flex flex-col gap-6">
-              <article className="panel-surface rounded-[30px] border border-white/10 p-5">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.22em] text-slate-400">
-                      Estado operativo
-                    </p>
-                    <h3 className="mt-2 font-display text-2xl text-white">
-                      Centro de actividad
-                    </h3>
-                  </div>
-                  <SignalPill state={connection} />
-                </div>
+              <div className="grid gap-2 border-t border-white/10 pt-4 text-sm lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+                <InfoRow label="Transcripcion" value={transcript} />
+                <InfoRow
+                  label="Intencion"
+                  value={intentJson?.intencion ?? "Pendiente"}
+                />
+                <InfoRow label="Ambiente" value={intentJson?.espacio ?? "Pendiente"} />
+                <InfoRow label="Accion" value={intentJson?.accion ?? "Pendiente"} />
+                <InfoRow
+                  label="MQTT"
+                  value={mqttResult?.accion_mqtt ?? "SIN_ACCION"}
+                />
+                <InfoRow
+                  label="Payload"
+                  value={formatMqttPayload(mqttResult?.mqtt_payload)}
+                />
+                <InfoRow
+                  label="Topic"
+                  value={mqttResult?.mqtt_topic ?? "casa/esp32/luces"}
+                />
+              </div>
+            </div>
 
-                <div className="mt-5 rounded-3xl border border-white/10 bg-white/5 p-4">
-                  <p className="text-sm text-slate-300">{statusText}</p>
-                  <div className="mt-4 grid gap-3 text-sm text-slate-400">
-                    <InfoRow label="API actual" value={API_BASE_URL} />
-                    <InfoRow label="Estado UI" value={getConnectionLabel(connection)} />
-                    <InfoRow label="Ultimo archivo" value={lastFileName} />
-                    <InfoRow
-                      label="Intencion detectada"
-                      value={response?.ia_json?.intencion ?? "Pendiente"}
-                    />
-                    <InfoRow
-                      label="Estado de animo"
-                      value={response?.ia_json?.estado_animo ?? "Pendiente"}
-                    />
-                    <InfoRow
-                      label="Detalle IA"
-                      value={response?.ia_json?.detalle ?? "Pendiente"}
-                    />
-                  </div>
-                </div>
+            <details className="mt-4 border-t border-white/10 pt-4 text-sm text-slate-300">
+              <summary className="cursor-pointer text-slate-200">
+                Respuesta completa
+              </summary>
+              <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap rounded-lg bg-[#050c16] p-3 text-xs leading-5 text-slate-300">
+                {response
+                  ? JSON.stringify(response, null, 2)
+                  : "Aun no hay respuesta del backend."}
+              </pre>
+            </details>
+          </section>
 
-                <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                  <SmallStat
-                    title="LED"
-                    value={response?.accion_mqtt_led ?? "SIN_ACCION_LED"}
-                    accent="bg-[#44c7f4]/15 text-[#9edfff]"
-                  />
-                  <SmallStat
-                    title="RGB"
-                    value={response?.accion_mqtt_rgb ?? "SIN_ACCION_RGB"}
-                    accent="bg-[#8ee89d]/15 text-[#b4f4be]"
-                  />
-                </div>
-              </article>
+          <SystemCard
+            device={devices[2]}
+            className="order-2 lg:order-none lg:col-start-2 lg:row-start-1"
+          />
 
-              <article className="panel-surface rounded-[30px] border border-white/10 p-5">
-                <p className="text-xs uppercase tracking-[0.22em] text-slate-400">
-                  Escalabilidad
-                </p>
-                <h3 className="mt-2 font-display text-2xl text-white">
-                  Siguiente expansion del dashboard
-                </h3>
+          <SystemCard
+            device={devices[0]}
+            className="order-3 lg:order-none lg:col-start-2 lg:row-start-2"
+          />
 
-                <div className="mt-5 space-y-3">
-                  {[
-                    "Agregar telemetria real por dispositivo via MQTT o WebSocket.",
-                    "Mapear acciones de puertas y camaras a la misma guia IA.",
-                    "Crear vistas detalladas por zona sin perder la pantalla central.",
-                  ].map((item) => (
-                    <div
-                      key={item}
-                      className="flex items-start gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-300"
-                    >
-                      <span className="mt-1 h-2.5 w-2.5 rounded-full bg-accent" />
-                      <span>{item}</span>
-                    </div>
-                  ))}
-                </div>
-              </article>
-
-              <article className="panel-surface rounded-[30px] border border-white/10 p-5">
-                <p className="text-xs uppercase tracking-[0.22em] text-slate-400">
-                  Respuesta de la IA
-                </p>
-                <h3 className="mt-2 font-display text-2xl text-white">
-                  Trazabilidad visible
-                </h3>
-
-                <div className="mt-5 rounded-3xl border border-white/10 bg-[#050c16] p-4">
-                  {errorText ? (
-                    <div className="mb-4 rounded-2xl border border-rose-400/20 bg-rose-400/10 px-4 py-3 text-sm leading-6 text-rose-200">
-                      {errorText}
-                    </div>
-                  ) : null}
-                  <pre className="overflow-x-auto whitespace-pre-wrap text-sm leading-6 text-slate-300">
-                    {response
-                      ? JSON.stringify(response, null, 2)
-                      : "Aun no hay respuesta del backend."}
-                  </pre>
-                </div>
-              </article>
-            </aside>
-          </div>
+          <SystemCard
+            device={devices[1]}
+            className="order-4 lg:order-none lg:col-start-2 lg:row-start-3"
+          />
         </section>
       </div>
     </main>
   );
 }
 
-function OrbitCard({
+function SystemCard({
   device,
   className,
 }: {
@@ -373,50 +284,44 @@ function OrbitCard({
 }) {
   return (
     <article
-      className={`panel-surface rounded-[28px] border border-white/10 p-5 shadow-glow ${className ?? ""}`}
+      className={`rounded-lg border border-white/10 bg-white/[0.04] p-4 sm:p-5 lg:p-4 xl:p-5 ${className ?? ""}`}
     >
-      <div className={`rounded-3xl bg-gradient-to-br p-[1px] ${device.accent}`}>
-        <div className="rounded-3xl bg-[#08111f]/95 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs uppercase tracking-[0.22em] text-slate-400">
-                {device.label}
-              </p>
-              <h3 className="mt-2 font-display text-2xl text-white">
-                {device.title}
-              </h3>
-            </div>
-
-            <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
-              <device.Icon className="h-6 w-6 text-white" />
-            </div>
-          </div>
-
-          <div className="mt-5 flex items-end justify-between gap-4">
-            <div>
-              <p className="font-display text-4xl text-white">{device.count}</p>
-              <p className="mt-2 text-sm text-slate-400">{device.status}</p>
-            </div>
-            <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs uppercase tracking-[0.24em] text-slate-200">
-              conectado
-            </div>
-          </div>
-
-          <p className="mt-4 text-sm leading-6 text-slate-300">
-            {device.description}
-          </p>
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            {device.items.map((item) => (
-              <span
-                key={item}
-                className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300"
-              >
-                {item}
-              </span>
-            ))}
-          </div>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h3 className="font-display text-lg font-semibold leading-tight text-white sm:text-xl lg:text-lg xl:text-xl">
+            {device.title}
+          </h3>
+          <p className="mt-2 text-sm leading-6 text-slate-400">{device.status}</p>
         </div>
+        <span
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border sm:h-11 sm:w-11 ${device.tone}`}
+        >
+          <device.Icon className="h-5 w-5" />
+        </span>
+      </div>
+
+      <div className="mt-5 flex items-end justify-between gap-4 lg:mt-4 xl:mt-6">
+        <p className="font-display text-4xl font-semibold text-white sm:text-5xl lg:text-4xl xl:text-5xl">
+          {device.count}
+        </p>
+        <span className="rounded-md border border-white/10 px-2 py-1 text-xs uppercase tracking-[0.14em] text-slate-300">
+          activo
+        </span>
+      </div>
+
+      <p className="mt-3 text-sm leading-6 text-slate-300 xl:mt-4">
+        {device.description}
+      </p>
+
+      <div className="mt-3 flex flex-wrap gap-2 xl:mt-4">
+        {device.items.map((item) => (
+          <span
+            key={item}
+            className="rounded-md border border-white/10 px-2 py-1 text-xs text-slate-300"
+          >
+            {item}
+          </span>
+        ))}
       </div>
     </article>
   );
@@ -450,28 +355,9 @@ function SignalPill({ state }: { state: BackendConnectionState }) {
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-white/5 pb-2 last:border-none last:pb-0">
+    <div className="grid gap-1 border-b border-white/5 pb-2 last:border-none last:pb-0 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-start">
       <span className="text-slate-500">{label}</span>
-      <span className="max-w-[14rem] truncate text-right text-slate-200">{value}</span>
-    </div>
-  );
-}
-
-function SmallStat({
-  title,
-  value,
-  accent,
-}: {
-  title: string;
-  value: string;
-  accent: string;
-}) {
-  return (
-    <div className="rounded-3xl border border-white/10 bg-white/5 p-4">
-      <p className="text-xs uppercase tracking-[0.22em] text-slate-500">{title}</p>
-      <div className={`mt-3 inline-flex rounded-full px-3 py-1 text-xs uppercase tracking-[0.2em] ${accent}`}>
-        {value}
-      </div>
+      <span className="break-words text-slate-200 sm:text-right">{value}</span>
     </div>
   );
 }
@@ -482,6 +368,17 @@ function getErrorMessage(error: unknown) {
   }
 
   return "Error desconocido";
+}
+
+function formatMqttPayload(payload?: MqttLightPayload | null) {
+  if (!payload) {
+    return "SIN_PAYLOAD";
+  }
+
+  const espacio = payload.espacio ?? "desconocido";
+  const accion = payload.accion ?? "NONE";
+
+  return `${espacio} ${accion}`;
 }
 
 function getConnectionPalette(state: BackendConnectionState) {

@@ -21,10 +21,7 @@ body {
   margin: 0;
   min-height: 100vh;
   font-family: var(--font-body), sans-serif;
-  background:
-    radial-gradient(circle at top, rgba(68, 199, 244, 0.16), transparent 30%),
-    radial-gradient(circle at bottom left, rgba(255, 138, 159, 0.1), transparent 24%),
-    linear-gradient(160deg, #040911 0%, #07101d 35%, #0b1626 100%);
+  background: #050b14;
   color: #eff6ff;
 }
 
@@ -32,24 +29,15 @@ body::before {
   content: "";
   position: fixed;
   inset: 0;
-  background-image: radial-gradient(circle, rgba(214, 229, 255, 0.1) 1px, transparent 1px);
-  background-size: 32px 32px;
-  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.6), transparent 92%);
+  background-image:
+    linear-gradient(rgba(148, 184, 255, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 184, 255, 0.045) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.5), transparent 86%);
   pointer-events: none;
 }
 
 a {
   color: inherit;
   text-decoration: none;
-}
-
-.dashboard-grid {
-  background-image: linear-gradient(rgba(148, 184, 255, 0.07) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(148, 184, 255, 0.07) 1px, transparent 1px);
-  background-size: 72px 72px;
-}
-
-.panel-surface {
-  background: linear-gradient(180deg, rgba(11, 20, 38, 0.92), rgba(8, 15, 28, 0.76));
-  backdrop-filter: blur(18px);
 }
