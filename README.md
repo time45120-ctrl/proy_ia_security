@@ -11,8 +11,8 @@ La fuente activa del proyecto es la carpeta raiz:
 /home/abraham/proy_ia_security
 ```
 
-La carpeta anidada `proy_ia_security/` conserva una copia legacy y no debe usarse
-como referencia principal.
+La copia legacy anidada `proy_ia_security/` fue eliminada. La unica fuente
+valida del proyecto es esta raiz.
 
 ## Estado actual
 

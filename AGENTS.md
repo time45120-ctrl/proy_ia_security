@@ -13,8 +13,8 @@ La fuente activa del proyecto es esta raiz:
 /home/abraham/proy_ia_security
 ```
 
-La carpeta anidada `proy_ia_security/` es una copia legacy. No usarla como
-referencia principal ni editarla salvo que el usuario lo pida de forma explicita.
+La copia legacy anidada `proy_ia_security/` fue eliminada. La unica fuente
+valida del proyecto es esta raiz.
 
 ## Mapa del proyecto
 
@@ -150,7 +150,7 @@ No guardar claves reales en archivos del repo.
 ## Reglas para futuras sesiones
 
 - No tocar `.env.local`, claves, tokens ni secretos.
-- No editar `proy_ia_security/` anidado salvo peticion explicita.
+- No recrear `proy_ia_security/` anidado salvo peticion explicita.
 - Respetar cambios existentes del usuario en el worktree.
 - Preferir cambios pequenos, locales y verificados.
 - Usar `README.md` como fuente extendida de arquitectura, comandos y
