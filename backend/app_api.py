@@ -30,6 +30,12 @@ import os
 import subprocess
 import json
 import textwrap
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
 
 # Whisper
 from whisper_timestamped import load_model, transcribe
@@ -47,6 +53,13 @@ except ImportError:
 # =========================================================
 # CONFIGURACIÓN GENERAL
 # =========================================================
+
+ENV_PATH = Path(__file__).resolve().parent / ".env"
+
+if load_dotenv is not None:
+    load_dotenv(ENV_PATH)
+elif ENV_PATH.exists():
+    print("AVISO: backend/.env existe, pero python-dotenv no esta instalado.")
 
 # --- Ruta local para guardar audios ---
 SAVE_DIR = "/home/abraham/proy_ia_security/audios_recibidos"

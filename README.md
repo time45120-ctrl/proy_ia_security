@@ -134,6 +134,44 @@ LOCAL_AI_MODEL = os.getenv("LOCAL_AI_MODEL", "qwen2:7b-instruct-q4_0")
 - `openai`: usa la API de OpenAI y requiere `OPENAI_API_KEY`
 - `local`: usa Ollama con `LOCAL_AI_MODEL`
 
+El backend carga variables locales desde `backend/.env`. Ese archivo no debe
+subirse a git; usa `backend/.env.example` como plantilla. `frontend/.env.local`
+es solo para variables del frontend como `NEXT_PUBLIC_API_BASE_URL`; no pongas
+secretos ahi porque cualquier variable `NEXT_PUBLIC_*` llega al navegador.
+
+La parte quirurgica esta en esta linea:
+
+```python
+AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").strip().lower()
+```
+
+Con eso eliges si la Fase 3 trabaja con OpenAI API o con IA local sin tocar el
+resto del backend.
+
+Para usar OpenAI API:
+
+```bash
+cd /home/abraham/proy_ia_security/backend
+cp .env.example .env
+# Editar backend/.env y poner la API key real solo ahi.
+#
+# AI_PROVIDER=openai
+# OPENAI_API_KEY=TU_API_KEY
+# OPENAI_MODEL=gpt-4o-mini
+uvicorn app_api:app --host 0.0.0.0 --port 8000
+```
+
+Para volver a IA local con Qwen2/Ollama:
+
+```bash
+cd /home/abraham/proy_ia_security/backend
+# Editar backend/.env:
+#
+# AI_PROVIDER=local
+# LOCAL_AI_MODEL=qwen2:7b-instruct-q4_0
+uvicorn app_api:app --host 0.0.0.0 --port 8000
+```
+
 Levantar backend:
 
 ```bash
@@ -294,7 +332,7 @@ manual.
 Backend:
 
 ```bash
-pip install fastapi uvicorn openai whisper-timestamped paho-mqtt python-multipart
+pip install fastapi uvicorn openai python-dotenv whisper-timestamped paho-mqtt python-multipart
 ```
 
 Si se usa Ollama:
