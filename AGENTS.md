@@ -30,6 +30,25 @@ Stack actual:
 - Backend: FastAPI, Whisper, OpenAI u Ollama, MQTT con `paho-mqtt`.
 - Broker MQTT esperado por el backend: `127.0.0.1:1883`.
 
+## Despliegue actual
+
+- Frontend en Hostinger: `https://afcrseguridad.com`
+- Backend en AWS: IP publica `3.132.192.3`
+- API publica: `https://api.afcrseguridad.com`
+- DNS en Hostinger: `api.afcrseguridad.com` apunta a `3.132.192.3`.
+- Produccion debe usar:
+
+```bash
+NEXT_PUBLIC_API_BASE_URL=https://api.afcrseguridad.com
+```
+
+Para pruebas locales o LAN, usar `frontend/.env.local` con la URL del backend
+de pruebas. Para produccion, configurar `NEXT_PUBLIC_API_BASE_URL` en Hostinger;
+no commitear `.env.local`.
+
+El frontend publico corre por HTTPS, asi que la API publica tambien debe estar
+disponible por HTTPS para evitar bloqueo por contenido mixto del navegador.
+
 ## Contratos activos
 
 Endpoint de salud:
@@ -114,6 +133,13 @@ Usar `backend/.env.example` como plantilla. `frontend/.env.local` es solo para
 variables del frontend como `NEXT_PUBLIC_API_BASE_URL`; nunca guardar secretos
 en variables `NEXT_PUBLIC_*` porque llegan al navegador.
 
+El CORS del backend se configura con `CORS_ALLOW_ORIGINS`, separado por comas.
+Por defecto permite produccion y desarrollo local:
+
+```bash
+CORS_ALLOW_ORIGINS=https://afcrseguridad.com,https://www.afcrseguridad.com,http://localhost:3000,http://127.0.0.1:3000
+```
+
 La Fase 3 cambia entre OpenAI API e IA local con esta linea de
 `backend/app_api.py`:
 
@@ -150,6 +176,9 @@ No guardar claves reales en archivos del repo.
 ## Reglas para futuras sesiones
 
 - No tocar `.env.local`, claves, tokens ni secretos.
+- No tocar `backend/.env` salvo peticion explicita del usuario.
+- Mantener `api.afcrseguridad.com` como dominio publico de API salvo cambio
+  explicito del usuario.
 - No recrear `proy_ia_security/` anidado salvo peticion explicita.
 - Respetar cambios existentes del usuario en el worktree.
 - Preferir cambios pequenos, locales y verificados.
@@ -164,8 +193,12 @@ No guardar claves reales en archivos del repo.
 ## Notas operativas
 
 - `frontend/.env.local` sobreescribe `NEXT_PUBLIC_API_BASE_URL`.
+- En Hostinger, `NEXT_PUBLIC_API_BASE_URL` debe apuntar a
+  `https://api.afcrseguridad.com`.
 - El frontend puede apuntar a una IP LAN de Windows si FastAPI corre dentro de
   WSL y se expone con `portproxy`.
+- En AWS, verificar security group/firewall, servicio FastAPI activo y HTTPS
+  para `api.afcrseguridad.com` antes de diagnosticar el frontend.
 - Si despues de reiniciar Windows o WSL deja de conectar, sospechar primero de la
   IP interna de WSL y de las reglas `portproxy` para `8000` y `1883`.
 - El cambio de este archivo es documentacion; no requiere build ni tests de app.

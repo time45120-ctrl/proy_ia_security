@@ -18,6 +18,10 @@ valida del proyecto es esta raiz.
 
 - Frontend Next.js en `frontend/`
 - Backend FastAPI en `backend/app_api.py`
+- Frontend desplegado en Hostinger: `https://afcrseguridad.com`
+- Backend desplegado en AWS: `3.132.192.3`
+- API publica: `https://api.afcrseguridad.com`
+- DNS Hostinger: `api.afcrseguridad.com` apunta a `3.132.192.3`
 - Endpoint de salud: `GET /ping`
 - Endpoint principal: `POST /voice-intent`
 - Broker MQTT esperado en `127.0.0.1:1883` desde el backend
@@ -82,11 +86,20 @@ ocurre, actualizar las reglas de `portproxy` y revisar el firewall de Windows.
 El frontend usa `NEXT_PUBLIC_API_BASE_URL` para decidir donde esta FastAPI.
 `frontend/.env.local` manda sobre el valor default compilado en el codigo.
 
-Ejemplo:
+Pruebas locales/LAN:
 
 ```bash
 NEXT_PUBLIC_API_BASE_URL=http://192.168.0.220:8000
 ```
+
+Produccion en Hostinger:
+
+```bash
+NEXT_PUBLIC_API_BASE_URL=https://api.afcrseguridad.com
+```
+
+No subir `frontend/.env.local` al repo. Para produccion, configurar la variable
+en Hostinger antes de compilar/desplegar el frontend.
 
 Comandos:
 
@@ -124,6 +137,7 @@ Configuracion relevante:
 MQTT_SERVER = "127.0.0.1"
 MQTT_PORT = 1883
 MQTT_TOPIC_LUCES = "casa/esp32/luces"
+CORS_ALLOW_ORIGINS = [...]
 AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").strip().lower()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 LOCAL_AI_MODEL = os.getenv("LOCAL_AI_MODEL", "qwen2:7b-instruct-q4_0")
@@ -138,6 +152,16 @@ El backend carga variables locales desde `backend/.env`. Ese archivo no debe
 subirse a git; usa `backend/.env.example` como plantilla. `frontend/.env.local`
 es solo para variables del frontend como `NEXT_PUBLIC_API_BASE_URL`; no pongas
 secretos ahi porque cualquier variable `NEXT_PUBLIC_*` llega al navegador.
+
+El CORS del backend se configura con `CORS_ALLOW_ORIGINS`, separado por comas.
+Por defecto permite produccion y desarrollo local:
+
+```bash
+CORS_ALLOW_ORIGINS=https://afcrseguridad.com,https://www.afcrseguridad.com,http://localhost:3000,http://127.0.0.1:3000
+```
+
+El frontend publico usa HTTPS, asi que la API publica tambien debe responder por
+HTTPS en `https://api.afcrseguridad.com` para evitar bloqueo por contenido mixto.
 
 La parte quirurgica esta en esta linea:
 
@@ -306,6 +330,15 @@ Revisar:
 2. Que `frontend/.env.local` tenga la IP LAN correcta.
 3. Que `portproxy` de Windows para `8000` apunte a la IP actual de WSL.
 4. Que el firewall de Windows permita `8000`.
+
+En produccion:
+
+1. Que Hostinger tenga `NEXT_PUBLIC_API_BASE_URL=https://api.afcrseguridad.com`.
+2. Que `api.afcrseguridad.com` resuelva hacia `3.132.192.3`.
+3. Que AWS permita trafico entrante hacia HTTPS o el puerto publicado.
+4. Que el backend o reverse proxy responda en `https://api.afcrseguridad.com/ping`.
+5. Que `CORS_ALLOW_ORIGINS` incluya `https://afcrseguridad.com` y
+   `https://www.afcrseguridad.com`.
 
 ### El ESP32 no conecta al broker
 

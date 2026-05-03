@@ -72,6 +72,24 @@ MQTT_TOPIC_LUCES = "casa/esp32/luces"
 # --- Whisper ---
 WHISPER_MODEL_NAME = "tiny"
 
+# --- CORS ---
+# Separar con comas si se necesitan otros origenes:
+# CORS_ALLOW_ORIGINS="https://afcrseguridad.com,http://localhost:3000"
+DEFAULT_CORS_ALLOW_ORIGINS = (
+    "https://afcrseguridad.com",
+    "https://www.afcrseguridad.com",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+)
+CORS_ALLOW_ORIGINS = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv(
+        "CORS_ALLOW_ORIGINS",
+        ",".join(DEFAULT_CORS_ALLOW_ORIGINS)
+    ).split(",")
+    if origin.strip()
+]
+
 # --- IA: cambiar entre OpenAI API o IA local ---
 # Valores posibles:
 #   "openai" -> usa API de OpenAI
@@ -110,7 +128,7 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # Para demo está bien. En producción, limitar dominio.
+    allow_origins=CORS_ALLOW_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
