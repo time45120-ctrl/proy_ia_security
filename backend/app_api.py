@@ -992,7 +992,15 @@ def sanitize_user_reply(respuesta_usuario: str, texto_transcrito: str, intencion
     Limpia el texto natural para el usuario y garantiza una respuesta de respaldo.
     """
     respuesta = " ".join(str(respuesta_usuario or "").strip().split())
-    if respuesta:
+    looks_like_machine_payload = (
+        respuesta.startswith("{")
+        or respuesta.startswith("[")
+        or '"intencion_json"' in respuesta
+        or '"accion"' in respuesta
+        or '"espacio"' in respuesta
+    )
+
+    if respuesta and not looks_like_machine_payload:
         return respuesta
 
     return build_default_ai_reply(texto_transcrito, intencion_json)
@@ -1041,7 +1049,7 @@ INTENT_JSON_SCHEMA = {
         },
         "detalle": {
             "type": "string",
-            "description": "Explicación breve de la intención detectada."
+            "description": "Detalle técnico breve para auditoría y depuración, no para hablar con el usuario."
         },
         "espacio": {
             "type": "string",
@@ -1063,11 +1071,17 @@ AI_INTERPRETATION_SCHEMA = {
     "properties": {
         "intencion_json": {
             **INTENT_JSON_SCHEMA,
-            "description": "JSON tecnico para dispositivos y automatizacion."
+            "description": (
+                "Respuesta JSON para el dispositivo. Debe ser técnico, estable, parseable "
+                "y sin lenguaje conversacional."
+            )
         },
         "respuesta_usuario": {
             "type": "string",
-            "description": "Respuesta natural, util y breve para mostrar al usuario."
+            "description": (
+                "Respuesta IA para el usuario. Debe estar en lenguaje natural, claro, "
+                "inteligente y comprensible por una persona."
+            )
         }
     },
     "required": ["intencion_json", "respuesta_usuario"],
@@ -1090,10 +1104,22 @@ def call_openai_intent(texto_transcrito: str) -> str:
     - Entender la intencion real del usuario, aunque hable de forma casual.
     - Ser flexible con sinonimos, frases incompletas y expresiones naturales.
     - Mantener el control de hardware seguro: nunca inventes ejecuciones fuera del contrato.
-    - En "respuesta_usuario", habla con estilo {AI_RESPONSE_STYLE}. Evita sonar robotico.
-    - Devuelve dos cosas separadas:
-      1. "intencion_json": JSON tecnico para dispositivos.
-      2. "respuesta_usuario": texto natural para el usuario.
+    - Devuelve exactamente dos canales separados:
+      1. "intencion_json": respuesta JSON para el dispositivo.
+      2. "respuesta_usuario": respuesta IA para el usuario.
+
+    Reglas del canal "intencion_json":
+    - Es exclusivamente para dispositivos, automatizacion, MQTT y logica interna.
+    - Debe ser estable, corto, parseable y sin frases conversacionales.
+    - No agregues consejos, explicaciones humanas ni texto natural dentro de este objeto.
+    - Usa solo los campos permitidos por el esquema.
+
+    Reglas del canal "respuesta_usuario":
+    - Es exclusivamente para la persona que usa el dashboard.
+    - Habla con estilo {AI_RESPONSE_STYLE}. Evita sonar robotico.
+    - No pegues JSON, payloads MQTT, nombres de campos internos ni codigo.
+    - Explica lo que entendiste con lenguaje natural, inteligente y facil de comprender.
+    - Si hay accion ejecutable, recuerda que queda lista y espera confirmacion.
 
     Capacidades actuales:
     - Luces: ejecutables despues de confirmacion del usuario.
@@ -1167,7 +1193,7 @@ def build_local_ai_prompt(texto_transcrito: str) -> str:
         Tu tarea es:
         1. Entender si el usuario quiere encender o apagar una luz.
         2. Detectar el ambiente mencionado.
-        3. Separar la salida en JSON tecnico y respuesta natural.
+        3. Separar la salida en JSON tecnico para dispositivos y respuesta natural para el usuario.
         4. Devolver SOLO un JSON válido.
         5. No devolver explicaciones fuera del JSON.
         6. Usar exactamente esta estructura:
@@ -1176,11 +1202,11 @@ def build_local_ai_prompt(texto_transcrito: str) -> str:
           "intencion_json": {{
             "texto": "texto transcrito del usuario",
             "intencion": "control_luces o otra",
-            "detalle": "explicación breve",
+            "detalle": "detalle tecnico breve",
             "espacio": "sala, comedor, cocina, cuarto_principal o desconocido",
             "accion": "ON, OFF o NONE"
           }},
-          "respuesta_usuario": "respuesta natural y breve para el usuario",
+          "respuesta_usuario": "respuesta IA natural, clara e inteligente para el usuario"
         }}
 
         Reglas:
@@ -1189,7 +1215,9 @@ def build_local_ai_prompt(texto_transcrito: str) -> str:
         - No agregues texto extra.
         - Copia el texto transcrito en el campo "intencion_json.texto".
         - El idioma del usuario es español.
-        - En "respuesta_usuario", no seas seco: confirma lo entendido y pide confirmacion si hay accion ejecutable.
+        - "intencion_json" es SOLO para dispositivos: no incluyas frases conversacionales, consejos ni explicaciones humanas.
+        - "respuesta_usuario" es SOLO para el humano: no incluyas JSON, payloads, nombres de campos internos ni codigo.
+        - En "respuesta_usuario", no seas seco: responde con lenguaje natural, inteligente, comprensible y pide confirmacion si hay accion ejecutable.
         - Si falta accion o ambiente, pide solo ese dato faltante.
         - Si habla de camaras, puertas o drones, explica que puedes preparar un plan, pero no ejecutar hardware real aun.
 
@@ -1606,9 +1634,13 @@ async def voice_intent(audio: UploadFile = File(...)):
             "ia_json": ia_json,
             "intencion_json": ia_json,
             "respuesta_usuario": respuesta_usuario,
+            "respuesta_json_dispositivo": ia_json,
+            "respuesta_ia_usuario": respuesta_usuario,
         },
         "intencion_json": ia_json,
         "respuesta_usuario": respuesta_usuario,
+        "respuesta_json_dispositivo": ia_json,
+        "respuesta_ia_usuario": respuesta_usuario,
 
         "plan": plan,
         "fase_4_mqtt": {
