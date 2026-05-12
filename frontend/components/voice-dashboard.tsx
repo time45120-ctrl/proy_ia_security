@@ -248,7 +248,7 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
       setStatusText("Backend conectado. El dashboard esta listo para recibir voz.");
     } catch (error) {
       setConnection("offline");
-      setStatusText("No se logro conectar con la API. Revisa la IP del backend.");
+      setStatusText("No se logro conectar con la API publica. Revisa dominio, HTTPS y CORS.");
       setErrorText(getErrorMessage(error));
     } finally {
       setIsChecking(false);
@@ -434,6 +434,9 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
             <p className="mt-3 max-w-xl text-sm leading-6 text-slate-300">
               Una vista simple para enviar voz a la IA y ver el estado base de
               camaras, luces, puertas y drones conectados.
+            </p>
+            <p className="mt-2 break-all text-xs text-slate-500">
+              API activa: <span className="text-slate-300">{API_BASE_URL}</span>
             </p>
           </div>
 

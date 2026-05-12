@@ -99,11 +99,66 @@ export type PairingTokenResponse = {
   mqtt_tls: boolean;
 };
 
-const DEFAULT_API_BASE_URL = "http://192.168.0.220:8000";
+const DEFAULT_API_BASE_URL = "https://api.afcrseguridad.com";
+const PRODUCTION_FRONTEND_HOSTS = new Set([
+  "afcrseguridad.com",
+  "www.afcrseguridad.com",
+]);
 
-export const API_BASE_URL = (
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? DEFAULT_API_BASE_URL
-).replace(/\/+$/, "");
+function getBrowserLocation() {
+  if (typeof globalThis.location === "undefined") {
+    return null;
+  }
+
+  return globalThis.location;
+}
+
+function isLocalOrPrivateHost(hostname: string) {
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname.startsWith("192.168.") ||
+    hostname.startsWith("10.") ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+  );
+}
+
+function normalizeApiBaseUrl(value: string) {
+  const trimmedValue = value.trim().replace(/\/+$/, "");
+
+  try {
+    const url = new URL(trimmedValue);
+    const browserLocation = getBrowserLocation();
+
+    if (
+      browserLocation &&
+      PRODUCTION_FRONTEND_HOSTS.has(browserLocation.hostname) &&
+      isLocalOrPrivateHost(url.hostname)
+    ) {
+      return DEFAULT_API_BASE_URL;
+    }
+
+    if (url.protocol === "http:" && url.hostname === "api.afcrseguridad.com") {
+      url.protocol = "https:";
+    }
+
+    if (
+      browserLocation?.protocol === "https:" &&
+      url.protocol === "http:" &&
+      !["localhost", "127.0.0.1"].includes(url.hostname)
+    ) {
+      url.protocol = "https:";
+    }
+
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return trimmedValue;
+  }
+}
+
+export const API_BASE_URL = normalizeApiBaseUrl(
+  process.env.NEXT_PUBLIC_API_BASE_URL ?? DEFAULT_API_BASE_URL,
+);
 
 export async function pingBackend() {
   const response = await fetch(`${API_BASE_URL}/ping`, {

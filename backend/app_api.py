@@ -127,10 +127,15 @@ AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").strip().lower()
 # En Linux:
 # export OPENAI_API_KEY="tu_api_key"
 #
-# Modelo recomendado para esta tarea:
-# Puedes cambiarlo por variable de entorno:
-# export OPENAI_MODEL="gpt-4o-mini"
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+# Modelo recomendado para respuestas mas inteligentes y naturales.
+# Puedes bajarlo a gpt-4o-mini si necesitas menor costo/latencia.
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+OPENAI_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "700"))
+AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.45"))
+AI_RESPONSE_STYLE = os.getenv(
+    "AI_RESPONSE_STYLE",
+    "natural, claro, cercano y con criterio tecnico"
+).strip()
 
 # --- IA local con Ollama ---
 # Puedes cambiarlo por variable de entorno:
@@ -143,6 +148,12 @@ ESPACIOS_VALIDOS = {
     "comedor",
     "cocina",
     "cuarto_principal"
+}
+ESPACIOS_DESCRIPCION = {
+    "sala": "sala",
+    "comedor": "comedor",
+    "cocina": "cocina",
+    "cuarto_principal": "cuarto principal",
 }
 
 # --- Planes de voz pendientes de confirmacion ---
@@ -431,7 +442,14 @@ def root():
         "ok": True,
         "message": "API viva",
         "demo": "4 LEDs por ambiente",
-        "ai_provider": AI_PROVIDER
+        "ai_provider": AI_PROVIDER,
+        "ai_config": {
+            "openai_model": OPENAI_MODEL,
+            "openai_transcribe_model": OPENAI_TRANSCRIBE_MODEL,
+            "max_output_tokens": OPENAI_MAX_OUTPUT_TOKENS,
+            "temperature": AI_TEMPERATURE,
+            "response_style": AI_RESPONSE_STYLE,
+        }
     }
 
 
@@ -874,13 +892,26 @@ def fallback_rule_parser(texto_transcrito: str) -> dict:
         espacio = "cuarto_principal"
 
     intencion = "control_luces" if accion in {"ON", "OFF"} and espacio != "desconocido" else "otra"
+    if intencion == "control_luces":
+        accion_texto = "encender" if accion == "ON" else "apagar"
+        respuesta_usuario = (
+            f"Entendi que quieres {accion_texto} la luz de "
+            f"{ESPACIOS_DESCRIPCION.get(espacio, espacio)}. Lo dejo preparado "
+            "para que confirmes antes de ejecutarlo."
+        )
+    else:
+        respuesta_usuario = (
+            "Te escuche, pero necesito que me digas una accion y un ambiente "
+            "concreto para poder preparar un comando."
+        )
 
     return {
         "texto": texto_transcrito,
         "intencion": intencion,
         "detalle": "resultado por reglas locales",
         "espacio": espacio,
-        "accion": accion
+        "accion": accion,
+        "respuesta_usuario": respuesta_usuario
     }
 
 
@@ -895,6 +926,7 @@ def sanitize_ai_json(ia_json: dict | None, texto_transcrito: str) -> dict:
     texto = str(ia_json.get("texto", texto_transcrito)).strip()
     intencion = str(ia_json.get("intencion", "otra")).strip().lower()
     detalle = str(ia_json.get("detalle", "")).strip()
+    respuesta_usuario = str(ia_json.get("respuesta_usuario", "")).strip()
     espacio = normalize_espacio(str(ia_json.get("espacio", "desconocido")))
     accion = str(ia_json.get("accion", "NONE")).strip().upper()
 
@@ -912,7 +944,8 @@ def sanitize_ai_json(ia_json: dict | None, texto_transcrito: str) -> dict:
         "intencion": intencion,
         "detalle": detalle,
         "espacio": espacio,
-        "accion": accion
+        "accion": accion,
+        "respuesta_usuario": respuesta_usuario
     }
 
     # Si quedó ambiguo, intenta rescatar con fallback
@@ -931,7 +964,38 @@ def sanitize_ai_json(ia_json: dict | None, texto_transcrito: str) -> dict:
         if not saneado["detalle"]:
             saneado["detalle"] = "ajustado con validación local"
 
+        if not saneado["respuesta_usuario"]:
+            saneado["respuesta_usuario"] = fallback.get("respuesta_usuario", "")
+
+    if not saneado["respuesta_usuario"]:
+        saneado["respuesta_usuario"] = build_default_ai_reply(texto_transcrito, saneado)
+
     return saneado
+
+
+def build_default_ai_reply(texto_transcrito: str, ia_json: dict) -> str:
+    """
+    Construye una respuesta conversacional si el modelo no devuelve una.
+    """
+    intencion = ia_json.get("intencion", "otra")
+    espacio = ia_json.get("espacio", "desconocido")
+    accion = ia_json.get("accion", "NONE")
+
+    if intencion == "control_luces" and espacio != "desconocido" and accion in {"ON", "OFF"}:
+        accion_texto = "encender" if accion == "ON" else "apagar"
+        return (
+            f"Listo, entendi que quieres {accion_texto} la luz de "
+            f"{ESPACIOS_DESCRIPCION.get(espacio, espacio)}. Te preparo el plan "
+            "y espero tu confirmacion antes de tocar el hardware."
+        )
+
+    if texto_transcrito:
+        return (
+            "Entendi la solicitud, pero no veo todavia un comando ejecutable de "
+            "luces. Puedo ayudarte mejor si mencionas accion y ambiente."
+        )
+
+    return "No pude obtener una transcripcion clara. Intenta decir el comando otra vez."
 
 
 # =========================================================
@@ -954,6 +1018,10 @@ INTENT_JSON_SCHEMA = {
             "type": "string",
             "description": "Explicación breve de la intención detectada."
         },
+        "respuesta_usuario": {
+            "type": "string",
+            "description": "Respuesta natural, útil y breve para mostrar al usuario."
+        },
         "espacio": {
             "type": "string",
             "enum": ["sala", "comedor", "cocina", "cuarto_principal", "desconocido"],
@@ -965,7 +1033,7 @@ INTENT_JSON_SCHEMA = {
             "description": "Acción solicitada."
         }
     },
-    "required": ["texto", "intencion", "detalle", "espacio", "accion"],
+    "required": ["texto", "intencion", "detalle", "respuesta_usuario", "espacio", "accion"],
     "additionalProperties": False
 }
 
@@ -977,21 +1045,38 @@ def call_openai_intent(texto_transcrito: str) -> str:
     if openai_client is None:
         raise RuntimeError("OpenAI no está inicializado. Revisa OPENAI_API_KEY o instala la librería openai.")
 
-    system_prompt = """
-    Eres un sistema de análisis de intenciones para control de luces por ambiente.
-    Tu tarea es interpretar comandos en español y devolver únicamente la estructura solicitada.
+    system_prompt = f"""
+    Eres Aura Home AI, un asistente domotico de voz para un laboratorio IoT.
+    Interpretas comandos en español y devuelves SOLO el JSON solicitado por el esquema.
 
-    Reglas:
-    - Si el usuario quiere prender, encender, activar una luz o foco, accion = ON.
-    - Si el usuario quiere apagar o desactivar una luz o foco, accion = OFF.
-    - Si no está claro, accion = NONE.
+    Objetivo:
+    - Entender la intencion real del usuario, aunque hable de forma casual.
+    - Ser flexible con sinonimos, frases incompletas y expresiones naturales.
+    - Mantener el control de hardware seguro: nunca inventes ejecuciones fuera del contrato.
+    - En "respuesta_usuario", habla con estilo {AI_RESPONSE_STYLE}. Evita sonar robotico.
+
+    Capacidades actuales:
+    - Luces: ejecutables despues de confirmacion del usuario.
+    - Camaras, puertas y drones: pueden entenderse y describirse como plan, pero no ejecutar hardware real todavia.
+
+    Reglas de clasificacion:
+    - Si pide prender, encender, activar, iluminar, subir luz, poner luz o prender foco, accion = ON.
+    - Si pide apagar, desactivar, quitar luz, bajar luz o dejar a oscuras, accion = OFF.
+    - Si no hay accion clara, accion = NONE.
     - Si menciona sala, espacio = sala.
     - Si menciona comedor, espacio = comedor.
     - Si menciona cocina, espacio = cocina.
-    - Si menciona cuarto principal, habitación principal o dormitorio principal, espacio = cuarto_principal.
+    - Si menciona cuarto principal, habitacion principal, dormitorio principal o recamara principal, espacio = cuarto_principal.
     - Si no detectas ambiente, espacio = desconocido.
     - Si quiere controlar luces, intencion = control_luces.
-    - Si no corresponde a control de luces, intencion = otra.
+    - Si habla de camaras, puertas, drones, seguridad general, preguntas o conversacion normal, intencion = otra.
+
+    Como escribir "respuesta_usuario":
+    - Maximo dos frases.
+    - Si es un comando claro de luces, confirma lo entendido y recuerda que esperas confirmacion antes de ejecutar.
+    - Si falta ambiente o accion, pide solo el dato que falta.
+    - Si es camaras/puertas/drones, responde que puedes preparar el plan, pero que ese modulo aun no ejecuta hardware real.
+    - Si es conversacion general, responde utilmente sin prometer acciones fisicas.
     """
 
     user_prompt = f'El usuario dijo: "{texto_transcrito}"'
@@ -1008,6 +1093,7 @@ def call_openai_intent(texto_transcrito: str) -> str:
                 "content": user_prompt
             }
         ],
+        temperature=AI_TEMPERATURE,
         text={
             "format": {
                 "type": "json_schema",
@@ -1016,7 +1102,7 @@ def call_openai_intent(texto_transcrito: str) -> str:
                 "strict": True
             }
         },
-        max_output_tokens=300
+        max_output_tokens=OPENAI_MAX_OUTPUT_TOKENS
     )
 
     return response.output_text.strip()
@@ -1032,7 +1118,8 @@ def build_local_ai_prompt(texto_transcrito: str) -> str:
     Se mantiene compatible con Qwen2/Ollama.
     """
     return textwrap.dedent(f"""
-        Eres un sistema de análisis de intenciones para control de luces por ambiente.
+        Eres Aura Home AI, un asistente domotico de voz para un laboratorio IoT.
+        Interpreta comandos en español con criterio y tono natural.
 
         El usuario dijo:
         "{texto_transcrito}"
@@ -1040,14 +1127,16 @@ def build_local_ai_prompt(texto_transcrito: str) -> str:
         Tu tarea es:
         1. Entender si el usuario quiere encender o apagar una luz.
         2. Detectar el ambiente mencionado.
-        3. Devolver SOLO un JSON válido.
-        4. No devolver explicaciones fuera del JSON.
-        5. Usar exactamente esta estructura:
+        3. Redactar una respuesta breve, clara y natural para el usuario.
+        4. Devolver SOLO un JSON válido.
+        5. No devolver explicaciones fuera del JSON.
+        6. Usar exactamente esta estructura:
 
         {{
           "texto": "texto transcrito del usuario",
           "intencion": "control_luces o otra",
           "detalle": "explicación breve",
+          "respuesta_usuario": "respuesta natural y breve para el usuario",
           "espacio": "sala, comedor, cocina, cuarto_principal o desconocido",
           "accion": "ON, OFF o NONE"
         }}
@@ -1058,6 +1147,9 @@ def build_local_ai_prompt(texto_transcrito: str) -> str:
         - No agregues texto extra.
         - Copia el texto transcrito en el campo "texto".
         - El idioma del usuario es español.
+        - En "respuesta_usuario", no seas seco: confirma lo entendido y pide confirmacion si hay accion ejecutable.
+        - Si falta accion o ambiente, pide solo ese dato faltante.
+        - Si habla de camaras, puertas o drones, explica que puedes preparar un plan, pero no ejecutar hardware real aun.
 
         Para el campo "intencion":
         - Si quiere encender o apagar una luz de un ambiente, usa "control_luces".
@@ -1076,10 +1168,10 @@ def build_local_ai_prompt(texto_transcrito: str) -> str:
         - Si no está claro, usa "desconocido".
 
         Ejemplos:
-        - "prende luz cocina" -> {{"texto":"prende luz cocina","intencion":"control_luces","detalle":"encender luz de cocina","espacio":"cocina","accion":"ON"}}
-        - "apaga la luz de la sala" -> {{"texto":"apaga la luz de la sala","intencion":"control_luces","detalle":"apagar luz de sala","espacio":"sala","accion":"OFF"}}
-        - "enciende la luz del comedor" -> {{"texto":"enciende la luz del comedor","intencion":"control_luces","detalle":"encender luz de comedor","espacio":"comedor","accion":"ON"}}
-        - "apaga cuarto principal" -> {{"texto":"apaga cuarto principal","intencion":"control_luces","detalle":"apagar luz del cuarto principal","espacio":"cuarto_principal","accion":"OFF"}}
+        - "prende luz cocina" -> {{"texto":"prende luz cocina","intencion":"control_luces","detalle":"encender luz de cocina","respuesta_usuario":"Entendi: quieres encender la luz de cocina. Lo dejo listo y espero tu confirmacion para ejecutarlo.","espacio":"cocina","accion":"ON"}}
+        - "apaga la luz de la sala" -> {{"texto":"apaga la luz de la sala","intencion":"control_luces","detalle":"apagar luz de sala","respuesta_usuario":"Perfecto, preparo el apagado de la luz de sala y no lo ejecuto hasta que confirmes.","espacio":"sala","accion":"OFF"}}
+        - "enciende la luz del comedor" -> {{"texto":"enciende la luz del comedor","intencion":"control_luces","detalle":"encender luz de comedor","respuesta_usuario":"Claro, puedo encender la luz del comedor; primero te muestro el plan para confirmarlo.","espacio":"comedor","accion":"ON"}}
+        - "apaga cuarto principal" -> {{"texto":"apaga cuarto principal","intencion":"control_luces","detalle":"apagar luz del cuarto principal","respuesta_usuario":"Entendido, preparo apagar la luz del cuarto principal y quedo esperando tu confirmacion.","espacio":"cuarto_principal","accion":"OFF"}}
     """)
 
 
@@ -1266,35 +1358,37 @@ def build_voice_intent_plan(texto_transcrito: str, ia_json: dict) -> dict:
         "general": "sistema"
     }
     module_label = module_labels.get(module, "sistema")
+    ai_reply = str(ia_json.get("respuesta_usuario", "")).strip()
+    espacio_label = ESPACIOS_DESCRIPCION.get(espacio, espacio)
 
     if can_execute:
-        respuesta = (
-            f"Entendi el comando para {module_label}. Preparare la accion "
-            f"{action} en {espacio} cuando confirmes la ejecucion."
+        respuesta = ai_reply or (
+            f"Entendi el comando para {module_label}: {action} en {espacio_label}. "
+            "Lo dejo preparado y espero tu confirmacion antes de ejecutarlo."
         )
         steps = [
-            "Validar la transcripcion del comando de voz.",
-            f"Confirmar que el modulo objetivo es {module_label}.",
-            f"Publicar el payload MQTT preparado en {mqtt_preview['mqtt_topic']}.",
+            "Validar lo que se transcribio del comando de voz.",
+            f"Preparar {module_label} con accion {action} para {espacio_label}.",
+            f"Esperar confirmacion y publicar el payload MQTT en {mqtt_preview['mqtt_topic']}.",
         ]
     elif module in {"cameras", "doors", "drones"}:
-        respuesta = (
-            f"Entendi una solicitud para {module_label}. Por ahora te muestro "
-            "el plan escrito, pero este modulo aun no ejecuta hardware real."
+        respuesta = ai_reply or (
+            f"Entendi una solicitud para {module_label}. Puedo ordenarla como plan, "
+            "pero ese modulo aun no tiene ejecucion fisica habilitada."
         )
         steps = [
-            "Validar la transcripcion del comando de voz.",
+            "Validar lo que se transcribio del comando de voz.",
             f"Identificar el modulo {module_label} y la accion sugerida {action}.",
-            "Mantener la accion en modo plan hasta conectar el hardware del modulo.",
+            "Mantenerlo como plan hasta conectar la ejecucion real del modulo.",
         ]
     else:
-        respuesta = (
-            "Escuche tu solicitud, pero no detecte una accion ejecutable para los "
+        respuesta = ai_reply or (
+            "Escuche tu solicitud, pero me falta una accion ejecutable para los "
             "modulos conectados."
         )
         steps = [
             "Revisar la transcripcion del comando.",
-            "Pedir un comando mas especifico si falta modulo, ambiente o accion.",
+            "Pedir solo el dato faltante si falta modulo, ambiente o accion.",
         ]
 
     plan = {
