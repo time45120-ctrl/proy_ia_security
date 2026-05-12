@@ -910,12 +910,34 @@ def fallback_rule_parser(texto_transcrito: str) -> dict:
         "intencion": intencion,
         "detalle": "resultado por reglas locales",
         "espacio": espacio,
-        "accion": accion,
-        "respuesta_usuario": respuesta_usuario
+        "accion": accion
     }
 
 
-def sanitize_ai_json(ia_json: dict | None, texto_transcrito: str) -> dict:
+def split_ai_interpretation(ia_json: dict | None) -> tuple[dict | None, str]:
+    """
+    Separa la salida de la IA en dos canales:
+    - intencion_json: datos para dispositivos y automatizacion.
+    - respuesta_usuario: texto natural para la persona.
+    Acepta el formato nuevo y tambien el formato anterior por compatibilidad.
+    """
+    if not ia_json:
+        return None, ""
+
+    if isinstance(ia_json.get("intencion_json"), dict):
+        return ia_json.get("intencion_json"), str(ia_json.get("respuesta_usuario", "")).strip()
+
+    legacy_intent = dict(ia_json)
+    respuesta_usuario = str(legacy_intent.pop("respuesta_usuario", "")).strip()
+
+    return legacy_intent, respuesta_usuario
+
+
+def sanitize_ai_json(
+    ia_json: dict | None,
+    texto_transcrito: str,
+    respuesta_usuario: str = "",
+) -> dict:
     """
     Limpia y valida el JSON generado por la IA.
     Si la IA falla, usa fallback por reglas.
@@ -926,7 +948,6 @@ def sanitize_ai_json(ia_json: dict | None, texto_transcrito: str) -> dict:
     texto = str(ia_json.get("texto", texto_transcrito)).strip()
     intencion = str(ia_json.get("intencion", "otra")).strip().lower()
     detalle = str(ia_json.get("detalle", "")).strip()
-    respuesta_usuario = str(ia_json.get("respuesta_usuario", "")).strip()
     espacio = normalize_espacio(str(ia_json.get("espacio", "desconocido")))
     accion = str(ia_json.get("accion", "NONE")).strip().upper()
 
@@ -944,8 +965,7 @@ def sanitize_ai_json(ia_json: dict | None, texto_transcrito: str) -> dict:
         "intencion": intencion,
         "detalle": detalle,
         "espacio": espacio,
-        "accion": accion,
-        "respuesta_usuario": respuesta_usuario
+        "accion": accion
     }
 
     # Si quedó ambiguo, intenta rescatar con fallback
@@ -964,13 +984,18 @@ def sanitize_ai_json(ia_json: dict | None, texto_transcrito: str) -> dict:
         if not saneado["detalle"]:
             saneado["detalle"] = "ajustado con validación local"
 
-        if not saneado["respuesta_usuario"]:
-            saneado["respuesta_usuario"] = fallback.get("respuesta_usuario", "")
-
-    if not saneado["respuesta_usuario"]:
-        saneado["respuesta_usuario"] = build_default_ai_reply(texto_transcrito, saneado)
-
     return saneado
+
+
+def sanitize_user_reply(respuesta_usuario: str, texto_transcrito: str, intencion_json: dict) -> str:
+    """
+    Limpia el texto natural para el usuario y garantiza una respuesta de respaldo.
+    """
+    respuesta = " ".join(str(respuesta_usuario or "").strip().split())
+    if respuesta:
+        return respuesta
+
+    return build_default_ai_reply(texto_transcrito, intencion_json)
 
 
 def build_default_ai_reply(texto_transcrito: str, ia_json: dict) -> str:
@@ -1018,10 +1043,6 @@ INTENT_JSON_SCHEMA = {
             "type": "string",
             "description": "Explicación breve de la intención detectada."
         },
-        "respuesta_usuario": {
-            "type": "string",
-            "description": "Respuesta natural, útil y breve para mostrar al usuario."
-        },
         "espacio": {
             "type": "string",
             "enum": ["sala", "comedor", "cocina", "cuarto_principal", "desconocido"],
@@ -1033,7 +1054,23 @@ INTENT_JSON_SCHEMA = {
             "description": "Acción solicitada."
         }
     },
-    "required": ["texto", "intencion", "detalle", "respuesta_usuario", "espacio", "accion"],
+    "required": ["texto", "intencion", "detalle", "espacio", "accion"],
+    "additionalProperties": False
+}
+
+AI_INTERPRETATION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "intencion_json": {
+            **INTENT_JSON_SCHEMA,
+            "description": "JSON tecnico para dispositivos y automatizacion."
+        },
+        "respuesta_usuario": {
+            "type": "string",
+            "description": "Respuesta natural, util y breve para mostrar al usuario."
+        }
+    },
+    "required": ["intencion_json", "respuesta_usuario"],
     "additionalProperties": False
 }
 
@@ -1054,6 +1091,9 @@ def call_openai_intent(texto_transcrito: str) -> str:
     - Ser flexible con sinonimos, frases incompletas y expresiones naturales.
     - Mantener el control de hardware seguro: nunca inventes ejecuciones fuera del contrato.
     - En "respuesta_usuario", habla con estilo {AI_RESPONSE_STYLE}. Evita sonar robotico.
+    - Devuelve dos cosas separadas:
+      1. "intencion_json": JSON tecnico para dispositivos.
+      2. "respuesta_usuario": texto natural para el usuario.
 
     Capacidades actuales:
     - Luces: ejecutables despues de confirmacion del usuario.
@@ -1097,8 +1137,8 @@ def call_openai_intent(texto_transcrito: str) -> str:
         text={
             "format": {
                 "type": "json_schema",
-                "name": "intencion_luces",
-                "schema": INTENT_JSON_SCHEMA,
+                "name": "interpretacion_voz",
+                "schema": AI_INTERPRETATION_SCHEMA,
                 "strict": True
             }
         },
@@ -1127,25 +1167,27 @@ def build_local_ai_prompt(texto_transcrito: str) -> str:
         Tu tarea es:
         1. Entender si el usuario quiere encender o apagar una luz.
         2. Detectar el ambiente mencionado.
-        3. Redactar una respuesta breve, clara y natural para el usuario.
+        3. Separar la salida en JSON tecnico y respuesta natural.
         4. Devolver SOLO un JSON válido.
         5. No devolver explicaciones fuera del JSON.
         6. Usar exactamente esta estructura:
 
         {{
-          "texto": "texto transcrito del usuario",
-          "intencion": "control_luces o otra",
-          "detalle": "explicación breve",
+          "intencion_json": {{
+            "texto": "texto transcrito del usuario",
+            "intencion": "control_luces o otra",
+            "detalle": "explicación breve",
+            "espacio": "sala, comedor, cocina, cuarto_principal o desconocido",
+            "accion": "ON, OFF o NONE"
+          }},
           "respuesta_usuario": "respuesta natural y breve para el usuario",
-          "espacio": "sala, comedor, cocina, cuarto_principal o desconocido",
-          "accion": "ON, OFF o NONE"
         }}
 
         Reglas:
         - Responde SOLO con JSON válido.
         - No uses Markdown.
         - No agregues texto extra.
-        - Copia el texto transcrito en el campo "texto".
+        - Copia el texto transcrito en el campo "intencion_json.texto".
         - El idioma del usuario es español.
         - En "respuesta_usuario", no seas seco: confirma lo entendido y pide confirmacion si hay accion ejecutable.
         - Si falta accion o ambiente, pide solo ese dato faltante.
@@ -1168,10 +1210,10 @@ def build_local_ai_prompt(texto_transcrito: str) -> str:
         - Si no está claro, usa "desconocido".
 
         Ejemplos:
-        - "prende luz cocina" -> {{"texto":"prende luz cocina","intencion":"control_luces","detalle":"encender luz de cocina","respuesta_usuario":"Entendi: quieres encender la luz de cocina. Lo dejo listo y espero tu confirmacion para ejecutarlo.","espacio":"cocina","accion":"ON"}}
-        - "apaga la luz de la sala" -> {{"texto":"apaga la luz de la sala","intencion":"control_luces","detalle":"apagar luz de sala","respuesta_usuario":"Perfecto, preparo el apagado de la luz de sala y no lo ejecuto hasta que confirmes.","espacio":"sala","accion":"OFF"}}
-        - "enciende la luz del comedor" -> {{"texto":"enciende la luz del comedor","intencion":"control_luces","detalle":"encender luz de comedor","respuesta_usuario":"Claro, puedo encender la luz del comedor; primero te muestro el plan para confirmarlo.","espacio":"comedor","accion":"ON"}}
-        - "apaga cuarto principal" -> {{"texto":"apaga cuarto principal","intencion":"control_luces","detalle":"apagar luz del cuarto principal","respuesta_usuario":"Entendido, preparo apagar la luz del cuarto principal y quedo esperando tu confirmacion.","espacio":"cuarto_principal","accion":"OFF"}}
+        - "prende luz cocina" -> {{"intencion_json":{{"texto":"prende luz cocina","intencion":"control_luces","detalle":"encender luz de cocina","espacio":"cocina","accion":"ON"}},"respuesta_usuario":"Entendi: quieres encender la luz de cocina. Lo dejo listo y espero tu confirmacion para ejecutarlo."}}
+        - "apaga la luz de la sala" -> {{"intencion_json":{{"texto":"apaga la luz de la sala","intencion":"control_luces","detalle":"apagar luz de sala","espacio":"sala","accion":"OFF"}},"respuesta_usuario":"Perfecto, preparo el apagado de la luz de sala y no lo ejecuto hasta que confirmes."}}
+        - "enciende la luz del comedor" -> {{"intencion_json":{{"texto":"enciende la luz del comedor","intencion":"control_luces","detalle":"encender luz de comedor","espacio":"comedor","accion":"ON"}},"respuesta_usuario":"Claro, puedo encender la luz del comedor; primero te muestro el plan para confirmarlo."}}
+        - "apaga cuarto principal" -> {{"intencion_json":{{"texto":"apaga cuarto principal","intencion":"control_luces","detalle":"apagar luz del cuarto principal","espacio":"cuarto_principal","accion":"OFF"}},"respuesta_usuario":"Entendido, preparo apagar la luz del cuarto principal y quedo esperando tu confirmacion."}}
     """)
 
 
@@ -1201,18 +1243,20 @@ def call_local_ai_intent(texto_transcrito: str) -> str:
 # FASE 3: IA -> TEXTO A JSON DE INTENCIÓN
 # =========================================================
 
-def fase_3_interpretar_intencion(texto_transcrito: str) -> tuple[str, dict | None, dict]:
+def fase_3_interpretar_intencion(texto_transcrito: str) -> tuple[str, dict | None, dict, str]:
     """
     FASE 3:
     Interpreta el texto transcrito usando OpenAI API o IA local.
     Devuelve:
     - ia_raw: respuesta cruda de la IA
     - ia_json_raw: JSON extraído antes de limpiar
-    - ia_json: JSON final limpio y validado
+    - ia_json: intencion JSON final limpio y validado para dispositivos
+    - respuesta_usuario: respuesta natural para el usuario
     """
     if not texto_transcrito:
         ia_json = fallback_rule_parser(texto_transcrito)
-        return "", None, ia_json
+        respuesta_usuario = build_default_ai_reply(texto_transcrito, ia_json)
+        return "", None, ia_json, respuesta_usuario
 
     ia_raw = ""
 
@@ -1232,9 +1276,11 @@ def fase_3_interpretar_intencion(texto_transcrito: str) -> tuple[str, dict | Non
         ia_raw = ""
 
     ia_json_raw = extract_json(ia_raw)
-    ia_json = sanitize_ai_json(ia_json_raw, texto_transcrito)
+    ia_json_candidate, respuesta_usuario_raw = split_ai_interpretation(ia_json_raw)
+    ia_json = sanitize_ai_json(ia_json_candidate, texto_transcrito, respuesta_usuario_raw)
+    respuesta_usuario = sanitize_user_reply(respuesta_usuario_raw, texto_transcrito, ia_json)
 
-    return ia_raw, ia_json_raw, ia_json
+    return ia_raw, ia_json_raw, ia_json, respuesta_usuario
 
 
 # =========================================================
@@ -1328,7 +1374,11 @@ def build_light_mqtt_preview(espacio: str, accion: str) -> tuple[dict | None, st
     return payload, topic
 
 
-def build_voice_intent_plan(texto_transcrito: str, ia_json: dict) -> dict:
+def build_voice_intent_plan(
+    texto_transcrito: str,
+    ia_json: dict,
+    respuesta_usuario: str = "",
+) -> dict:
     """
     Crea un plan pendiente para que el usuario lo confirme antes de ejecutar.
     """
@@ -1358,7 +1408,7 @@ def build_voice_intent_plan(texto_transcrito: str, ia_json: dict) -> dict:
         "general": "sistema"
     }
     module_label = module_labels.get(module, "sistema")
-    ai_reply = str(ia_json.get("respuesta_usuario", "")).strip()
+    ai_reply = str(respuesta_usuario or "").strip()
     espacio_label = ESPACIOS_DESCRIPCION.get(espacio, espacio)
 
     if can_execute:
@@ -1526,12 +1576,12 @@ async def voice_intent(audio: UploadFile = File(...)):
     # -------------------------
     # FASE 3
     # -------------------------
-    ia_raw, ia_json_raw, ia_json = fase_3_interpretar_intencion(texto_transcrito)
+    ia_raw, ia_json_raw, ia_json, respuesta_usuario = fase_3_interpretar_intencion(texto_transcrito)
 
     # -------------------------
     # PLAN PENDIENTE
     # -------------------------
-    plan = build_voice_intent_plan(texto_transcrito, ia_json)
+    plan = build_voice_intent_plan(texto_transcrito, ia_json, respuesta_usuario)
 
     # -------------------------
     # RESPUESTA FINAL
@@ -1553,8 +1603,12 @@ async def voice_intent(audio: UploadFile = File(...)):
         "fase_3_ia_json": {
             "ia_raw": ia_raw,
             "ia_json_raw": ia_json_raw,
-            "ia_json": ia_json
+            "ia_json": ia_json,
+            "intencion_json": ia_json,
+            "respuesta_usuario": respuesta_usuario,
         },
+        "intencion_json": ia_json,
+        "respuesta_usuario": respuesta_usuario,
 
         "plan": plan,
         "fase_4_mqtt": {
