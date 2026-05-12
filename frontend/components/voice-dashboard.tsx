@@ -94,22 +94,22 @@ const dashboardCards: Array<{
   {
     detail: "cameras",
     device: devices[2],
-    className: "order-2 lg:order-none lg:col-start-2 lg:row-start-1",
+    className: "order-2 xl:order-none xl:col-start-2 xl:row-start-1",
   },
   {
     detail: "lights",
     device: devices[0],
-    className: "order-3 lg:order-none lg:col-start-2 lg:row-start-2",
+    className: "order-3 xl:order-none xl:col-start-2 xl:row-start-2",
   },
   {
     detail: "doors",
     device: devices[1],
-    className: "order-4 lg:order-none lg:col-start-2 lg:row-start-3",
+    className: "order-4 xl:order-none xl:col-start-2 xl:row-start-3",
   },
   {
     detail: "drones",
     device: devices[3],
-    className: "order-5 lg:order-none lg:col-start-2 lg:row-start-4",
+    className: "order-5 xl:order-none xl:col-start-2 xl:row-start-4",
   },
 ];
 
@@ -453,8 +453,8 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
           </div>
         </header>
 
-        <section className="grid gap-3 sm:gap-4 lg:grid-cols-[minmax(0,1fr)_20rem] xl:grid-cols-[minmax(0,1fr)_22rem]">
-          <section className="order-1 rounded-lg border border-white/10 bg-[#08111f]/90 p-4 shadow-glow sm:p-5 lg:col-start-1 lg:row-span-4 lg:min-h-[44rem] lg:p-6 xl:min-h-[46rem]">
+        <section className="grid gap-3 sm:gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
+          <section className="order-1 rounded-lg border border-white/10 bg-[#08111f]/90 p-4 shadow-glow sm:p-5 lg:p-6 xl:col-start-1 xl:row-span-4 xl:min-h-[46rem]">
             <AiCommandCard
               activeContext={
                 activeDetail === "ia"
@@ -490,7 +490,7 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
               className={
                 activeDetail === "ia"
                   ? card.className
-                  : "order-2 lg:order-none lg:col-start-2 lg:row-start-1"
+                  : "order-2 xl:order-none xl:col-start-2 xl:row-start-1"
               }
               isActive={activeDetail === card.detail}
               onEnter={() => setActiveDetail(card.detail)}
@@ -581,7 +581,7 @@ function AiCommandCard({
         <SignalPill state={connection} />
       </div>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)] lg:items-start xl:grid-cols-[17rem_minmax(0,1fr)]">
+      <div className="mt-6 grid gap-6 xl:grid-cols-[17rem_minmax(0,1fr)] xl:items-start">
         <div>
           <button
             type="button"
@@ -615,7 +615,7 @@ function AiCommandCard({
           ) : null}
         </div>
 
-        <div className="grid gap-4 border-t border-white/10 pt-4 text-sm lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+        <div className="grid gap-4 border-t border-white/10 pt-4 text-sm xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0">
           <div className="grid gap-2">
             <InfoRow label="Transcripcion" value={transcript} />
             <InfoRow label="Respuesta IA para el usuario" value={userReply} wide />
@@ -848,13 +848,13 @@ function SystemCard({
 }) {
   return (
     <article
-      className={`rounded-lg border bg-white/[0.04] p-4 sm:p-5 lg:p-4 xl:p-5 ${
+      className={`rounded-lg border bg-white/[0.04] p-4 sm:p-5 ${
         isActive ? "border-[#44c7f4]/40 shadow-[0_0_22px_rgba(68,199,244,0.12)]" : "border-white/10"
       } ${className ?? ""}`}
     >
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h3 className="font-display text-lg font-semibold leading-tight text-white sm:text-xl lg:text-lg xl:text-xl">
+          <h3 className="font-display text-lg font-semibold leading-tight text-white sm:text-xl">
             {device.title}
           </h3>
           <p className="mt-2 text-sm leading-6 text-slate-400">{device.status}</p>
@@ -866,8 +866,8 @@ function SystemCard({
         </span>
       </div>
 
-      <div className="mt-5 flex items-end justify-between gap-4 lg:mt-4 xl:mt-6">
-        <p className="font-display text-4xl font-semibold text-white sm:text-5xl lg:text-4xl xl:text-5xl">
+      <div className="mt-5 flex items-end justify-between gap-4 xl:mt-6">
+        <p className="font-display text-4xl font-semibold text-white sm:text-5xl">
           {device.count}
         </p>
         <span className="rounded-md border border-white/10 px-2 py-1 text-xs uppercase tracking-[0.14em] text-slate-300">

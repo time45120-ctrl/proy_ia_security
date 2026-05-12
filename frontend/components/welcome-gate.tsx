@@ -348,7 +348,7 @@ function SyncPage({
           </p>
         ) : null}
 
-        <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
           <form
             onSubmit={handleSubmit}
             className="rounded-lg border border-white/10 bg-[#08111f]/90 p-4 shadow-glow sm:p-5 lg:p-6"
