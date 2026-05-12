@@ -13,6 +13,7 @@ import {
 
 const heroImageUrl =
   "https://lh3.googleusercontent.com/aida-public/AB6AXuDqWiFZT724rqYi7LN287axHfinPHKjd5W28KOvOc7Ln0D1SJN66Og1Pcl4X6YLiUoQwRyWHto6LAVhLhcfO-kt101rbQUQn0vWeaXhmdCjZGTMwdyi3eeK6py4eqnVs4CiMI76xJeqK9q3zzlVmYRsig3AyRXWbYUoirjNr2PM3ToTiEgrhIoKZGn7uOit4VLRncVmsShe0bU4rpxHCAOwFn_sAoVo4piKt1a_5ZfODG0_0-eiMdn4XkZnTobLe708E-ivNz6N7c50";
+const frontendBuildLabel = "f1.10";
 
 type AppView = "welcome" | "sync" | "dashboard";
 type DeviceType = "Luces" | "Camaras" | "Puertas" | "Drones";
@@ -117,7 +118,10 @@ export function WelcomeGate() {
 
 function WelcomeScreen({ onStart }: { onStart: () => void }) {
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden px-5 py-10 text-center text-[#dde3e7] sm:px-8">
+    <main
+      data-build={frontendBuildLabel}
+      className="relative flex min-h-screen items-center justify-center overflow-hidden px-5 py-10 text-center text-[#dde3e7] sm:px-8"
+    >
       <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
         <div className="h-[28rem] w-[28rem] rounded-full bg-[#4cd6ff]/10 blur-[120px] sm:h-[44rem] sm:w-[44rem]" />
       </div>
@@ -138,6 +142,9 @@ function WelcomeScreen({ onStart }: { onStart: () => void }) {
           <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-[#bbc9cf]">
             Tu asistente personal con IA esta listo para orquestar cada rincon de
             tu espacio.
+          </p>
+          <p className="mt-3 text-xs uppercase tracking-[0.18em] text-slate-500">
+            Version {frontendBuildLabel}
           </p>
 
           <button
