@@ -1,6 +1,8 @@
 .env
 .env.*
 !.env.example
+devices.db
+devices.db-*
 
 venv/
 .venv/

@@ -1,5 +1,5 @@
-import { VoiceDashboard } from "@/components/voice-dashboard";
+import { WelcomeGate } from "@/components/welcome-gate";
 
 export default function Home() {
-  return <VoiceDashboard />;
+  return <WelcomeGate />;
 }

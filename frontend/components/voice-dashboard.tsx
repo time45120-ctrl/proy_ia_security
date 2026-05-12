@@ -1,19 +1,22 @@
 "use client";
 
-import type { ChangeEvent, ReactElement } from "react";
+import type { ReactElement } from "react";
 import { useEffect, useRef, useState } from "react";
 import {
   API_BASE_URL,
+  confirmVoiceIntentPlan,
   pingBackend,
-  sendVoiceIntent,
+  sendVoiceIntentPreview,
   type BackendConnectionState,
   type MqttLightPayload,
+  type VoiceIntentConfirmResponse,
   type VoiceIntentResponse,
 } from "@/lib/backend-api";
 
 type DeviceCard = {
-  id: string;
+  id: DeviceDetailId;
   title: string;
+  buttonLabel: string;
   count: number;
   description: string;
   status: string;
@@ -22,10 +25,25 @@ type DeviceCard = {
   Icon: (props: { className?: string }) => ReactElement;
 };
 
+type DeviceDetailId = "lights" | "doors" | "cameras" | "drones";
+type ActiveDetail = "ia" | DeviceDetailId;
+
+type DetailDashboardConfig = {
+  id: DeviceDetailId;
+  eyebrow: string;
+  title: string;
+  description: string;
+  aiMessage: string;
+  metrics: Array<{ label: string; value: string }>;
+  items: Array<{ name: string; status: string; meta: string }>;
+  actions: [string, string];
+};
+
 const devices: DeviceCard[] = [
   {
     id: "lights",
     title: "Luces por ambiente",
+    buttonLabel: "Entrar a Luces por ambiente",
     count: 4,
     description: "Ambientes listos para recibir comandos ON/OFF por MQTT.",
     status: "4 ambientes mapeados",
@@ -36,6 +54,7 @@ const devices: DeviceCard[] = [
   {
     id: "doors",
     title: "Puertas conectadas",
+    buttonLabel: "Entrar a Puertas conectadas",
     count: 4,
     description: "Control visual del perimetro y de los puntos de entrada.",
     status: "3 cerradas / 1 monitoreada",
@@ -46,6 +65,7 @@ const devices: DeviceCard[] = [
   {
     id: "cameras",
     title: "Camaras conectadas",
+    buttonLabel: "Entrar a Camaras conectadas",
     count: 6,
     description: "Vision del sistema lista para crecer con nuevos modulos.",
     status: "4 en linea / 2 en standby",
@@ -53,24 +73,169 @@ const devices: DeviceCard[] = [
     tone: "text-[#b4f4be] bg-[#8ee89d]/10 border-[#8ee89d]/20",
     Icon: CameraIcon,
   },
+  {
+    id: "drones",
+    title: "Drones",
+    buttonLabel: "Entrar drones",
+    count: 2,
+    description: "Unidades aereas listas para vigilancia y recorridos autonomos.",
+    status: "1 activo / 1 en carga",
+    items: ["Drone patio", "Drone perimetro"],
+    tone: "text-[#d8c7ff] bg-[#9b7cff]/10 border-[#9b7cff]/20",
+    Icon: DroneIcon,
+  },
 ];
 
-export function VoiceDashboard() {
-  const inputRef = useRef<HTMLInputElement | null>(null);
+const dashboardCards: Array<{
+  detail: DeviceDetailId;
+  device: DeviceCard;
+  className: string;
+}> = [
+  {
+    detail: "cameras",
+    device: devices[2],
+    className: "order-2 lg:order-none lg:col-start-2 lg:row-start-1",
+  },
+  {
+    detail: "lights",
+    device: devices[0],
+    className: "order-3 lg:order-none lg:col-start-2 lg:row-start-2",
+  },
+  {
+    detail: "doors",
+    device: devices[1],
+    className: "order-4 lg:order-none lg:col-start-2 lg:row-start-3",
+  },
+  {
+    detail: "drones",
+    device: devices[3],
+    className: "order-5 lg:order-none lg:col-start-2 lg:row-start-4",
+  },
+];
+
+const detailDashboards: Record<DeviceDetailId, DetailDashboardConfig> = {
+  cameras: {
+    id: "cameras",
+    eyebrow: "vision conectada",
+    title: "Dashboard de camaras",
+    description: "Supervisa las camaras conectadas y revisa puntos clave del sistema.",
+    aiMessage: "La IA sigue orquestando la vision y prioriza eventos relevantes.",
+    metrics: [
+      { label: "En linea", value: "4" },
+      { label: "Standby", value: "2" },
+      { label: "Eventos", value: "12" },
+    ],
+    items: [
+      { name: "Camara entrada", status: "En linea", meta: "Vista principal" },
+      { name: "Camara patio", status: "En linea", meta: "Movimiento activo" },
+      { name: "Zona de pruebas", status: "Standby", meta: "Monitoreo bajo demanda" },
+    ],
+    actions: ["Ver camara", "Capturar"],
+  },
+  lights: {
+    id: "lights",
+    eyebrow: "control de iluminacion",
+    title: "Dashboard de luces",
+    description: "Gestiona luces por ambiente y valida estados ON/OFF.",
+    aiMessage: "La IA coordina la iluminacion y traduce comandos de voz a acciones.",
+    metrics: [
+      { label: "Ambientes", value: "4" },
+      { label: "Encendidas", value: "1" },
+      { label: "Apagadas", value: "3" },
+    ],
+    items: [
+      { name: "Sala", status: "OFF", meta: "Lista para comando" },
+      { name: "Comedor", status: "OFF", meta: "Lista para comando" },
+      { name: "Cocina", status: "ON", meta: "Dispositivo de prueba ABRAM" },
+      { name: "Cuarto principal", status: "OFF", meta: "Lista para comando" },
+    ],
+    actions: ["Encender", "Apagar"],
+  },
+  doors: {
+    id: "doors",
+    eyebrow: "perimetro conectado",
+    title: "Dashboard de puertas",
+    description: "Revisa accesos conectados y estados del perimetro.",
+    aiMessage: "La IA conserva contexto del perimetro para coordinar alertas y accesos.",
+    metrics: [
+      { label: "Cerradas", value: "3" },
+      { label: "Monitoreada", value: "1" },
+      { label: "Alertas", value: "0" },
+    ],
+    items: [
+      { name: "Puerta frontal", status: "Cerrada", meta: "Acceso principal" },
+      { name: "Cuarto tecnico", status: "Cerrada", meta: "Zona restringida" },
+      { name: "Porton lateral", status: "Monitoreada", meta: "Revision visual" },
+    ],
+    actions: ["Ver estado", "Bloquear"],
+  },
+  drones: {
+    id: "drones",
+    eyebrow: "movilidad aerea",
+    title: "Dashboard de drones",
+    description: "Consulta unidades aereas, bateria y recorridos simulados.",
+    aiMessage: "La IA actua como orquestador de rutas y telemetria de drones.",
+    metrics: [
+      { label: "Activos", value: "1" },
+      { label: "En carga", value: "1" },
+      { label: "Bateria", value: "82%" },
+    ],
+    items: [
+      { name: "Drone patio", status: "Activo", meta: "Ruta corta disponible" },
+      { name: "Drone perimetro", status: "En carga", meta: "Bateria 64%" },
+    ],
+    actions: ["Iniciar ruta", "Ver telemetria"],
+  },
+};
+
+export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<BlobPart[]>([]);
+  const audioStreamRef = useRef<MediaStream | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [connection, setConnection] =
     useState<BackendConnectionState>("checking");
   const [lastFileName, setLastFileName] = useState<string>("Sin envio reciente");
   const [statusText, setStatusText] = useState(
-    "Pulsa el nucleo de voz para grabar o seleccionar un audio y enviarlo al backend.",
+    "Pulsa el nucleo de voz para comenzar a grabar lo que dices.",
   );
   const [response, setResponse] = useState<VoiceIntentResponse | null>(null);
+  const [confirmation, setConfirmation] =
+    useState<VoiceIntentConfirmResponse | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
+  const [activeDetail, setActiveDetail] = useState<ActiveDetail>("ia");
+  const [isConfirming, setIsConfirming] = useState(false);
 
   useEffect(() => {
     void handlePing();
+
+    return () => {
+      stopMicrophoneStream();
+    };
   }, []);
+
+  useEffect(() => {
+    setActiveDetail("ia");
+  }, [resetSignal]);
+
+  useEffect(() => {
+    if (!isRecording) {
+      setRecordingSeconds(0);
+      return;
+    }
+
+    const startedAt = Date.now();
+    const intervalId = window.setInterval(() => {
+      setRecordingSeconds(Math.floor((Date.now() - startedAt) / 1000));
+    }, 250);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [isRecording]);
 
   async function handlePing() {
     setIsChecking(true);
@@ -90,17 +255,94 @@ export function VoiceDashboard() {
     }
   }
 
-  function handleVoiceNodeClick() {
-    if (isUploading) {
+  async function handleVoiceNodeClick() {
+    if (isUploading || isConfirming) {
       return;
     }
 
-    inputRef.current?.click();
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      return;
+    }
+
+    await startVoiceRecording();
   }
 
-  async function handleAudioSelected(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+  async function startVoiceRecording() {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setConnection("error");
+      setErrorText(
+        "Este navegador no permite grabar desde el microfono. Abre la app en Chrome o habilita permisos de microfono.",
+      );
+      setStatusText("No se pudo iniciar la grabacion de voz.");
+      return;
+    }
 
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = getSupportedAudioMimeType();
+      const recorder = new MediaRecorder(
+        stream,
+        mimeType ? { mimeType } : undefined,
+      );
+
+      audioStreamRef.current = stream;
+      audioChunksRef.current = [];
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(audioChunksRef.current, {
+          type: recorder.mimeType || "audio/webm",
+        });
+        const file = new File([blob], `voz-${Date.now()}.webm`, {
+          type: blob.type || "audio/webm",
+        });
+
+        stopMicrophoneStream();
+        setIsRecording(false);
+        setRecordingSeconds(0);
+
+        if (blob.size === 0) {
+          setConnection("error");
+          setErrorText("La grabacion no produjo audio. Intenta nuevamente.");
+          setStatusText("No se detecto audio para enviar.");
+          return;
+        }
+
+        void handleAudioFile(file);
+      };
+
+      recorder.start();
+      setIsRecording(true);
+      setConnection("uploading");
+      setErrorText(null);
+      setConfirmation(null);
+      setStatusText("Grabando audio. Pulsa de nuevo para detener y enviar.");
+    } catch (error) {
+      stopMicrophoneStream();
+      setIsRecording(false);
+      setRecordingSeconds(0);
+      setConnection("error");
+      setErrorText(getMicrophoneErrorMessage(error));
+      setStatusText(
+        "No fue posible iniciar la grabacion. Revisa el permiso de microfono y vuelve a pulsar Enviar voz.",
+      );
+    }
+  }
+
+  function stopMicrophoneStream() {
+    audioStreamRef.current?.getTracks().forEach((track) => track.stop());
+    audioStreamRef.current = null;
+    mediaRecorderRef.current = null;
+  }
+
+  async function handleAudioFile(file: File) {
     if (!file) {
       return;
     }
@@ -108,19 +350,20 @@ export function VoiceDashboard() {
     setIsUploading(true);
     setConnection("uploading");
     setErrorText(null);
+    setConfirmation(null);
     setLastFileName(file.name);
-    setStatusText("Subiendo audio al backend y esperando el analisis de la IA...");
+    setStatusText("Subiendo audio al backend y esperando el plan de la IA...");
 
     try {
-      const payload = await sendVoiceIntent(file);
+      const payload = await sendVoiceIntentPreview(file);
       const transcript = payload.fase_2_transcripcion?.texto_transcrito;
 
       setResponse(payload);
       setConnection("online");
       setStatusText(
         transcript
-          ? `Ultima transcripcion: "${transcript}".`
-          : "Audio enviado correctamente. La IA devolvio una respuesta.",
+          ? `Plan listo para confirmar: "${transcript}".`
+          : "Audio enviado correctamente. La IA devolvio un plan.",
       );
     } catch (error) {
       setConnection("error");
@@ -128,14 +371,54 @@ export function VoiceDashboard() {
       setStatusText("No fue posible procesar el audio. Intenta nuevamente.");
     } finally {
       setIsUploading(false);
-      event.target.value = "";
     }
   }
 
-  const intentJson = response?.fase_3_ia_json?.ia_json;
-  const mqttResult = response?.fase_4_mqtt;
-  const transcript =
-    response?.fase_2_transcripcion?.texto_transcrito ?? "Sin transcripcion";
+  async function handleConfirmPlan() {
+    const requestId = response?.plan?.request_id;
+
+    if (!requestId || isConfirming) {
+      return;
+    }
+
+    setIsConfirming(true);
+    setConnection("uploading");
+    setErrorText(null);
+    setStatusText("Confirmando el plan y ejecutando solo si el backend lo permite...");
+
+    try {
+      const payload = await confirmVoiceIntentPlan(requestId);
+
+      setConfirmation(payload);
+      setConnection(payload.ok ? "online" : "error");
+      setStatusText(
+        payload.message ??
+          (payload.executed
+            ? "Plan confirmado y ejecutado."
+            : "Plan confirmado sin ejecucion real."),
+      );
+    } catch (error) {
+      setConnection("error");
+      setErrorText(getErrorMessage(error));
+      setStatusText("No fue posible confirmar el plan. Intenta nuevamente.");
+    } finally {
+      setIsConfirming(false);
+    }
+  }
+
+  function handleDiscardPlan() {
+    setResponse(null);
+    setConfirmation(null);
+    setErrorText(null);
+    setStatusText(
+      "Plan descartado. Puedes enviar un nuevo comando por voz cuando quieras.",
+    );
+  }
+
+  const visibleDashboardCards =
+    activeDetail === "ia"
+      ? dashboardCards
+      : dashboardCards.filter((card) => card.detail === activeDetail);
 
   return (
     <main className="min-h-screen px-3 py-4 text-slate-50 sm:px-5 lg:px-8 xl:px-10">
@@ -150,7 +433,7 @@ export function VoiceDashboard() {
             </h1>
             <p className="mt-3 max-w-xl text-sm leading-6 text-slate-300">
               Una vista simple para enviar voz a la IA y ver el estado base de
-              camaras, luces y puertas conectadas.
+              camaras, luces, puertas y drones conectados.
             </p>
           </div>
 
@@ -168,123 +451,382 @@ export function VoiceDashboard() {
         </header>
 
         <section className="grid gap-3 sm:gap-4 lg:grid-cols-[minmax(0,1fr)_20rem] xl:grid-cols-[minmax(0,1fr)_22rem]">
-          <section className="order-1 rounded-lg border border-white/10 bg-[#08111f]/90 p-4 shadow-glow sm:p-5 lg:col-start-1 lg:row-span-3 lg:min-h-[34rem] lg:p-6 xl:min-h-[36rem]">
-            <div className="grid gap-3 sm:flex sm:items-start sm:justify-between sm:gap-4">
-              <div>
-                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-                  IA central
-                </p>
-                <h2 className="mt-2 font-display text-2xl font-semibold text-white">
-                  Guia IA
-                </h2>
-              </div>
-              <SignalPill state={connection} />
-            </div>
+          <section className="order-1 rounded-lg border border-white/10 bg-[#08111f]/90 p-4 shadow-glow sm:p-5 lg:col-start-1 lg:row-span-4 lg:min-h-[44rem] lg:p-6 xl:min-h-[46rem]">
+            <AiCommandCard
+              activeContext={
+                activeDetail === "ia"
+                  ? "dashboard principal"
+                  : detailDashboards[activeDetail].title.toLowerCase()
+              }
+              confirmation={confirmation}
+              connection={connection}
+              errorText={errorText}
+              isConfirming={isConfirming}
+              isRecording={isRecording}
+              isUploading={isUploading}
+              onConfirmPlan={() => void handleConfirmPlan()}
+              onDiscardPlan={handleDiscardPlan}
+              onVoiceNodeClick={() => void handleVoiceNodeClick()}
+              recordingSeconds={recordingSeconds}
+              response={response}
+              statusText={statusText}
+            />
 
-            <div className="mt-6 grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)] lg:items-start xl:grid-cols-[17rem_minmax(0,1fr)]">
-              <div>
-                <button
-                  type="button"
-                  onClick={handleVoiceNodeClick}
-                  className="mx-auto flex h-40 w-40 flex-col items-center justify-center gap-2 rounded-full border border-[#44c7f4]/40 bg-[#061727] p-5 text-center shadow-[0_0_45px_rgba(68,199,244,0.18)] transition hover:scale-[1.02] hover:bg-[#092036] disabled:cursor-not-allowed disabled:opacity-70 sm:h-48 sm:w-48 lg:h-52 lg:w-52 xl:h-56 xl:w-56"
-                  disabled={isUploading}
-                >
-                  <span className="flex h-12 w-12 items-center justify-center rounded-full border border-white/15 bg-white/10 sm:h-14 sm:w-14">
-                    <MicIcon className="h-6 w-6 text-white sm:h-7 sm:w-7" />
-                  </span>
-                  <span className="font-display text-lg text-white sm:text-xl">
-                    {isUploading ? "Procesando" : "Enviar voz"}
-                  </span>
-                  <span className="text-xs uppercase tracking-[0.18em] text-slate-400">
-                    {isUploading ? "Audio activo" : "Audio"}
-                  </span>
-                </button>
-
-                <input
-                  ref={inputRef}
-                  type="file"
-                  accept="audio/*"
-                  capture="user"
-                  className="hidden"
-                  onChange={(event) => void handleAudioSelected(event)}
-                />
-
-                <p className="mt-5 text-center text-sm leading-6 text-slate-300">
-                  {statusText}
-                </p>
-
-                {errorText ? (
-                  <p className="mt-4 rounded-lg border border-rose-400/25 bg-rose-400/10 px-3 py-2 text-sm leading-6 text-rose-200">
-                    {errorText}
-                  </p>
-                ) : null}
-              </div>
-
-              <div className="grid gap-2 border-t border-white/10 pt-4 text-sm lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
-                <InfoRow label="Transcripcion" value={transcript} />
-                <InfoRow
-                  label="Intencion"
-                  value={intentJson?.intencion ?? "Pendiente"}
-                />
-                <InfoRow label="Ambiente" value={intentJson?.espacio ?? "Pendiente"} />
-                <InfoRow label="Accion" value={intentJson?.accion ?? "Pendiente"} />
-                <InfoRow
-                  label="MQTT"
-                  value={mqttResult?.accion_mqtt ?? "SIN_ACCION"}
-                />
-                <InfoRow
-                  label="Payload"
-                  value={formatMqttPayload(mqttResult?.mqtt_payload)}
-                />
-                <InfoRow
-                  label="Topic"
-                  value={mqttResult?.mqtt_topic ?? "casa/esp32/luces"}
-                />
-              </div>
-            </div>
-
-            <details className="mt-4 border-t border-white/10 pt-4 text-sm text-slate-300">
-              <summary className="cursor-pointer text-slate-200">
-                Respuesta completa
-              </summary>
-              <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap rounded-lg bg-[#050c16] p-3 text-xs leading-5 text-slate-300">
-                {response
-                  ? JSON.stringify(response, null, 2)
-                  : "Aun no hay respuesta del backend."}
-              </pre>
-            </details>
+            {activeDetail !== "ia" ? (
+              <DeviceDetailDashboard
+                config={detailDashboards[activeDetail]}
+                onBack={() => setActiveDetail("ia")}
+              />
+            ) : null}
           </section>
 
-          <SystemCard
-            device={devices[2]}
-            className="order-2 lg:order-none lg:col-start-2 lg:row-start-1"
-          />
-
-          <SystemCard
-            device={devices[0]}
-            className="order-3 lg:order-none lg:col-start-2 lg:row-start-2"
-          />
-
-          <SystemCard
-            device={devices[1]}
-            className="order-4 lg:order-none lg:col-start-2 lg:row-start-3"
-          />
+          {visibleDashboardCards.map((card) => (
+            <SystemCard
+              key={card.detail}
+              device={card.device}
+              className={
+                activeDetail === "ia"
+                  ? card.className
+                  : "order-2 lg:order-none lg:col-start-2 lg:row-start-1"
+              }
+              isActive={activeDetail === card.detail}
+              onEnter={() => setActiveDetail(card.detail)}
+            />
+          ))}
         </section>
       </div>
     </main>
   );
 }
 
+function AiCommandCard({
+  activeContext,
+  confirmation,
+  connection,
+  errorText,
+  isConfirming,
+  isRecording,
+  isUploading,
+  onConfirmPlan,
+  onDiscardPlan,
+  onVoiceNodeClick,
+  recordingSeconds,
+  response,
+  statusText,
+}: {
+  activeContext: string;
+  confirmation: VoiceIntentConfirmResponse | null;
+  connection: BackendConnectionState;
+  errorText: string | null;
+  isConfirming: boolean;
+  isRecording: boolean;
+  isUploading: boolean;
+  onConfirmPlan: () => void;
+  onDiscardPlan: () => void;
+  onVoiceNodeClick: () => void;
+  recordingSeconds: number;
+  response: VoiceIntentResponse | null;
+  statusText: string;
+}) {
+  const intentJson = response?.fase_3_ia_json?.ia_json;
+  const plan = response?.plan;
+  const mqttResult = confirmation?.fase_4_mqtt ?? response?.fase_4_mqtt;
+  const transcript =
+    response?.fase_2_transcripcion?.texto_transcrito ?? "Sin transcripcion";
+  const canConfirm =
+    Boolean(plan?.request_id && plan.can_execute && !confirmation) &&
+    !isUploading &&
+    !isConfirming;
+
+  return (
+    <section className="rounded-lg border border-[#44c7f4]/20 bg-[#061727]/70 p-4 sm:p-5">
+      {isRecording ? (
+        <RecordingOverlay
+          onStop={onVoiceNodeClick}
+          recordingSeconds={recordingSeconds}
+        />
+      ) : null}
+
+      <div className="grid gap-3 sm:flex sm:items-start sm:justify-between sm:gap-4">
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+            IA central disponible
+          </p>
+          <h2 className="mt-2 font-display text-2xl font-semibold text-white">
+            Guia IA
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-slate-300">
+            Contexto activo: <span className="text-white">{activeContext}</span>
+          </p>
+        </div>
+        <SignalPill state={connection} />
+      </div>
+
+      <div className="mt-6 grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)] lg:items-start xl:grid-cols-[17rem_minmax(0,1fr)]">
+        <div>
+          <button
+            type="button"
+            onClick={onVoiceNodeClick}
+            className={`mx-auto flex h-40 w-40 flex-col items-center justify-center gap-2 rounded-full border p-5 text-center shadow-[0_0_45px_rgba(68,199,244,0.18)] transition hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-70 sm:h-48 sm:w-48 lg:h-52 lg:w-52 xl:h-56 xl:w-56 ${
+              isRecording
+                ? "border-rose-300/70 bg-rose-400/15"
+                : "border-[#44c7f4]/40 bg-[#061727] hover:bg-[#092036]"
+            }`}
+            disabled={isUploading || isConfirming}
+          >
+            <span className="flex h-12 w-12 items-center justify-center rounded-full border border-white/15 bg-white/10 sm:h-14 sm:w-14">
+              <MicIcon className="h-6 w-6 text-white sm:h-7 sm:w-7" />
+            </span>
+            <span className="font-display text-lg text-white sm:text-xl">
+              {isRecording ? "Detener" : isUploading ? "Procesando" : "Enviar voz"}
+            </span>
+            <span className="text-xs uppercase tracking-[0.18em] text-slate-400">
+              {isRecording ? "Grabando" : isUploading || isConfirming ? "IA activa" : "Audio"}
+            </span>
+          </button>
+
+          <p className="mt-5 text-center text-sm leading-6 text-slate-300">
+            {statusText}
+          </p>
+
+          {errorText ? (
+            <p className="mt-4 rounded-lg border border-rose-400/25 bg-rose-400/10 px-3 py-2 text-sm leading-6 text-rose-200">
+              {errorText}
+            </p>
+          ) : null}
+        </div>
+
+        <div className="grid gap-4 border-t border-white/10 pt-4 text-sm lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+          <div className="grid gap-2">
+            <InfoRow label="Transcripcion" value={transcript} />
+            <InfoRow label="Respuesta IA" value={plan?.respuesta ?? "Pendiente"} />
+            <InfoRow label="Modulo" value={formatModuleLabel(plan?.module)} />
+            <InfoRow label="Accion" value={plan?.action ?? intentJson?.accion ?? "Pendiente"} />
+            <InfoRow label="Ambiente" value={plan?.espacio ?? intentJson?.espacio ?? "Pendiente"} />
+            <InfoRow
+              label="Ejecucion"
+              value={
+                confirmation?.message ??
+                (plan?.can_execute
+                  ? "Lista para confirmar"
+                  : plan
+                    ? "Solo plan escrito"
+                    : "Pendiente")
+              }
+            />
+          </div>
+
+          {plan ? (
+            <div className="rounded-lg border border-white/10 bg-[#050c16]/70 p-3">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-500">
+                Plan de accion
+              </p>
+              <ol className="mt-3 grid gap-2 text-slate-300">
+                {plan.steps.map((step, index) => (
+                  <li key={`${step}-${index}`} className="flex gap-2 leading-6">
+                    <span className="text-[#9edfff]">{index + 1}.</span>
+                    <span>{step}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : null}
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={onConfirmPlan}
+              disabled={!canConfirm}
+              className="min-h-11 rounded-lg border border-[#8ee89d]/30 bg-[#8ee89d]/10 px-4 py-2 text-sm font-semibold text-[#b9f3c2] transition hover:bg-[#8ee89d]/15 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.04] disabled:text-slate-500"
+            >
+              {isConfirming ? "Confirmando..." : "Confirmar ejecucion"}
+            </button>
+            <button
+              type="button"
+              onClick={onDiscardPlan}
+              disabled={!response || isUploading || isConfirming}
+              className="min-h-11 rounded-lg border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Descartar
+            </button>
+          </div>
+
+          <div className="grid gap-2 border-t border-white/10 pt-4">
+            <InfoRow label="Intencion" value={intentJson?.intencion ?? "Pendiente"} />
+            <InfoRow label="MQTT" value={mqttResult?.accion_mqtt ?? "SIN_ACCION"} />
+            <InfoRow
+              label="Payload"
+              value={formatMqttPayload(mqttResult?.mqtt_payload)}
+            />
+            <InfoRow label="Topic" value={mqttResult?.mqtt_topic ?? "casa/esp32/luces"} />
+          </div>
+        </div>
+      </div>
+
+      <details className="mt-4 border-t border-white/10 pt-4 text-sm text-slate-300">
+        <summary className="cursor-pointer text-slate-200">
+          Respuesta completa
+        </summary>
+        <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap rounded-lg bg-[#050c16] p-3 text-xs leading-5 text-slate-300">
+          {response
+            ? JSON.stringify({ preview: response, confirmation }, null, 2)
+            : "Aun no hay respuesta del backend."}
+        </pre>
+      </details>
+    </section>
+  );
+}
+
+function DeviceDetailDashboard({
+  config,
+  onBack,
+}: {
+  config: DetailDashboardConfig;
+  onBack: () => void;
+}) {
+  return (
+    <div className="mt-5 grid gap-5 border-t border-white/10 pt-5">
+      <div className="grid gap-3 sm:flex sm:items-start sm:justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+            {config.eyebrow}
+          </p>
+          <h2 className="mt-2 font-display text-2xl font-semibold text-white sm:text-3xl">
+            {config.title}
+          </h2>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
+            {config.description}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onBack}
+          className="min-h-10 rounded-lg border border-white/15 bg-white/5 px-4 py-2 text-sm text-white transition hover:bg-white/10"
+        >
+          Volver a Guia IA
+        </button>
+      </div>
+
+      <section className="grid gap-3 sm:grid-cols-3">
+        {config.metrics.map((metric) => (
+          <article
+            key={metric.label}
+            className="rounded-lg border border-white/10 bg-white/[0.04] p-4"
+          >
+            <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
+              {metric.label}
+            </p>
+            <p className="mt-2 font-display text-3xl font-semibold text-white">
+              {metric.value}
+            </p>
+          </article>
+        ))}
+      </section>
+
+      <section className="grid gap-3">
+        {config.items.map((item) => (
+          <article
+            key={item.name}
+            className="rounded-lg border border-white/10 bg-[#050c16]/70 p-4"
+          >
+            <div className="grid gap-3 sm:flex sm:items-start sm:justify-between">
+              <div>
+                <h3 className="font-display text-lg font-semibold text-white">
+                  {item.name}
+                </h3>
+                <p className="mt-1 text-sm leading-6 text-slate-400">
+                  {item.meta}
+                </p>
+              </div>
+              <span className="w-fit rounded-full border border-[#8ee89d]/30 bg-[#8ee89d]/10 px-3 py-2 text-xs uppercase tracking-[0.14em] text-[#b9f3c2]">
+                {item.status}
+              </span>
+            </div>
+            <div className="mt-4 grid gap-2 sm:grid-cols-2">
+              {config.actions.map((action) => (
+                <button
+                  key={`${item.name}-${action}`}
+                  type="button"
+                  className="min-h-10 rounded-lg border border-[#44c7f4]/25 bg-[#44c7f4]/10 px-4 py-2 text-sm font-semibold text-[#b7ebff] transition hover:bg-[#44c7f4]/15"
+                >
+                  {action}
+                </button>
+              ))}
+            </div>
+          </article>
+        ))}
+      </section>
+    </div>
+  );
+}
+
+function RecordingOverlay({
+  onStop,
+  recordingSeconds,
+}: {
+  onStop: () => void;
+  recordingSeconds: number;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#020712]/80 px-4 backdrop-blur-md">
+      <section className="w-full max-w-sm rounded-lg border border-[#44c7f4]/30 bg-[#061727] p-5 text-center shadow-[0_0_70px_rgba(68,199,244,0.22)] sm:p-6">
+        <div className="mx-auto flex h-28 w-28 items-center justify-center rounded-full border border-[#44c7f4]/30 bg-[#44c7f4]/10 shadow-[0_0_35px_rgba(68,199,244,0.2)]">
+          <div className="relative flex h-20 w-20 items-center justify-center rounded-full border border-rose-300/50 bg-rose-400/15">
+            <span className="absolute h-full w-full animate-ping rounded-full bg-rose-400/20" />
+            <MicIcon className="relative h-8 w-8 text-white" />
+          </div>
+        </div>
+
+        <p className="mt-5 text-xs uppercase tracking-[0.22em] text-rose-200">
+          grabacion activa
+        </p>
+        <h3 className="mt-2 font-display text-2xl font-semibold text-white">
+          Grabando voz
+        </h3>
+        <p className="mx-auto mt-3 max-w-xs text-sm leading-6 text-slate-300">
+          Habla ahora. Tu comando se enviara al detener.
+        </p>
+
+        <div className="mt-5 flex items-end justify-center gap-1.5" aria-hidden="true">
+          <span className="h-5 w-2 animate-pulse rounded-full bg-[#44c7f4]/70" />
+          <span className="h-8 w-2 animate-pulse rounded-full bg-[#8ee89d]/70 [animation-delay:120ms]" />
+          <span className="h-12 w-2 animate-pulse rounded-full bg-rose-300/80 [animation-delay:240ms]" />
+          <span className="h-7 w-2 animate-pulse rounded-full bg-[#8ee89d]/70 [animation-delay:360ms]" />
+          <span className="h-10 w-2 animate-pulse rounded-full bg-[#44c7f4]/70 [animation-delay:480ms]" />
+        </div>
+
+        <p className="mt-5 font-display text-4xl font-semibold tabular-nums text-white">
+          {formatRecordingTime(recordingSeconds)}
+        </p>
+
+        <button
+          type="button"
+          onClick={onStop}
+          className="mt-6 inline-flex min-h-12 w-full items-center justify-center rounded-lg border border-rose-300/35 bg-rose-400/15 px-5 py-3 text-sm font-semibold text-rose-100 transition hover:bg-rose-400/25 focus:outline-none focus:ring-2 focus:ring-rose-300/45"
+        >
+          Detener y enviar
+        </button>
+      </section>
+    </div>
+  );
+}
+
 function SystemCard({
   device,
+  isActive,
+  onEnter,
   className,
 }: {
   device: DeviceCard;
+  isActive: boolean;
+  onEnter: () => void;
   className?: string;
 }) {
   return (
     <article
-      className={`rounded-lg border border-white/10 bg-white/[0.04] p-4 sm:p-5 lg:p-4 xl:p-5 ${className ?? ""}`}
+      className={`rounded-lg border bg-white/[0.04] p-4 sm:p-5 lg:p-4 xl:p-5 ${
+        isActive ? "border-[#44c7f4]/40 shadow-[0_0_22px_rgba(68,199,244,0.12)]" : "border-white/10"
+      } ${className ?? ""}`}
     >
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
@@ -323,6 +865,14 @@ function SystemCard({
           </span>
         ))}
       </div>
+
+      <button
+        type="button"
+        onClick={onEnter}
+        className="mt-4 inline-flex min-h-10 w-full items-center justify-center rounded-lg border border-[#44c7f4]/30 bg-[#44c7f4]/10 px-4 py-2 text-sm font-semibold text-[#b7ebff] transition hover:bg-[#44c7f4]/15 focus:outline-none focus:ring-2 focus:ring-[#44c7f4]/40"
+      >
+        {device.buttonLabel}
+      </button>
     </article>
   );
 }
@@ -370,6 +920,46 @@ function getErrorMessage(error: unknown) {
   return "Error desconocido";
 }
 
+function getMicrophoneErrorMessage(error: unknown) {
+  if (error instanceof DOMException) {
+    if (error.name === "NotAllowedError" || error.name === "PermissionDeniedError") {
+      return "Permiso de microfono denegado. Activa el microfono para este sitio y vuelve a intentar.";
+    }
+
+    if (error.name === "NotFoundError" || error.name === "DevicesNotFoundError") {
+      return "No se encontro un microfono disponible en este equipo.";
+    }
+
+    if (error.name === "NotReadableError" || error.name === "TrackStartError") {
+      return "El microfono esta siendo usado por otra app o no se puede leer.";
+    }
+  }
+
+  return getErrorMessage(error);
+}
+
+function formatRecordingTime(totalSeconds: number) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+function getSupportedAudioMimeType() {
+  if (typeof MediaRecorder === "undefined") {
+    return "";
+  }
+
+  const options = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/ogg;codecs=opus",
+  ];
+
+  return options.find((type) => MediaRecorder.isTypeSupported(type)) ?? "";
+}
+
 function formatMqttPayload(payload?: MqttLightPayload | null) {
   if (!payload) {
     return "SIN_PAYLOAD";
@@ -379,6 +969,30 @@ function formatMqttPayload(payload?: MqttLightPayload | null) {
   const accion = payload.accion ?? "NONE";
 
   return `${espacio} ${accion}`;
+}
+
+function formatModuleLabel(module?: string) {
+  if (module === "lights") {
+    return "Luces";
+  }
+
+  if (module === "cameras") {
+    return "Camaras";
+  }
+
+  if (module === "doors") {
+    return "Puertas";
+  }
+
+  if (module === "drones") {
+    return "Drones";
+  }
+
+  if (module === "general") {
+    return "Sistema";
+  }
+
+  return "Pendiente";
 }
 
 function getConnectionPalette(state: BackendConnectionState) {
@@ -508,6 +1122,23 @@ function CameraIcon({ className }: { className?: string }) {
         strokeWidth="1.7"
       />
       <circle cx="10.5" cy="13.5" r="2.5" stroke="currentColor" strokeWidth="1.7" />
+    </svg>
+  );
+}
+
+function DroneIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path
+        d="M9 12h6M12 9v6M7 7l2 2M17 7l-2 2M7 17l2-2M17 17l-2-2"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="1.7"
+      />
+      <circle cx="5.5" cy="5.5" r="2.5" stroke="currentColor" strokeWidth="1.7" />
+      <circle cx="18.5" cy="5.5" r="2.5" stroke="currentColor" strokeWidth="1.7" />
+      <circle cx="5.5" cy="18.5" r="2.5" stroke="currentColor" strokeWidth="1.7" />
+      <circle cx="18.5" cy="18.5" r="2.5" stroke="currentColor" strokeWidth="1.7" />
     </svg>
   );
 }

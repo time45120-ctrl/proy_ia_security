@@ -258,7 +258,7 @@ Valores relevantes de `fase_4_mqtt.accion_mqtt`:
 
 ## ESP32
 
-El ESP32 debe conectarse al broker MQTT expuesto en la LAN y suscribirse a:
+El flujo legacy de laboratorio usa un broker MQTT expuesto en la LAN y el topic:
 
 ```text
 casa/esp32/luces
@@ -273,7 +273,45 @@ El sketch debe parsear JSON y aplicar la accion al ambiente recibido:
 }
 ```
 
-El backend no publica topics separados por LED simple o RGB en el contrato nuevo.
+Para enlace real desde el frontend publico HTTPS, el flujo nuevo usa pairing:
+
+1. Frontend crea un token con `POST /devices/pairing-token`.
+2. ESP32 crea un AP temporal, por ejemplo `AFCR-ESP32-XXXX`.
+3. Usuario abre `http://192.168.4.1` y escribe SSID, password, API URL y token.
+4. ESP32 llama `POST /devices/claim` contra `https://api.afcrseguridad.com`.
+5. Backend guarda el dispositivo en SQLite y devuelve su topic MQTT.
+6. ESP32 se suscribe a `afcr/devices/{device_id}/commands`.
+
+El backend no recibe ni guarda la contraseña WiFi. Esa clave solo se escribe en
+el portal local del ESP32.
+
+Endpoints nuevos:
+
+```text
+POST /devices/pairing-token
+POST /devices/claim
+GET /devices
+POST /devices/{device_id}/command
+POST /devices/{device_id}/heartbeat
+```
+
+Firmware base:
+
+```text
+firmware/esp32_pairing_portal/esp32_pairing_portal.ino
+```
+
+Para produccion, configurar MQTT con TLS:
+
+```bash
+MQTT_SERVER=mqtt.afcrseguridad.com
+MQTT_PORT=8883
+MQTT_TLS=true
+MQTT_USERNAME=...
+MQTT_PASSWORD=...
+MQTT_DEVICE_TOPIC_PREFIX=afcr/devices
+PUBLIC_API_URL=https://api.afcrseguridad.com
+```
 
 ## Comandos de voz esperados
 
