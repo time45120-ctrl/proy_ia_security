@@ -16,6 +16,24 @@ export type VoiceIntentJson = {
 export type MqttLightPayload = {
   espacio?: string;
   accion?: string;
+  device_id?: string;
+};
+
+export type MqttPreview = {
+  mqtt_topic?: string;
+  mqtt_payload?: MqttLightPayload | null;
+};
+
+export type VoiceIntentPlan = {
+  request_id: string;
+  respuesta: string;
+  steps: string[];
+  can_execute: boolean;
+  module: "lights" | "doors" | "cameras" | "drones" | "general" | string;
+  action: string;
+  espacio: string;
+  mqtt_preview?: MqttPreview | null;
+  expires_at?: string;
 };
 
 export type VoiceIntentResponse = {
@@ -39,6 +57,46 @@ export type VoiceIntentResponse = {
     mqtt_topic?: string;
     mqtt_payload?: MqttLightPayload | null;
   };
+  plan?: VoiceIntentPlan;
+};
+
+export type VoiceIntentConfirmResponse = {
+  ok?: boolean;
+  executed?: boolean;
+  message?: string;
+  plan?: VoiceIntentPlan;
+  fase_4_mqtt?: {
+    accion_mqtt?: string;
+    mqtt_topic?: string;
+    mqtt_payload?: MqttLightPayload | null;
+  };
+};
+
+export type LinkedDeviceRecord = {
+  device_id: string;
+  name: string;
+  type: string;
+  model: string;
+  status: "pending" | "online" | "offline" | "linked" | string;
+  status_label: string;
+  mqtt_topic: string;
+  last_seen?: string | null;
+  created_at: string;
+  pairing_expires_at?: string | null;
+  claimed_at?: string | null;
+};
+
+export type PairingTokenResponse = {
+  ok: boolean;
+  device_id: string;
+  pairing_token: string;
+  pairing_expires_at: string;
+  api_url: string;
+  esp32_portal_url: string;
+  mqtt_topic: string;
+  mqtt_server: string;
+  mqtt_port: number;
+  mqtt_tls: boolean;
 };
 
 const DEFAULT_API_BASE_URL = "http://192.168.0.220:8000";
@@ -59,7 +117,7 @@ export async function pingBackend() {
   return (await response.json()) as { pong?: boolean };
 }
 
-export async function sendVoiceIntent(file: File) {
+export async function sendVoiceIntentPreview(file: File) {
   const formData = new FormData();
   formData.append("audio", file, file.name);
 
@@ -73,4 +131,56 @@ export async function sendVoiceIntent(file: File) {
   }
 
   return (await response.json()) as VoiceIntentResponse;
+}
+
+export async function confirmVoiceIntentPlan(requestId: string) {
+  const response = await fetch(`${API_BASE_URL}/voice-intent/confirm`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ request_id: requestId }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  return (await response.json()) as VoiceIntentConfirmResponse;
+}
+
+export async function listDevices() {
+  const response = await fetch(`${API_BASE_URL}/devices`, {
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  return (await response.json()) as {
+    ok?: boolean;
+    devices?: LinkedDeviceRecord[];
+  };
+}
+
+export async function createPairingToken(input: {
+  name: string;
+  type: string;
+  model: string;
+  network?: string;
+}) {
+  const response = await fetch(`${API_BASE_URL}/devices/pairing-token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(input),
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  return (await response.json()) as PairingTokenResponse;
 }
