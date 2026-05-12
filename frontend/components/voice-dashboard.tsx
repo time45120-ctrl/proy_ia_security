@@ -532,12 +532,16 @@ function AiCommandCard({
   statusText: string;
 }) {
   const intentJson =
+    response?.respuesta_json_dispositivo ??
+    response?.fase_3_ia_json?.respuesta_json_dispositivo ??
     response?.intencion_json ??
     response?.fase_3_ia_json?.intencion_json ??
     response?.fase_3_ia_json?.ia_json;
   const plan = response?.plan;
   const mqttResult = confirmation?.fase_4_mqtt ?? response?.fase_4_mqtt;
   const userReply =
+    response?.respuesta_ia_usuario ??
+    response?.fase_3_ia_json?.respuesta_ia_usuario ??
     response?.respuesta_usuario ??
     response?.fase_3_ia_json?.respuesta_usuario ??
     plan?.respuesta ??

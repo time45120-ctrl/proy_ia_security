@@ -41,6 +41,8 @@ export type VoiceIntentResponse = {
   ai_provider?: string;
   intencion_json?: VoiceIntentJson | null;
   respuesta_usuario?: string;
+  respuesta_json_dispositivo?: VoiceIntentJson | null;
+  respuesta_ia_usuario?: string;
   fase_1_audio_guardado?: {
     filename?: string;
     saved_path?: string;
@@ -55,6 +57,8 @@ export type VoiceIntentResponse = {
     ia_json?: VoiceIntentJson | null;
     intencion_json?: VoiceIntentJson | null;
     respuesta_usuario?: string;
+    respuesta_json_dispositivo?: VoiceIntentJson | null;
+    respuesta_ia_usuario?: string;
   };
   fase_4_mqtt?: {
     accion_mqtt?: string;
