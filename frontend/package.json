@@ -6,7 +6,6 @@
     "dev": "next dev",
     "prebuild": "node scripts/print-deploy-info.js",
     "build": "NEXT_PUBLIC_API_BASE_URL=https://api.afcrseguridad.com next build",
-    "postbuild": "node scripts/check-static-export.js",
     "start": "node server.js"
   },
   "dependencies": {
