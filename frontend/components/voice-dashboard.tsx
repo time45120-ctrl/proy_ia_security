@@ -531,9 +531,17 @@ function AiCommandCard({
   response: VoiceIntentResponse | null;
   statusText: string;
 }) {
-  const intentJson = response?.fase_3_ia_json?.ia_json;
+  const intentJson =
+    response?.intencion_json ??
+    response?.fase_3_ia_json?.intencion_json ??
+    response?.fase_3_ia_json?.ia_json;
   const plan = response?.plan;
   const mqttResult = confirmation?.fase_4_mqtt ?? response?.fase_4_mqtt;
+  const userReply =
+    response?.respuesta_usuario ??
+    response?.fase_3_ia_json?.respuesta_usuario ??
+    plan?.respuesta ??
+    "Pendiente";
   const transcript =
     response?.fase_2_transcripcion?.texto_transcrito ?? "Sin transcripcion";
   const canConfirm =
@@ -602,10 +610,11 @@ function AiCommandCard({
         <div className="grid gap-4 border-t border-white/10 pt-4 text-sm lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
           <div className="grid gap-2">
             <InfoRow label="Transcripcion" value={transcript} />
-            <InfoRow label="Respuesta IA" value={plan?.respuesta ?? "Pendiente"} />
+            <InfoRow label="Respuesta usuario" value={userReply} />
             <InfoRow label="Modulo" value={formatModuleLabel(plan?.module)} />
             <InfoRow label="Accion" value={plan?.action ?? intentJson?.accion ?? "Pendiente"} />
             <InfoRow label="Ambiente" value={plan?.espacio ?? intentJson?.espacio ?? "Pendiente"} />
+            <InfoRow label="Intencion JSON" value={formatIntentJson(intentJson)} />
             <InfoRow
               label="Ejecucion"
               value={
@@ -972,6 +981,18 @@ function formatMqttPayload(payload?: MqttLightPayload | null) {
   const accion = payload.accion ?? "NONE";
 
   return `${espacio} ${accion}`;
+}
+
+function formatIntentJson(intentJson?: VoiceIntentResponse["intencion_json"]) {
+  if (!intentJson) {
+    return "Pendiente";
+  }
+
+  return JSON.stringify({
+    intencion: intentJson.intencion ?? "otra",
+    espacio: intentJson.espacio ?? "desconocido",
+    accion: intentJson.accion ?? "NONE",
+  });
 }
 
 function formatModuleLabel(module?: string) {
