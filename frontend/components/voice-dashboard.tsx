@@ -539,13 +539,17 @@ function AiCommandCard({
     response?.fase_3_ia_json?.ia_json;
   const plan = response?.plan;
   const mqttResult = confirmation?.fase_4_mqtt ?? response?.fase_4_mqtt;
+  const dashboardStatusReply = buildDashboardStatusReply(connection, activeContext);
   const userReply =
     response?.respuesta_ia_usuario ??
     response?.fase_3_ia_json?.respuesta_ia_usuario ??
     response?.respuesta_usuario ??
     response?.fase_3_ia_json?.respuesta_usuario ??
     plan?.respuesta ??
-    "Pendiente";
+    dashboardStatusReply;
+  const deviceJsonReply = intentJson
+    ? formatIntentJson(intentJson)
+    : formatDashboardDeviceJson(connection, activeContext);
   const transcript =
     response?.fase_2_transcripcion?.texto_transcrito ?? "Sin transcripcion";
   const canConfirm =
@@ -614,14 +618,15 @@ function AiCommandCard({
         <div className="grid gap-4 border-t border-white/10 pt-4 text-sm lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
           <div className="grid gap-2">
             <InfoRow label="Transcripcion" value={transcript} />
-            <InfoRow label="Respuesta IA para el usuario" value={userReply} />
+            <InfoRow label="Respuesta IA para el usuario" value={userReply} wide />
+            <InfoRow
+              label="Respuesta Json para el dispositivo"
+              value={deviceJsonReply}
+              wide
+            />
             <InfoRow label="Modulo" value={formatModuleLabel(plan?.module)} />
             <InfoRow label="Accion" value={plan?.action ?? intentJson?.accion ?? "Pendiente"} />
             <InfoRow label="Ambiente" value={plan?.espacio ?? intentJson?.espacio ?? "Pendiente"} />
-            <InfoRow
-              label="Respuesta JSON para el dispositivo"
-              value={formatIntentJson(intentJson)}
-            />
             <InfoRow
               label="Ejecucion"
               value={
@@ -922,7 +927,24 @@ function SignalPill({ state }: { state: BackendConnectionState }) {
   );
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
+function InfoRow({
+  label,
+  value,
+  wide = false,
+}: {
+  label: string;
+  value: string;
+  wide?: boolean;
+}) {
+  if (wide) {
+    return (
+      <div className="grid gap-1 border-b border-white/5 pb-2 last:border-none last:pb-0">
+        <span className="text-slate-500">{label}</span>
+        <span className="break-words text-slate-200">{value}</span>
+      </div>
+    );
+  }
+
   return (
     <div className="grid gap-1 border-b border-white/5 pb-2 last:border-none last:pb-0 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-start">
       <span className="text-slate-500">{label}</span>
@@ -999,6 +1021,48 @@ function formatIntentJson(intentJson?: VoiceIntentResponse["intencion_json"]) {
     intencion: intentJson.intencion ?? "otra",
     espacio: intentJson.espacio ?? "desconocido",
     accion: intentJson.accion ?? "NONE",
+  });
+}
+
+function buildDashboardStatusReply(
+  connection: BackendConnectionState,
+  activeContext: string,
+) {
+  if (connection === "online") {
+    return (
+      `Aun no he recibido una pregunta por voz en ${activeContext}. ` +
+      "El dashboard esta conectado al backend y por ahora muestra dispositivos de prueba; cuando hables, la respuesta IA para el usuario se ajustara exactamente a lo que preguntes."
+    );
+  }
+
+  if (connection === "checking") {
+    return (
+      "Estoy verificando la conexion con el backend. Cuando envies una pregunta por voz, respondere acorde a esa solicitud y separare el JSON tecnico para los dispositivos."
+    );
+  }
+
+  if (connection === "uploading") {
+    return (
+      "Estoy procesando la solicitud de voz con la IA. Cuando el backend responda, separare la respuesta para el usuario del JSON tecnico para el dispositivo."
+    );
+  }
+
+  return (
+    "El dashboard no tiene una conexion estable con el backend en este momento. Los modulos visibles son de prueba y no representan dispositivos reales listos para ejecutar acciones."
+  );
+}
+
+function formatDashboardDeviceJson(
+  connection: BackendConnectionState,
+  activeContext: string,
+) {
+  return JSON.stringify({
+    estado: connection,
+    contexto: activeContext,
+    intencion: "otra",
+    dispositivos: "demo",
+    hardware_real_confirmado: false,
+    accion: "NONE",
   });
 }
 
