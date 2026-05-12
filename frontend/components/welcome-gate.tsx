@@ -330,6 +330,9 @@ function SyncPage({
             Registra los dispositivos del cliente, indica la red a la que se
             conectaran y confirma visualmente que ya quedaron enlazados.
           </p>
+          <p className="mt-2 break-all text-xs text-slate-500">
+            API activa: <span className="text-slate-300">{API_BASE_URL}</span>
+          </p>
         </header>
 
         {notice || localNotice ? (
