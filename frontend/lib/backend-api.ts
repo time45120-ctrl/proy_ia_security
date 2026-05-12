@@ -114,11 +114,11 @@ const PRODUCTION_FRONTEND_HOSTS = new Set([
 ]);
 
 function getBrowserLocation() {
-  if (typeof globalThis.location === "undefined") {
+  if (typeof window === "undefined") {
     return null;
   }
 
-  return globalThis.location;
+  return window.location;
 }
 
 function isLocalOrPrivateHost(hostname: string) {

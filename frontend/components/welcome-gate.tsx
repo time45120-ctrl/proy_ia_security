@@ -13,7 +13,7 @@ import {
 
 const heroImageUrl =
   "https://lh3.googleusercontent.com/aida-public/AB6AXuDqWiFZT724rqYi7LN287axHfinPHKjd5W28KOvOc7Ln0D1SJN66Og1Pcl4X6YLiUoQwRyWHto6LAVhLhcfO-kt101rbQUQn0vWeaXhmdCjZGTMwdyi3eeK6py4eqnVs4CiMI76xJeqK9q3zzlVmYRsig3AyRXWbYUoirjNr2PM3ToTiEgrhIoKZGn7uOit4VLRncVmsShe0bU4rpxHCAOwFn_sAoVo4piKt1a_5ZfODG0_0-eiMdn4XkZnTobLe708E-ivNz6N7c50";
-const frontendBuildLabel = "f1.10";
+const frontendBuildLabel = "f1.21";
 
 type AppView = "welcome" | "sync" | "dashboard";
 type DeviceType = "Luces" | "Camaras" | "Puertas" | "Drones";
