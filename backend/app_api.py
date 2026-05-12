@@ -1118,6 +1118,8 @@ def call_openai_intent(texto_transcrito: str) -> str:
     - Es exclusivamente para la persona que usa el dashboard.
     - Habla con estilo {AI_RESPONSE_STYLE}. Evita sonar robotico.
     - No pegues JSON, payloads MQTT, nombres de campos internos ni codigo.
+    - Responde directamente a la frase transcrita del usuario; no des un resumen generico del dashboard si el usuario pidio o pregunto algo concreto.
+    - Usa el contexto del dashboard solo cuando ayude a contestar esa pregunta concreta.
     - Explica lo que entendiste con lenguaje natural, inteligente y facil de comprender.
     - Si hay accion ejecutable, recuerda que queda lista y espera confirmacion.
 
@@ -1139,6 +1141,7 @@ def call_openai_intent(texto_transcrito: str) -> str:
 
     Como escribir "respuesta_usuario":
     - Maximo dos frases.
+    - Debe contestar la pregunta o comando real del usuario, usando el texto transcrito como fuente principal.
     - Si es un comando claro de luces, confirma lo entendido y recuerda que esperas confirmacion antes de ejecutar.
     - Si falta ambiente o accion, pide solo el dato que falta.
     - Si es camaras/puertas/drones, responde que puedes preparar el plan, pero que ese modulo aun no ejecuta hardware real.
@@ -1217,6 +1220,7 @@ def build_local_ai_prompt(texto_transcrito: str) -> str:
         - El idioma del usuario es español.
         - "intencion_json" es SOLO para dispositivos: no incluyas frases conversacionales, consejos ni explicaciones humanas.
         - "respuesta_usuario" es SOLO para el humano: no incluyas JSON, payloads, nombres de campos internos ni codigo.
+        - "respuesta_usuario" debe responder directamente al texto transcrito del usuario, no a un estado generico del dashboard.
         - En "respuesta_usuario", no seas seco: responde con lenguaje natural, inteligente, comprensible y pide confirmacion si hay accion ejecutable.
         - Si falta accion o ambiente, pide solo ese dato faltante.
         - Si habla de camaras, puertas o drones, explica que puedes preparar un plan, pero no ejecutar hardware real aun.
