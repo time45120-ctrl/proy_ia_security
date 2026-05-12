@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "NEXT_PUBLIC_API_BASE_URL=https://api.afcrseguridad.com next build",
-    "start": "next start -H 0.0.0.0 -p ${PORT:-3000}"
+    "start": "node server.js"
   },
   "dependencies": {
     "next": "^15.5.15",
