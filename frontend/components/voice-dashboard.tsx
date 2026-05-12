@@ -610,11 +610,14 @@ function AiCommandCard({
         <div className="grid gap-4 border-t border-white/10 pt-4 text-sm lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
           <div className="grid gap-2">
             <InfoRow label="Transcripcion" value={transcript} />
-            <InfoRow label="Respuesta usuario" value={userReply} />
+            <InfoRow label="Respuesta IA para el usuario" value={userReply} />
             <InfoRow label="Modulo" value={formatModuleLabel(plan?.module)} />
             <InfoRow label="Accion" value={plan?.action ?? intentJson?.accion ?? "Pendiente"} />
             <InfoRow label="Ambiente" value={plan?.espacio ?? intentJson?.espacio ?? "Pendiente"} />
-            <InfoRow label="Intencion JSON" value={formatIntentJson(intentJson)} />
+            <InfoRow
+              label="Respuesta JSON para el dispositivo"
+              value={formatIntentJson(intentJson)}
+            />
             <InfoRow
               label="Ejecucion"
               value={
