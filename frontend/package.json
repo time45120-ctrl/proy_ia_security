@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/clean-dev-cache.js",
     "dev": "next dev",
     "prebuild": "node scripts/print-deploy-info.js",
     "build": "NEXT_PUBLIC_API_BASE_URL=https://api.afcrseguridad.com next build",
