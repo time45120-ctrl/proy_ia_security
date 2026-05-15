@@ -558,7 +558,7 @@ function AiCommandCard({
     !isConfirming;
 
   return (
-    <section className="rounded-lg border border-[#44c7f4]/20 bg-[#061727]/70 p-4 sm:p-5">
+    <section className="min-w-0 overflow-hidden rounded-lg border border-[#44c7f4]/20 bg-[#061727]/70 p-4 sm:p-5">
       {isRecording ? (
         <RecordingOverlay
           onStop={onVoiceNodeClick}
@@ -581,7 +581,7 @@ function AiCommandCard({
         <SignalPill state={connection} />
       </div>
 
-      <div className="mt-6 grid gap-6 xl:grid-cols-[17rem_minmax(0,1fr)] xl:items-start">
+      <div className="mt-6 grid min-w-0 gap-6 xl:grid-cols-[17rem_minmax(0,1fr)] xl:items-start">
         <div>
           <button
             type="button"
@@ -615,7 +615,7 @@ function AiCommandCard({
           ) : null}
         </div>
 
-        <div className="grid gap-4 border-t border-white/10 pt-4 text-sm xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0">
+        <div className="grid min-w-0 gap-4 overflow-hidden border-t border-white/10 pt-4 text-sm xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0">
           <div className="grid gap-2">
             <InfoRow label="Transcripcion" value={transcript} />
             <InfoRow label="Respuesta IA para el usuario" value={userReply} wide />
@@ -938,17 +938,21 @@ function InfoRow({
 }) {
   if (wide) {
     return (
-      <div className="grid gap-1 border-b border-white/5 pb-2 last:border-none last:pb-0">
+      <div className="grid min-w-0 gap-1 border-b border-white/5 pb-2 last:border-none last:pb-0">
         <span className="text-slate-500">{label}</span>
-        <span className="break-words text-slate-200">{value}</span>
+        <span className="min-w-0 whitespace-pre-wrap break-words text-slate-200 [overflow-wrap:anywhere]">
+          {value}
+        </span>
       </div>
     );
   }
 
   return (
-    <div className="grid gap-1 border-b border-white/5 pb-2 last:border-none last:pb-0 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-start">
+    <div className="grid min-w-0 gap-1 border-b border-white/5 pb-2 last:border-none last:pb-0 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-start">
       <span className="text-slate-500">{label}</span>
-      <span className="break-words text-slate-200 sm:text-right">{value}</span>
+      <span className="min-w-0 break-words text-slate-200 [overflow-wrap:anywhere] sm:text-right">
+        {value}
+      </span>
     </div>
   );
 }
