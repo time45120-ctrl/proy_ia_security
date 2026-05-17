@@ -1,5 +1,5 @@
-import { WelcomeGate } from "@/components/welcome-gate";
+import { redirect } from "next/navigation";
 
 export default function Home() {
-  return <WelcomeGate />;
+  redirect("/welcome");
 }

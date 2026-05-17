@@ -2,6 +2,7 @@
 
 import type { FormEvent, ReactNode } from "react";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { VoiceDashboard } from "@/components/voice-dashboard";
 import {
   API_BASE_URL,
@@ -17,6 +18,12 @@ const frontendBuildLabel = "f1.23";
 
 type AppView = "welcome" | "sync" | "dashboard";
 type DeviceType = "Luces" | "Camaras" | "Puertas" | "Drones";
+
+const viewRoutes: Record<AppView, string> = {
+  welcome: "/welcome",
+  sync: "/sync",
+  dashboard: "/dashboard",
+};
 
 const deviceTypes: DeviceType[] = ["Luces", "Camaras", "Puertas", "Drones"];
 const deviceModelOptions = ["ESP32"];
@@ -50,8 +57,9 @@ function withDemoLinkedDevice(devices: LinkedDeviceRecord[]) {
   return [demoLinkedDevice, ...withoutDemo];
 }
 
-export function WelcomeGate() {
-  const [view, setView] = useState<AppView>("welcome");
+export function WelcomeGate({ initialView = "welcome" }: { initialView?: AppView }) {
+  const router = useRouter();
+  const [view, setView] = useState<AppView>(initialView);
   const [linkedDevices, setLinkedDevices] = useState<LinkedDeviceRecord[]>([
     demoLinkedDevice,
   ]);
@@ -74,8 +82,17 @@ export function WelcomeGate() {
     }
   }, [view]);
 
+  useEffect(() => {
+    setView(initialView);
+  }, [initialView]);
+
+  function navigateToView(nextView: AppView) {
+    setView(nextView);
+    router.push(viewRoutes[nextView]);
+  }
+
   if (view === "welcome") {
-    return <WelcomeScreen onStart={() => setView("sync")} />;
+    return <WelcomeScreen onStart={() => navigateToView("sync")} />;
   }
 
   const linkedCount = linkedDevices.filter((device) => device.claimed_at).length;
@@ -83,7 +100,7 @@ export function WelcomeGate() {
 
   function handleNavigate(nextView: Exclude<AppView, "welcome">) {
     if (nextView === "dashboard" && !canOpenDashboard) {
-      setView("sync");
+      navigateToView("sync");
       setNotice("Primero enlaza al menos un dispositivo para abrir el dashboard.");
       return;
     }
@@ -92,7 +109,7 @@ export function WelcomeGate() {
     if (nextView === "dashboard") {
       setDashboardResetSignal((current) => current + 1);
     }
-    setView(nextView);
+    navigateToView(nextView);
   }
 
   return (
