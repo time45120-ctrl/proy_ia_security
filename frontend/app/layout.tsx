@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "proy_ia_security Dashboard",
-  description: "Dashboard domotico con nucleo de IA por voz para el laboratorio IoT.",
+  title: "AFCRseguridad | Seguridad empresarial con IA",
+  description:
+    "Sistema integral B2B de seguridad con mini PC, inteligencia artificial, dispositivos IoT y soporte anual.",
 };
 
 export default function RootLayout({
