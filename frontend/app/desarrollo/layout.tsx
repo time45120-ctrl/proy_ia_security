@@ -19,7 +19,6 @@ export default function DesarrolloLayout({ children }: { children: ReactNode }) 
 function DevelopmentShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const {
-    linkedCount,
     canOpenDashboard,
     isCheckingAccess,
     hasLaboratoryAccess,
@@ -50,14 +49,6 @@ function DevelopmentShell({ children }: { children: ReactNode }) {
             <h1 className="mt-2 font-display text-xl font-semibold text-white">
               Desarrollo
             </h1>
-          </div>
-          <div className="rounded-lg border border-[#44c7f4]/20 bg-[#44c7f4]/10 px-3 py-2 text-right lg:mt-6 lg:text-left">
-            <p className="font-display text-2xl font-semibold text-white">
-              {linkedCount}
-            </p>
-            <p className="text-xs uppercase tracking-[0.16em] text-[#9edfff]">
-              enlazados
-            </p>
           </div>
         </div>
 

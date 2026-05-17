@@ -92,19 +92,32 @@ export function SyncLab() {
     <div className="min-h-screen px-3 py-4 sm:px-5 lg:px-8 xl:px-10">
       <div className="mx-auto grid w-full max-w-6xl gap-4 sm:gap-5">
         <header className="border-b border-white/10 pb-4">
-          <p className="text-xs uppercase tracking-[0.2em] text-[#9edfff]">
-            enlace de dispositivos
-          </p>
-          <h2 className="mt-2 font-display text-2xl font-semibold leading-tight text-white sm:text-3xl lg:text-4xl">
-            Sincronizacion de dispositivos Empresa ABC
-          </h2>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
-            Registra los dispositivos del cliente, indica la red a la que se
-            conectaran y confirma visualmente que ya quedaron enlazados.
-          </p>
-          <p className="mt-2 break-all text-xs text-slate-500">
-            API activa: <span className="text-slate-300">{API_BASE_URL}</span>
-          </p>
+          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-start">
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-[#9edfff]">
+                enlace de dispositivos
+              </p>
+              <h2 className="mt-2 font-display text-2xl font-semibold leading-tight text-white sm:text-3xl lg:text-4xl">
+                Sincronizacion de dispositivos Empresa ABC
+              </h2>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
+                Registra los dispositivos del cliente, indica la red a la que se
+                conectaran y confirma visualmente que ya quedaron enlazados.
+              </p>
+              <p className="mt-2 break-all text-xs text-slate-500">
+                API activa: <span className="text-slate-300">{API_BASE_URL}</span>
+              </p>
+            </div>
+
+            <div className="rounded-lg border border-[#44c7f4]/20 bg-[#44c7f4]/10 px-3 py-2 text-left sm:text-right">
+              <p className="font-display text-2xl font-semibold text-white">
+                {linkedCount}
+              </p>
+              <p className="text-xs uppercase tracking-[0.16em] text-[#9edfff]">
+                enlazados
+              </p>
+            </div>
+          </div>
         </header>
 
         {notice || localNotice ? (
