@@ -1,7 +1,8 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { closeLandingSession } from "@/lib/landing-session";
 import {
   DevelopmentWorkspaceProvider,
   type DevelopmentView,
@@ -18,6 +19,7 @@ export default function DesarrolloLayout({ children }: { children: ReactNode }) 
 
 function DevelopmentShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const {
     canOpenDashboard,
     isCheckingAccess,
@@ -27,6 +29,11 @@ function DevelopmentShell({ children }: { children: ReactNode }) {
   const activeView: DevelopmentView = pathname.includes("/dashboard")
     ? "dashboard"
     : "sync";
+
+  function handleLogout() {
+    closeLandingSession();
+    router.replace("/welcome");
+  }
 
   if (isCheckingAccess || !hasLaboratoryAccess) {
     return (
@@ -65,6 +72,14 @@ function DevelopmentShell({ children }: { children: ReactNode }) {
             onClick={() => navigateToView("dashboard")}
           />
         </nav>
+
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="mt-4 flex min-h-12 w-full items-center justify-center rounded-lg border border-rose-300/20 bg-rose-400/10 px-4 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-rose-100 transition hover:bg-rose-400/15 lg:mt-6"
+        >
+          Cerrar sesion
+        </button>
       </aside>
 
       <section className="min-w-0">{children}</section>
