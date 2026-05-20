@@ -80,8 +80,9 @@ export default function WelcomePage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const isAuthenticated = Boolean(session);
-  const laboratoryButtonLabel = "Laboratorio";
-  const companyLabel = session?.companyName ?? registration?.companyName;
+  const laboratoryButtonLabel = isAuthenticated
+    ? "SESION INICIADA PUEDES ENTRAR AL LABORATORIO"
+    : "Laboratorio";
 
   useEffect(() => {
     setRegistration(getLandingRegistration());
@@ -208,11 +209,20 @@ export default function WelcomePage() {
           </button>
 
           <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
-            {companyLabel ? (
-              <span className="hidden max-w-48 truncate rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-slate-300 md:inline">
-                {companyLabel}
-              </span>
-            ) : null}
+            <button
+              type="button"
+              onClick={() => {
+                setNotice(null);
+                setIsRegisterOpen(true);
+              }}
+              className={`min-h-10 rounded-lg px-3 py-2 text-xs font-bold uppercase tracking-[0.08em] transition sm:px-4 ${
+                isAuthenticated
+                  ? "border border-white/15 bg-white/[0.04] text-slate-300 hover:bg-white/[0.08]"
+                  : "bg-[#6ee7b7] text-[#052018] shadow-[0_0_24px_rgba(110,231,183,0.24)] hover:bg-[#8af0c9]"
+              }`}
+            >
+              Registrate
+            </button>
 
             {isAuthenticated ? (
               <button
@@ -234,22 +244,11 @@ export default function WelcomePage() {
 
             <button
               type="button"
-              onClick={() => {
-                setNotice(null);
-                setIsRegisterOpen(true);
-              }}
-              className="min-h-10 rounded-lg bg-[#6ee7b7] px-3 py-2 text-xs font-bold uppercase tracking-[0.08em] text-[#052018] shadow-[0_0_24px_rgba(110,231,183,0.24)] transition hover:bg-[#8af0c9] sm:px-4"
-            >
-              Registrate
-            </button>
-
-            <button
-              type="button"
               onClick={openLaboratory}
               disabled={!isAuthenticated}
               className={`min-h-10 rounded-lg border px-3 py-2 text-xs font-bold uppercase tracking-[0.08em] transition sm:px-4 ${
                 isAuthenticated
-                  ? "border-[#44c7f4]/55 bg-[#44c7f4]/16 text-[#c7f2ff] shadow-[0_0_22px_rgba(68,199,244,0.16)] hover:bg-[#44c7f4]/22"
+                  ? "border-[#6ee7b7]/70 bg-[#6ee7b7] text-[#052018] shadow-[0_0_26px_rgba(110,231,183,0.28)] hover:bg-[#8af0c9]"
                   : "cursor-not-allowed border-white/12 bg-transparent text-slate-500 opacity-70"
               }`}
               title={
