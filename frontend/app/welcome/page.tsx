@@ -525,12 +525,6 @@ export default function WelcomePage() {
               />
             </div>
 
-            <div className="mt-6 rounded-lg border border-[#44c7f4]/20 bg-[#44c7f4]/10 px-4 py-3 text-xs leading-6 text-[#c7f2ff]">
-              MVP: el registro se guarda localmente en este navegador. El
-              payload queda listo para conectarse despues a AWS mediante la API
-              publica {API_BASE_URL}.
-            </div>
-
             <button
               type="submit"
               disabled={!formIsReady}

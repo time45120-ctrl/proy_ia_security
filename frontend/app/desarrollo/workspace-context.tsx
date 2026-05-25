@@ -28,16 +28,18 @@ const developmentRoutes: Record<DevelopmentView, string> = {
 
 const demoLinkedDevice: LinkedDeviceRecord = {
   device_id: "demo-luz-cocina",
-  name: "Luz cocina",
-  type: "Luces",
-  model: "ESP32",
-  status: "online",
-  status_label: "Online demo",
-  mqtt_topic: "afcr/devices/demo-luz-cocina/commands",
+  name: "Luz cocina (demostracion)",
+  type: "Demo",
+  model: "Vista de prueba",
+  status: "demo",
+  status_label: "Demo visual",
+  mqtt_topic: "",
+  transport: "demo",
+  is_demo: true,
   last_seen: "2026-05-12T00:00:00.000Z",
   created_at: "2026-05-12T00:00:00.000Z",
   pairing_expires_at: null,
-  claimed_at: "2026-05-12T00:00:00.000Z",
+  claimed_at: null,
 };
 
 const DevelopmentWorkspaceContext =
@@ -77,7 +79,9 @@ export function DevelopmentWorkspaceProvider({
   const [isCheckingAccess, setIsCheckingAccess] = useState(true);
   const [hasLaboratoryAccess, setHasLaboratoryAccess] = useState(false);
 
-  const linkedCount = linkedDevices.filter((device) => device.claimed_at).length;
+  const linkedCount = linkedDevices.filter(
+    (device) => !device.is_demo && device.claimed_at,
+  ).length;
   const canOpenDashboard = linkedCount > 0;
 
   async function refreshDevices() {
