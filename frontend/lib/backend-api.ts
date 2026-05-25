@@ -20,8 +20,33 @@ export type MqttLightPayload = {
 };
 
 export type MqttPreview = {
-  mqtt_topic?: string;
+  mqtt_topic?: string | null;
   mqtt_payload?: MqttLightPayload | null;
+};
+
+export type DeviceCommandStatus =
+  | "pending_confirmation"
+  | "queued"
+  | "delivered"
+  | "executed"
+  | "failed"
+  | "expired"
+  | string;
+
+export type DeviceCommandDelivery = {
+  transport: "http_polling" | string;
+  command_id?: string | null;
+  device_id?: string;
+  target?: string;
+  action?: string;
+  espacio?: string;
+  status: DeviceCommandStatus;
+  commands_url?: string;
+  created_at?: string;
+  expires_at?: string;
+  delivered_at?: string | null;
+  ack_at?: string | null;
+  failure_detail?: string | null;
 };
 
 export type VoiceIntentPlan = {
@@ -33,6 +58,7 @@ export type VoiceIntentPlan = {
   action: string;
   espacio: string;
   mqtt_preview?: MqttPreview | null;
+  delivery_preview?: DeviceCommandDelivery | null;
   expires_at?: string;
 };
 
@@ -62,20 +88,23 @@ export type VoiceIntentResponse = {
   };
   fase_4_mqtt?: {
     accion_mqtt?: string;
-    mqtt_topic?: string;
+    mqtt_topic?: string | null;
     mqtt_payload?: MqttLightPayload | null;
   };
+  delivery?: DeviceCommandDelivery | null;
   plan?: VoiceIntentPlan;
 };
 
 export type VoiceIntentConfirmResponse = {
   ok?: boolean;
+  queued?: boolean;
   executed?: boolean;
   message?: string;
+  delivery?: DeviceCommandDelivery | null;
   plan?: VoiceIntentPlan;
   fase_4_mqtt?: {
     accion_mqtt?: string;
-    mqtt_topic?: string;
+    mqtt_topic?: string | null;
     mqtt_payload?: MqttLightPayload | null;
   };
 };
@@ -88,6 +117,9 @@ export type LinkedDeviceRecord = {
   status: "pending" | "online" | "offline" | "linked" | string;
   status_label: string;
   mqtt_topic: string;
+  transport?: "http_polling" | "mqtt" | string;
+  commands_url?: string | null;
+  is_demo?: boolean;
   last_seen?: string | null;
   created_at: string;
   pairing_expires_at?: string | null;
@@ -105,6 +137,8 @@ export type PairingTokenResponse = {
   mqtt_server: string;
   mqtt_port: number;
   mqtt_tls: boolean;
+  transport?: "http_polling" | "mqtt" | string;
+  commands_url?: string | null;
 };
 
 const DEFAULT_API_BASE_URL = "https://api.afcrseguridad.com";
@@ -212,6 +246,22 @@ export async function confirmVoiceIntentPlan(requestId: string) {
   return (await response.json()) as VoiceIntentConfirmResponse;
 }
 
+export async function getDeviceCommandStatus(commandId: string) {
+  const response = await fetch(
+    `${API_BASE_URL}/device/commands/${encodeURIComponent(commandId)}/status`,
+    { cache: "no-store" },
+  );
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  return (await response.json()) as {
+    ok?: boolean;
+    delivery: DeviceCommandDelivery;
+  };
+}
+
 export async function listDevices() {
   const response = await fetch(`${API_BASE_URL}/devices`, {
     cache: "no-store",
@@ -231,7 +281,6 @@ export async function createPairingToken(input: {
   name: string;
   type: string;
   model: string;
-  network?: string;
 }) {
   const response = await fetch(`${API_BASE_URL}/devices/pairing-token`, {
     method: "POST",

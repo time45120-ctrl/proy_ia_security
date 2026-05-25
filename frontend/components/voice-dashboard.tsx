@@ -5,9 +5,11 @@ import { useEffect, useRef, useState } from "react";
 import {
   API_BASE_URL,
   confirmVoiceIntentPlan,
+  getDeviceCommandStatus,
   pingBackend,
   sendVoiceIntentPreview,
   type BackendConnectionState,
+  type DeviceCommandDelivery,
   type MqttLightPayload,
   type VoiceIntentConfirmResponse,
   type VoiceIntentResponse,
@@ -45,7 +47,7 @@ const devices: DeviceCard[] = [
     title: "Luces por ambiente",
     buttonLabel: "Entrar a Luces por ambiente",
     count: 4,
-    description: "Ambientes listos para recibir comandos ON/OFF por MQTT.",
+    description: "Ambientes listos para recibir comandos ON/OFF por ESP32 o MQTT legacy.",
     status: "4 ambientes mapeados",
     items: ["Sala", "Comedor", "Cocina", "Cuarto principal"],
     tone: "text-[#9edfff] bg-[#44c7f4]/10 border-[#44c7f4]/20",
@@ -237,6 +239,55 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
     };
   }, [isRecording]);
 
+  useEffect(() => {
+    const delivery = confirmation?.delivery;
+    const commandId = delivery?.command_id;
+
+    if (
+      delivery?.transport !== "http_polling" ||
+      !commandId ||
+      ["executed", "failed", "expired"].includes(delivery.status)
+    ) {
+      return;
+    }
+
+    const activeCommandId = commandId;
+    let isCancelled = false;
+
+    async function refreshDeliveryStatus() {
+      try {
+        const payload = await getDeviceCommandStatus(activeCommandId);
+        if (isCancelled) {
+          return;
+        }
+
+        setConfirmation((current) =>
+          current ? { ...current, delivery: payload.delivery } : current,
+        );
+        setStatusText(formatDeliveryStatus(payload.delivery));
+        setConnection(payload.delivery.status === "failed" ? "error" : "online");
+      } catch {
+        if (!isCancelled) {
+          setStatusText("Esperando el estado del ESP32. La API no respondio a la consulta.");
+        }
+      }
+    }
+
+    void refreshDeliveryStatus();
+    const intervalId = window.setInterval(() => {
+      void refreshDeliveryStatus();
+    }, 2000);
+
+    return () => {
+      isCancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    confirmation?.delivery?.command_id,
+    confirmation?.delivery?.status,
+    confirmation?.delivery?.transport,
+  ]);
+
   async function handlePing() {
     setIsChecking(true);
     setConnection("checking");
@@ -384,7 +435,7 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
     setIsConfirming(true);
     setConnection("uploading");
     setErrorText(null);
-    setStatusText("Confirmando el plan y ejecutando solo si el backend lo permite...");
+    setStatusText("Confirmando el plan y preparando la entrega al dispositivo...");
 
     try {
       const payload = await confirmVoiceIntentPlan(requestId);
@@ -392,7 +443,9 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
       setConfirmation(payload);
       setConnection(payload.ok ? "online" : "error");
       setStatusText(
-        payload.message ??
+        payload.delivery
+          ? formatDeliveryStatus(payload.delivery)
+          : payload.message ??
           (payload.executed
             ? "Plan confirmado y ejecutado."
             : "Plan confirmado sin ejecucion real."),
@@ -538,6 +591,9 @@ function AiCommandCard({
     response?.fase_3_ia_json?.intencion_json ??
     response?.fase_3_ia_json?.ia_json;
   const plan = response?.plan;
+  const delivery =
+    confirmation?.delivery ?? response?.delivery ?? plan?.delivery_preview;
+  const isHttpDelivery = delivery?.transport === "http_polling";
   const mqttResult = confirmation?.fase_4_mqtt ?? response?.fase_4_mqtt;
   const dashboardStatusReply = buildDashboardStatusReply(connection, activeContext);
   const userReply =
@@ -630,7 +686,9 @@ function AiCommandCard({
             <InfoRow
               label="Ejecucion"
               value={
-                confirmation?.message ??
+                confirmation?.delivery
+                  ? formatDeliveryStatus(confirmation.delivery)
+                  : confirmation?.message ??
                 (plan?.can_execute
                   ? "Lista para confirmar"
                   : plan
@@ -677,12 +735,23 @@ function AiCommandCard({
 
           <div className="grid gap-2 border-t border-white/10 pt-4">
             <InfoRow label="Intencion" value={intentJson?.intencion ?? "Pendiente"} />
-            <InfoRow label="MQTT" value={mqttResult?.accion_mqtt ?? "SIN_ACCION"} />
-            <InfoRow
-              label="Payload"
-              value={formatMqttPayload(mqttResult?.mqtt_payload)}
-            />
-            <InfoRow label="Topic" value={mqttResult?.mqtt_topic ?? "casa/esp32/luces"} />
+            {isHttpDelivery ? (
+              <>
+                <InfoRow label="Entrega" value="HTTPS polling ESP32" />
+                <InfoRow label="Estado" value={formatDeliveryStatus(delivery)} />
+                <InfoRow label="Payload" value={formatHttpDeliveryPayload(delivery)} />
+                <InfoRow label="Device ID" value={delivery?.device_id ?? "Pendiente"} />
+              </>
+            ) : (
+              <>
+                <InfoRow label="MQTT" value={mqttResult?.accion_mqtt ?? "SIN_ACCION"} />
+                <InfoRow
+                  label="Payload"
+                  value={formatMqttPayload(mqttResult?.mqtt_payload)}
+                />
+                <InfoRow label="Topic" value={mqttResult?.mqtt_topic ?? "casa/esp32/luces"} />
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -1014,6 +1083,52 @@ function formatMqttPayload(payload?: MqttLightPayload | null) {
   const accion = payload.accion ?? "NONE";
 
   return `${espacio} ${accion}`;
+}
+
+function formatHttpDeliveryPayload(delivery?: DeviceCommandDelivery | null) {
+  if (!delivery) {
+    return "SIN_PAYLOAD";
+  }
+
+  return JSON.stringify({
+    target: delivery.target ?? "led",
+    action: delivery.action ?? "none",
+    espacio: delivery.espacio ?? "desconocido",
+  });
+}
+
+function formatDeliveryStatus(delivery?: DeviceCommandDelivery | null) {
+  if (!delivery) {
+    return "Sin entrega pendiente";
+  }
+
+  if (delivery.status === "pending_confirmation") {
+    return "Lista para confirmar y enviar al ESP32.";
+  }
+
+  if (delivery.status === "queued") {
+    return "Comando enviado a la cola del ESP32.";
+  }
+
+  if (delivery.status === "delivered") {
+    return "Comando recibido por el ESP32. Esperando ACK del LED.";
+  }
+
+  if (delivery.status === "executed") {
+    return "LED ejecutado y confirmado por el ESP32.";
+  }
+
+  if (delivery.status === "failed") {
+    return delivery.failure_detail
+      ? `Error de ejecucion del ESP32: ${delivery.failure_detail}.`
+      : "El ESP32 informo un error de ejecucion.";
+  }
+
+  if (delivery.status === "expired") {
+    return "El comando expiro sin ejecucion del ESP32.";
+  }
+
+  return `Estado de entrega: ${delivery.status}.`;
 }
 
 function formatIntentJson(intentJson?: VoiceIntentResponse["intencion_json"]) {

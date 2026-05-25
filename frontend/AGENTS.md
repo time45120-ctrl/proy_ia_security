@@ -136,14 +136,16 @@ Reglas:
 - Graba con `MediaRecorder` y `getUserMedia`.
 - Envia audio a `POST /voice-intent`.
 - Muestra preview/plan.
-- Ejecuta hardware solo con `POST /voice-intent/confirm`.
-- Luces pueden ejecutar MQTT real.
+- Ejecuta hardware solo tras `POST /voice-intent/confirm`.
+- Los ESP32 enlazados reciben comandos por polling HTTPS y el dashboard sigue
+  su ACK mediante `GET /device/commands/{command_id}/status`.
+- Luces legacy pueden ejecutar MQTT real.
 - Camaras, puertas y drones son visuales/plan hasta conectar hardware real.
 
 ## Dispositivos demo
 
 La UI puede mostrar dispositivos de prueba. No presentarlos como hardware real
-confirmado. El dispositivo demo principal es:
+confirmado ni contarlos para habilitar ejecucion. El dispositivo demo principal es:
 
 ```text
 demo-luz-cocina
@@ -198,4 +200,3 @@ Si Hostinger falla:
 - Confirmar modo: `AFCR_FRONTEND_MODE=next-server`.
 - Confirmar que no aparece `AFCR_FRONTEND_EXPORT_MISSING`.
 - Confirmar que el start usa `node server.js`.
-

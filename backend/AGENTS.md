@@ -49,8 +49,9 @@ Responsabilidades:
 - Gestiona SQLite de dispositivos enlazados.
 - Recibe audio, lo guarda en `audios_recibidos/`, transcribe e interpreta.
 - Genera plan pendiente de confirmacion.
-- Publica MQTT para luces solo despues de confirmacion.
-- Gestiona pairing/claim/heartbeat/comandos de ESP32.
+- Encola comandos HTTPS para ESP32 reales solo despues de confirmacion.
+- Conserva MQTT para luces legacy.
+- Gestiona pairing/claim/polling/ACK/heartbeat de ESP32.
 
 ## IA: dos canales obligatorios
 
@@ -130,10 +131,15 @@ POST /devices/claim
 GET /devices
 POST /devices/{device_id}/heartbeat
 POST /devices/{device_id}/command
+GET /device/commands?device_id={device_id}
+POST /device/commands/{command_id}/ack
+GET /device/commands/{command_id}/status
 ```
 
-`POST /voice-intent` no ejecuta hardware. Devuelve preview/plan. La ejecucion
-fisica ocurre solo en `/voice-intent/confirm`.
+`POST /voice-intent` no ejecuta hardware. Devuelve preview/plan. Para un
+dispositivo tipo `ESP32`, `/voice-intent/confirm` encola el comando y la
+ejecucion real se confirma cuando el firmware envia ACK. Los dispositivos
+legacy de luces mantienen MQTT al confirmar.
 
 ## Variables relevantes
 
@@ -152,11 +158,23 @@ AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.45"))
 AI_RESPONSE_STYLE = os.getenv("AI_RESPONSE_STYLE", "natural, claro, cercano y con criterio tecnico")
 LOCAL_AI_MODEL = os.getenv("LOCAL_AI_MODEL", "qwen2:7b-instruct-q4_0")
 VOICE_PLAN_TTL_SECONDS = int(os.getenv("VOICE_PLAN_TTL_SECONDS", "300"))
+DEVICE_COMMAND_TTL_SECONDS = int(os.getenv("DEVICE_COMMAND_TTL_SECONDS", "300"))
 ```
 
 No tocar `backend/.env` ni claves reales salvo peticion explicita del usuario.
 
-## MQTT
+## ESP32 HTTPS Polling
+
+- La plataforma crea un token temporal; el ESP32 lo reclama desde su portal
+  local y recibe `device_id` mas una `device_api_key` que guarda localmente.
+- SQLite solo guarda el hash de `device_api_key`.
+- El ESP32 consulta `GET /device/commands?device_id=...` con
+  `Authorization: Bearer <device_api_key>`.
+- Un comando se reentrega hasta recibir `POST /device/commands/{id}/ack` o
+  expirar a los 300 segundos.
+- Estados: `queued`, `delivered`, `executed`, `failed`, `expired`.
+
+## MQTT Legacy
 
 Topic default:
 
@@ -238,4 +256,3 @@ git push
   - `frontend/components/voice-dashboard.tsx`
 - La respuesta natural debe estar alineada a la voz del usuario; el JSON debe
   estar alineado a los dispositivos.
-

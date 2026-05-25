@@ -6,7 +6,7 @@ Ultima revision: 2026-05-12.
 
 Proyecto de asistente de voz IoT/domotico con dashboard web, backend FastAPI,
 IA para interpretar comandos y flujo de confirmacion antes de ejecutar acciones
-MQTT. La fuente activa es:
+por polling HTTPS en ESP32 reales, con MQTT legacy. La fuente activa es:
 
 ```text
 /home/abraham/proy_ia_security
@@ -165,8 +165,10 @@ La vista `sync`:
 
 - Llama `GET /devices`.
 - Crea tokens con `POST /devices/pairing-token`.
-- Muestra API URL, token, device id y topic MQTT.
-- Incluye un dispositivo demo `demo-luz-cocina` para experiencia visual inicial.
+- Para `ESP32`, asigna el LED a un ambiente, muestra API URL, token, vigencia
+  y modo HTTPS polling; SSID/password se ingresan solo en el portal local.
+- Incluye un dispositivo demo `demo-luz-cocina` solo como muestra visual; no
+  cuenta como hardware enlazado.
 
 El dashboard de voz en `frontend/components/voice-dashboard.tsx`:
 
@@ -182,10 +184,10 @@ El dashboard de voz en `frontend/components/voice-dashboard.tsx`:
   visibles son de prueba.
 - El campo JSON toma primero `respuesta_json_dispositivo`, luego
   `intencion_json`.
-- Ejecuta hardware real solo cuando el usuario pulsa `Confirmar ejecucion`, que
-  llama `POST /voice-intent/confirm`.
-- Solo luces ejecuta MQTT real actualmente; camaras, puertas y drones son
-  planes o acciones simuladas en UI.
+- Al pulsar `Confirmar ejecucion`, un ESP32 real recibe una orden en cola HTTP;
+  el dashboard sigue su ACK hasta mostrar ejecucion, fallo o expiracion.
+- Luces legacy conservan MQTT; camaras, puertas y drones son planes o acciones
+  simuladas en UI.
 
 API client:
 
@@ -198,6 +200,7 @@ Funciones activas:
 - `pingBackend()`
 - `sendVoiceIntentPreview(file)`
 - `confirmVoiceIntentPlan(requestId)`
+- `getDeviceCommandStatus(commandId)`
 - `listDevices()`
 - `createPairingToken(input)`
 
@@ -225,7 +228,7 @@ Responsabilidades:
 - Inicializar cliente MQTT.
 - Inicializar OpenAI si `AI_PROVIDER=openai`.
 - Inicializar Whisper local solo si no se usa OpenAI.
-- Crear/migrar tabla SQLite `devices`.
+- Crear/migrar tablas SQLite `devices` y `device_commands`.
 - Guardar audios recibidos en `audios_recibidos/`.
 - Transcribir audio.
 - Interpretar intencion con OpenAI u Ollama y fallback por reglas.
@@ -234,8 +237,9 @@ Responsabilidades:
   - `respuesta_json_dispositivo` / `intencion_json`: JSON tecnico para
     dispositivos.
 - Crear plan pendiente de confirmacion.
-- Confirmar y publicar MQTT para luces.
-- Gestionar pairing, claim, heartbeat y comandos de dispositivos.
+- Confirmar y encolar HTTP para ESP32 por ambiente; mantener MQTT para luces
+  legacy.
+- Gestionar pairing, claim, polling autenticado, ACK, heartbeat y comandos.
 
 Variables relevantes:
 
@@ -253,6 +257,7 @@ OPENAI_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "700"))
 AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.45"))
 AI_RESPONSE_STYLE = os.getenv("AI_RESPONSE_STYLE", "natural, claro, cercano y con criterio tecnico")
 VOICE_PLAN_TTL_SECONDS = int(os.getenv("VOICE_PLAN_TTL_SECONDS", "300"))
+DEVICE_COMMAND_TTL_SECONDS = int(os.getenv("DEVICE_COMMAND_TTL_SECONDS", "300"))
 ```
 
 ## Contratos activos
@@ -292,13 +297,17 @@ POST /devices/claim
 GET /devices
 POST /devices/{device_id}/heartbeat
 POST /devices/{device_id}/command
+GET /device/commands?device_id={device_id}
+POST /device/commands/{command_id}/ack
+GET /device/commands/{command_id}/status
 ```
 
 `POST /voice-intent` no ejecuta inmediatamente el comando fisico. Devuelve
 preview con `plan.request_id`, `can_execute`, `module`, `action`, `espacio`,
 `mqtt_preview`, `expires_at`, `respuesta_ia_usuario` y
-`respuesta_json_dispositivo`. La publicacion real ocurre en
-`POST /voice-intent/confirm`.
+`respuesta_json_dispositivo`. Para un `ESP32`, confirmar encola la orden y la
+ejecucion real ocurre cuando el dispositivo consulta y devuelve ACK. Para
+dispositivos legacy, la publicacion MQTT ocurre al confirmar.
 
 Forma esperada de la IA:
 
@@ -328,7 +337,26 @@ pidio por voz. No debe ser un resumen generico del dashboard si hay
 transcripcion concreta. El JSON para dispositivos no debe contener lenguaje
 conversacional.
 
-## MQTT
+## ESP32 HTTP
+
+El ESP32 reclamado recibe una `device_api_key` una sola vez y la almacena
+localmente; SQLite persiste solo el hash. Consulta por HTTPS:
+
+```text
+GET /device/commands?device_id={device_id}
+Authorization: Bearer <device_api_key>
+```
+
+Al ejecutar su LED GPIO 2 confirma con:
+
+```text
+POST /device/commands/{command_id}/ack
+```
+
+Los comandos expiran a los 300 segundos y el dashboard muestra
+`queued`, `delivered`, `executed`, `failed` o `expired`.
+
+## MQTT Legacy
 
 Topic MQTT activo:
 
@@ -387,9 +415,10 @@ Flujo de pairing:
 3. Usuario abre `http://192.168.4.1`.
 4. Usuario escribe SSID, password WiFi, API URL y token.
 5. ESP32 llama `POST /devices/claim` contra `PUBLIC_API_URL`.
-6. Backend marca dispositivo como `online`, guarda `claimed_at` y devuelve topic.
-7. ESP32 se suscribe a `afcr/devices/{device_id}/commands`.
-8. ESP32 envia heartbeat a `POST /devices/{device_id}/heartbeat`.
+6. Backend marca dispositivo como `online`, guarda `claimed_at` y entrega
+   `device_api_key` una sola vez.
+7. ESP32 consulta `GET /device/commands?device_id=...` con bearer token.
+8. ESP32 ejecuta el LED y envia ACK del comando al backend.
 
 El backend no recibe ni guarda password WiFi.
 
@@ -447,4 +476,3 @@ curl -I https://afcrseguridad.com
   proceso Node (`npm run start`) y si el log muestra `AFCR_FRONTEND_READY=...`.
 - No recuperar el postbuild de `out/index.html` salvo que Hostinger se cambie a
   despliegue estatico puro.
-

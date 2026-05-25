@@ -1,9 +1,9 @@
 # proy_ia_security
 
-Sistema de asistente de voz IoT para laboratorio local. El flujo actual captura
-audio desde el dashboard, lo envia a un backend FastAPI, transcribe con Whisper,
-interpreta la intencion con OpenAI u Ollama y publica comandos MQTT para luces
-por ambiente.
+Sistema de asistente de voz IoT para laboratorio. El flujo captura audio desde
+el dashboard, lo envia a FastAPI, interpreta la intencion con IA y, despues de
+confirmacion humana, entrega comandos a un ESP32 real mediante polling HTTPS y
+ACK. MQTT se conserva para dispositivos legacy.
 
 La fuente activa del proyecto es la carpeta raiz:
 
@@ -24,8 +24,10 @@ valida del proyecto es esta raiz.
 - DNS Hostinger: `api.afcrseguridad.com` apunta a `3.132.192.3`
 - Endpoint de salud: `GET /ping`
 - Endpoint principal: `POST /voice-intent`
+- Endpoint ESP32: `GET /device/commands?device_id=...`
+- Confirmacion ESP32: `POST /device/commands/{command_id}/ack`
 - Broker MQTT esperado en `127.0.0.1:1883` desde el backend
-- Topic MQTT activo: `casa/esp32/luces`
+- Topic MQTT legacy: `casa/esp32/luces`
 - Payload MQTT activo:
 
 ```json
@@ -64,11 +66,14 @@ Backend FastAPI (backend/app_api.py)
    +-- guarda audio en audios_recibidos/
    +-- Whisper tiny -> texto
    +-- OpenAI u Ollama -> JSON de intencion
-   `-- MQTT -> casa/esp32/luces
+   +-- confirmacion UI -> cola SQLite device_commands
+   `-- GET HTTPS autenticado <- ESP32
           |
-          v
-       ESP32 suscrito a casa/esp32/luces
+          +-- GPIO 2 LED
+          `-- POST ACK -> dashboard muestra ejecucion
 ```
+
+Luces legacy sin ESP32 HTTP asignado conservan la ruta MQTT.
 
 En el laboratorio, si FastAPI y Mosquitto corren dentro de WSL, Windows puede
 exponerlos hacia la LAN con `portproxy`:
@@ -120,7 +125,8 @@ El dashboard muestra:
 - conectividad con `GET /ping`
 - transcripcion devuelta por `fase_2_transcripcion.texto_transcrito`
 - intencion, detalle, ambiente y accion desde `fase_3_ia_json.ia_json`
-- resultado MQTT desde `fase_4_mqtt`
+- entrega HTTPS del ESP32 y estado `queued/delivered/executed/failed/expired`,
+  o resultado MQTT para dispositivos legacy
 - respuesta completa del backend para trazabilidad
 
 ## Backend
@@ -137,6 +143,7 @@ Configuracion relevante:
 MQTT_SERVER = "127.0.0.1"
 MQTT_PORT = 1883
 MQTT_TOPIC_LUCES = "casa/esp32/luces"
+DEVICE_COMMAND_TTL_SECONDS = 300
 CORS_ALLOW_ORIGINS = [...]
 AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").strip().lower()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
@@ -203,58 +210,34 @@ cd /home/abraham/proy_ia_security/backend
 uvicorn app_api:app --host 0.0.0.0 --port 8000
 ```
 
-Respuesta tipica de `POST /voice-intent`:
+Despues de `POST /voice-intent`, el usuario confirma el plan. Si hay un ESP32
+asignado al ambiente, `POST /voice-intent/confirm` encola la orden:
 
 ```json
 {
   "ok": true,
-  "ai_provider": "openai",
-  "fase_1_audio_guardado": {
-    "filename": "20260425-153045_audio.webm",
-    "saved_path": "/home/abraham/proy_ia_security/audios_recibidos/20260425-153045_audio.webm",
-    "content_type": "audio/webm"
-  },
-  "fase_2_transcripcion": {
-    "texto_transcrito": "prende la luz de la cocina"
-  },
-  "fase_3_ia_json": {
-    "ia_raw": "{\"texto\":\"prende la luz de la cocina\",\"intencion\":\"control_luces\",\"detalle\":\"encender luz de cocina\",\"espacio\":\"cocina\",\"accion\":\"ON\"}",
-    "ia_json_raw": {
-      "texto": "prende la luz de la cocina",
-      "intencion": "control_luces",
-      "detalle": "encender luz de cocina",
-      "espacio": "cocina",
-      "accion": "ON"
-    },
-    "ia_json": {
-      "texto": "prende la luz de la cocina",
-      "intencion": "control_luces",
-      "detalle": "encender luz de cocina",
-      "espacio": "cocina",
-      "accion": "ON"
-    }
-  },
-  "fase_4_mqtt": {
-    "accion_mqtt": "MQTT_ON_cocina_OK",
-    "mqtt_topic": "casa/esp32/luces",
-    "mqtt_payload": {
-      "espacio": "cocina",
-      "accion": "ON"
-    }
+  "queued": true,
+  "executed": false,
+  "delivery": {
+    "transport": "http_polling",
+    "command_id": "cmd_...",
+    "device_id": "esp32-luz-cocina-...",
+    "target": "led",
+    "action": "turn_on",
+    "espacio": "cocina",
+    "status": "queued",
+    "expires_at": "..."
   }
 }
 ```
 
-Valores relevantes de `fase_4_mqtt.accion_mqtt`:
+Estados visibles de entrega HTTPS:
 
-- `MQTT_ON_<espacio>_OK`
-- `MQTT_ON_<espacio>_ERROR`
-- `MQTT_OFF_<espacio>_OK`
-- `MQTT_OFF_<espacio>_ERROR`
-- `SIN_ACCION`
-- `ESPACIO_DESCONOCIDO`
-- `ACCION_DESCONOCIDA`
-- `SIN_JSON`
+- `queued`: confirmado y esperando una consulta del ESP32.
+- `delivered`: el ESP32 recibio el JSON y aun debe confirmar.
+- `executed`: el LED fue actualizado y confirmado.
+- `failed`: el ESP32 informo que no ejecuto la orden.
+- `expired`: no se ejecuto dentro de la ventana de 300 segundos.
 
 ## ESP32
 
@@ -273,14 +256,18 @@ El sketch debe parsear JSON y aplicar la accion al ambiente recibido:
 }
 ```
 
-Para enlace real desde el frontend publico HTTPS, el flujo nuevo usa pairing:
+Para enlace real desde el frontend publico HTTPS, el flujo ESP32 usa pairing y
+polling autenticado:
 
 1. Frontend crea un token con `POST /devices/pairing-token`.
 2. ESP32 crea un AP temporal, por ejemplo `AFCR-ESP32-XXXX`.
 3. Usuario abre `http://192.168.4.1` y escribe SSID, password, API URL y token.
 4. ESP32 llama `POST /devices/claim` contra `https://api.afcrseguridad.com`.
-5. Backend guarda el dispositivo en SQLite y devuelve su topic MQTT.
-6. ESP32 se suscribe a `afcr/devices/{device_id}/commands`.
+5. Backend guarda el dispositivo en SQLite y entrega una `device_api_key` una
+   sola vez; en base solo persiste su hash.
+6. Al confirmar un comando, el backend lo guarda en `device_commands`.
+7. ESP32 consulta `GET /device/commands?device_id=...` con bearer token,
+   ejecuta su LED GPIO 2 y envia `POST /device/commands/{id}/ack`.
 
 El backend no recibe ni guarda la contraseña WiFi. Esa clave solo se escribe en
 el portal local del ESP32.
@@ -293,6 +280,9 @@ POST /devices/claim
 GET /devices
 POST /devices/{device_id}/command
 POST /devices/{device_id}/heartbeat
+GET /device/commands?device_id={device_id}
+POST /device/commands/{command_id}/ack
+GET /device/commands/{command_id}/status
 ```
 
 Firmware base:
@@ -301,7 +291,9 @@ Firmware base:
 firmware/esp32_pairing_portal/esp32_pairing_portal.ino
 ```
 
-Para produccion, configurar MQTT con TLS:
+El firmware ESP32 incluido valida `https://api.afcrseguridad.com` con
+`ISRG Root X1`, la raiz de la cadena Let's Encrypt actualmente publicada. MQTT
+queda como transporte legacy configurable mediante:
 
 ```bash
 MQTT_SERVER=mqtt.afcrseguridad.com
@@ -315,15 +307,15 @@ PUBLIC_API_URL=https://api.afcrseguridad.com
 
 ## Comandos de voz esperados
 
-| Frase del usuario | Intencion | Espacio | Accion | Topic |
-|---|---|---|---|---|
-| `prende la luz de la sala` | `control_luces` | `sala` | `ON` | `casa/esp32/luces` |
-| `enciende la luz del comedor` | `control_luces` | `comedor` | `ON` | `casa/esp32/luces` |
-| `apaga la luz de la cocina` | `control_luces` | `cocina` | `OFF` | `casa/esp32/luces` |
-| `apaga cuarto principal` | `control_luces` | `cuarto_principal` | `OFF` | `casa/esp32/luces` |
+| Frase del usuario | Espacio | Accion IA | Payload ESP32 |
+|---|---|---|---|
+| `prende la luz de la sala` | `sala` | `ON` | `led / turn_on` |
+| `enciende la luz del comedor` | `comedor` | `ON` | `led / turn_on` |
+| `apaga la luz de la cocina` | `cocina` | `OFF` | `led / turn_off` |
+| `apaga cuarto principal` | `cuarto_principal` | `OFF` | `led / turn_off` |
 
-Si falta ambiente o accion, el backend no publica un comando fisico y devuelve
-un estado como `ESPACIO_DESCONOCIDO`, `ACCION_DESCONOCIDA` o `SIN_ACCION`.
+Si no hay ESP32 HTTP asignado al ambiente, la ruta MQTT legacy continua
+disponible para luces ya conectadas.
 
 ## Verificacion
 
@@ -331,6 +323,8 @@ Backend:
 
 ```bash
 python3 -c "import ast, pathlib; ast.parse(pathlib.Path('backend/app_api.py').read_text()); print('backend/app_api.py syntax OK')"
+cd backend
+python3 -m unittest -v test_http_polling.py
 ```
 
 Frontend:
@@ -348,15 +342,15 @@ curl http://localhost:8000/ping
 
 Prueba funcional manual:
 
-1. Levantar Mosquitto y confirmar que escucha en `1883`.
-2. Levantar FastAPI en `0.0.0.0:8000`.
-3. Levantar el frontend.
-4. Pulsar `Probar API`.
-5. Enviar un audio diciendo `prende la luz de la cocina`.
-6. Confirmar en la UI que aparecen transcripcion, ambiente `cocina`, accion `ON`,
-   topic `casa/esp32/luces` y payload JSON.
-7. Repetir con `apaga la luz de la sala`.
-8. Verificar desde el ESP32 o un cliente MQTT que el mensaje llega al topic.
+1. Flashear `firmware/esp32_pairing_portal/esp32_pairing_portal.ino`.
+2. En Sincronizacion elegir `ESP32`, ambiente `cocina` y crear el enlace.
+3. Conectarse a `AFCR-ESP32-XXXX`, abrir `http://192.168.4.1` e introducir
+   WiFi, API URL y pairing token.
+4. Esperar que el inventario de la web muestre el ESP32 `Online`.
+5. Enviar voz diciendo `prende la luz de la cocina` y confirmar el plan.
+6. Verificar LED encendido y estado `LED ejecutado y confirmado por el ESP32`.
+7. Repetir con apagado; desconectar mas de 300 segundos para comprobar
+   expiracion sin ejecucion tardia.
 
 ## Troubleshooting rapido
 
@@ -378,7 +372,17 @@ En produccion:
 5. Que `CORS_ALLOW_ORIGINS` incluya `https://afcrseguridad.com` y
    `https://www.afcrseguridad.com`.
 
-### El ESP32 no conecta al broker
+### El ESP32 no recibe comandos HTTPS
+
+Revisar:
+
+1. Que el token siga vigente al reclamarlo.
+2. Que el ESP32 haya guardado `device_id` y `device_api_key` durante el claim.
+3. Que tenga salida HTTPS hacia `api.afcrseguridad.com`.
+4. Que la cadena TLS publica siga siendo valida para `ISRG Root X1`.
+5. Que el equipo se haya asignado al mismo ambiente dicho por voz.
+
+### Un dispositivo legacy no conecta al broker MQTT
 
 Revisar:
 

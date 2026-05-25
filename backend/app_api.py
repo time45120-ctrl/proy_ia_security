@@ -9,7 +9,7 @@
 #          Puede usar:
 #          - OpenAI API
 #          - IA local con Ollama/Qwen2
-# FASE 4: JSON -> MQTT -> ESP32 -> Actuador
+# FASE 4: JSON -> confirmacion -> HTTP polling ESP32 o MQTT legacy -> Actuador
 #
 # Demo 4 LEDs por ambiente:
 # - sala
@@ -23,7 +23,7 @@
 # IMPORTACIONES
 # =========================================================
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
@@ -89,6 +89,7 @@ DB_PATH = os.getenv(
 PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "https://api.afcrseguridad.com").rstrip("/")
 PAIRING_TOKEN_MINUTES = int(os.getenv("PAIRING_TOKEN_MINUTES", "10"))
 DEVICE_ONLINE_WINDOW_SECONDS = int(os.getenv("DEVICE_ONLINE_WINDOW_SECONDS", "120"))
+DEVICE_COMMAND_TTL_SECONDS = int(os.getenv("DEVICE_COMMAND_TTL_SECONDS", "300"))
 
 # --- Transcripcion ---
 OPENAI_TRANSCRIBE_MODEL = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
@@ -272,6 +273,12 @@ class DeviceCommandRequest(BaseModel):
     espacio: str | None = None
 
 
+class DeviceCommandAckRequest(BaseModel):
+    device_id: str
+    status: str
+    detail: str | None = None
+
+
 class VoiceIntentConfirmRequest(BaseModel):
     request_id: str
 
@@ -298,6 +305,10 @@ def hash_pairing_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def hash_device_api_key(api_key: str) -> str:
+    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+
+
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -321,12 +332,44 @@ def init_devices_db():
                 created_at TEXT NOT NULL,
                 pairing_token_hash TEXT,
                 pairing_expires_at TEXT,
-                claimed_at TEXT
+                claimed_at TEXT,
+                device_api_key_hash TEXT
+            )
+            """
+        )
+        columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(devices)").fetchall()
+        }
+        if "device_api_key_hash" not in columns:
+            conn.execute("ALTER TABLE devices ADD COLUMN device_api_key_hash TEXT")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_devices_pairing_token_hash ON devices(pairing_token_hash)"
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS device_commands (
+                command_id TEXT PRIMARY KEY,
+                device_id TEXT NOT NULL,
+                target TEXT NOT NULL,
+                action TEXT NOT NULL,
+                espacio TEXT NOT NULL,
+                status TEXT NOT NULL,
+                source_request_id TEXT,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                delivered_at TEXT,
+                ack_at TEXT,
+                failure_detail TEXT,
+                FOREIGN KEY (device_id) REFERENCES devices(device_id)
             )
             """
         )
         conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_devices_pairing_token_hash ON devices(pairing_token_hash)"
+            """
+            CREATE INDEX IF NOT EXISTS idx_device_commands_delivery
+            ON device_commands(device_id, status, created_at)
+            """
         )
         conn.commit()
 
@@ -351,6 +394,7 @@ def normalize_device_type(device_type: str) -> str:
         "doors": "Puertas",
         "drone": "Drones",
         "drones": "Drones",
+        "esp32": "ESP32",
     }
 
     return equivalents.get(value, device_type.strip() or "Dispositivo")
@@ -386,6 +430,12 @@ def device_row_to_dict(row: sqlite3.Row) -> dict:
     device["status"] = status
     device["status_label"] = status_label
     device.pop("pairing_token_hash", None)
+    device.pop("device_api_key_hash", None)
+    if normalize_device_type(str(device.get("type", ""))) == "ESP32":
+        device["transport"] = "http_polling"
+        device["commands_url"] = "/device/commands"
+    else:
+        device["transport"] = "mqtt"
 
     return device
 
@@ -427,6 +477,145 @@ def find_light_device_for_space(espacio: str) -> dict | None:
             return device
 
     return device_row_to_dict(rows[0])
+
+
+def find_http_esp32_for_space(espacio: str) -> dict | None:
+    normalized_space = normalize_espacio(espacio)
+    if normalized_space not in ESPACIOS_VALIDOS:
+        return None
+
+    space_aliases = {
+        "sala": ("sala",),
+        "comedor": ("comedor",),
+        "cocina": ("cocina",),
+        "cuarto_principal": ("cuarto principal", "dormitorio principal", "habitacion principal"),
+    }
+    with get_db_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT * FROM devices
+            WHERE claimed_at IS NOT NULL
+              AND lower(type) = 'esp32'
+            ORDER BY claimed_at DESC
+            """
+        ).fetchall()
+
+    for row in rows:
+        device = device_row_to_dict(row)
+        name = normalize_text(device["name"]).replace("_", " ")
+        if any(alias in name for alias in space_aliases[normalized_space]):
+            return device
+
+    return None
+
+
+def infer_device_space(device: dict) -> str:
+    name = normalize_text(str(device.get("name", ""))).replace("_", " ")
+    aliases = (
+        ("cuarto_principal", ("cuarto principal", "dormitorio principal", "habitacion principal")),
+        ("sala", ("sala",)),
+        ("comedor", ("comedor",)),
+        ("cocina", ("cocina",)),
+    )
+    for espacio, values in aliases:
+        if any(value in name for value in values):
+            return espacio
+
+    return "desconocido"
+
+
+def cleanup_expired_device_commands() -> None:
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            UPDATE device_commands
+            SET status = 'expired'
+            WHERE status IN ('queued', 'delivered')
+              AND expires_at < ?
+            """,
+            (to_iso(utc_now()),)
+        )
+        conn.commit()
+
+
+def command_row_to_dict(row: sqlite3.Row) -> dict:
+    command = dict(row)
+    command["transport"] = "http_polling"
+    command["commands_url"] = "/device/commands"
+    return command
+
+
+def enqueue_http_led_command(
+    device: dict,
+    accion: str,
+    espacio: str,
+    source_request_id: str | None = None,
+) -> dict:
+    accion = accion.strip().upper()
+    normalized_space = normalize_espacio(espacio)
+    action = {"ON": "turn_on", "OFF": "turn_off"}.get(accion)
+
+    if action is None or normalized_space not in ESPACIOS_VALIDOS:
+        raise HTTPException(status_code=400, detail="Comando LED no soportado")
+
+    created_at = utc_now()
+    expires_at = created_at + timedelta(seconds=DEVICE_COMMAND_TTL_SECONDS)
+    command_id = f"cmd_{secrets.token_urlsafe(16)}"
+
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO device_commands (
+                command_id, device_id, target, action, espacio, status,
+                source_request_id, created_at, expires_at
+            )
+            VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)
+            """,
+            (
+                command_id,
+                device["device_id"],
+                "led",
+                action,
+                normalized_space,
+                source_request_id,
+                to_iso(created_at),
+                to_iso(expires_at),
+            )
+        )
+        conn.commit()
+
+    return {
+        "transport": "http_polling",
+        "command_id": command_id,
+        "device_id": device["device_id"],
+        "target": "led",
+        "action": action,
+        "espacio": normalized_space,
+        "status": "queued",
+        "commands_url": "/device/commands",
+        "expires_at": to_iso(expires_at),
+    }
+
+
+def authenticate_http_device(device_id: str, authorization: str | None) -> dict:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Credencial de dispositivo requerida")
+
+    api_key = authorization.removeprefix("Bearer ").strip()
+    with get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM devices WHERE device_id = ?",
+            (device_id,)
+        ).fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Dispositivo no encontrado")
+
+    expected_hash = row["device_api_key_hash"]
+    if not expected_hash or not secrets.compare_digest(expected_hash, hash_device_api_key(api_key)):
+        raise HTTPException(status_code=401, detail="Credencial de dispositivo invalida")
+
+    return device_row_to_dict(row)
 
 
 init_devices_db()
@@ -514,6 +703,8 @@ def create_pairing_token(payload: PairingTokenRequest):
         "mqtt_server": MQTT_SERVER,
         "mqtt_port": MQTT_PORT,
         "mqtt_tls": MQTT_TLS,
+        "transport": "http_polling" if device_type == "ESP32" else "mqtt",
+        "commands_url": "/device/commands" if device_type == "ESP32" else None,
     }
 
 
@@ -524,6 +715,7 @@ def claim_device(payload: ClaimDeviceRequest):
     """
     token_hash = hash_pairing_token(payload.token.strip())
     now = utc_now()
+    device_api_key = None
 
     with get_db_connection() as conn:
         row = conn.execute(
@@ -542,13 +734,23 @@ def claim_device(payload: ClaimDeviceRequest):
         if expires_at is None or expires_at < now:
             raise HTTPException(status_code=410, detail="Token expirado")
 
+        if normalize_device_type(row["type"]) == "ESP32":
+            device_api_key = secrets.token_urlsafe(32)
+
         conn.execute(
             """
             UPDATE devices
-            SET status = ?, last_seen = ?, claimed_at = ?, pairing_token_hash = NULL
+            SET status = ?, last_seen = ?, claimed_at = ?, pairing_token_hash = NULL,
+                device_api_key_hash = ?
             WHERE device_id = ?
             """,
-            ("online", to_iso(now), to_iso(now), row["device_id"])
+            (
+                "online",
+                to_iso(now),
+                to_iso(now),
+                hash_device_api_key(device_api_key) if device_api_key else None,
+                row["device_id"],
+            )
         )
         conn.commit()
 
@@ -557,6 +759,8 @@ def claim_device(payload: ClaimDeviceRequest):
     return {
         "ok": True,
         "device": device,
+        "device_api_key": device_api_key,
+        "commands_url": "/device/commands" if device_api_key else None,
     }
 
 
@@ -601,6 +805,142 @@ def device_heartbeat(device_id: str, payload: HeartbeatRequest):
     }
 
 
+@app.get("/device/commands")
+def poll_device_commands(
+    device_id: str,
+    authorization: str | None = Header(default=None),
+):
+    authenticate_http_device(device_id, authorization)
+    cleanup_expired_device_commands()
+    now = to_iso(utc_now())
+
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            UPDATE devices
+            SET status = 'online', last_seen = ?
+            WHERE device_id = ?
+            """,
+            (now, device_id)
+        )
+        row = conn.execute(
+            """
+            SELECT * FROM device_commands
+            WHERE device_id = ?
+              AND status IN ('queued', 'delivered')
+            ORDER BY created_at ASC
+            LIMIT 1
+            """,
+            (device_id,)
+        ).fetchone()
+
+        if row is not None and row["status"] == "queued":
+            conn.execute(
+                """
+                UPDATE device_commands
+                SET status = 'delivered', delivered_at = ?
+                WHERE command_id = ?
+                """,
+                (now, row["command_id"])
+            )
+            row = conn.execute(
+                "SELECT * FROM device_commands WHERE command_id = ?",
+                (row["command_id"],)
+            ).fetchone()
+
+        conn.commit()
+
+    if row is None:
+        return {
+            "ok": True,
+            "command_id": None,
+            "target": "led",
+            "action": "none",
+            "status": "idle",
+        }
+
+    command = command_row_to_dict(row)
+    return {
+        "ok": True,
+        "command_id": command["command_id"],
+        "target": command["target"],
+        "action": command["action"],
+        "espacio": command["espacio"],
+        "status": command["status"],
+        "expires_at": command["expires_at"],
+    }
+
+
+@app.post("/device/commands/{command_id}/ack")
+def acknowledge_device_command(
+    command_id: str,
+    payload: DeviceCommandAckRequest,
+    authorization: str | None = Header(default=None),
+):
+    authenticate_http_device(payload.device_id.strip(), authorization)
+    cleanup_expired_device_commands()
+    status = payload.status.strip().lower()
+    if status not in {"executed", "failed"}:
+        raise HTTPException(status_code=400, detail="status debe ser executed o failed")
+
+    with get_db_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM device_commands
+            WHERE command_id = ? AND device_id = ?
+            """,
+            (command_id, payload.device_id.strip())
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Comando no encontrado")
+        if row["status"] == "expired":
+            raise HTTPException(status_code=410, detail="Comando expirado")
+        if row["status"] not in {"queued", "delivered", "executed", "failed"}:
+            raise HTTPException(status_code=409, detail="Comando no puede confirmarse")
+
+        conn.execute(
+            """
+            UPDATE device_commands
+            SET status = ?, ack_at = ?, failure_detail = ?
+            WHERE command_id = ?
+            """,
+            (
+                status,
+                to_iso(utc_now()),
+                (payload.detail or "").strip() or None,
+                command_id,
+            )
+        )
+        conn.commit()
+        updated = conn.execute(
+            "SELECT * FROM device_commands WHERE command_id = ?",
+            (command_id,)
+        ).fetchone()
+
+    return {
+        "ok": status == "executed",
+        "delivery": command_row_to_dict(updated),
+    }
+
+
+@app.get("/device/commands/{command_id}/status")
+def get_device_command_status(command_id: str):
+    cleanup_expired_device_commands()
+    with get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM device_commands WHERE command_id = ?",
+            (command_id,)
+        ).fetchone()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Comando no encontrado")
+
+    return {
+        "ok": True,
+        "delivery": command_row_to_dict(row),
+    }
+
+
 @app.post("/devices/{device_id}/command")
 def send_device_command(device_id: str, payload: DeviceCommandRequest):
     device = get_device(device_id)
@@ -610,6 +950,21 @@ def send_device_command(device_id: str, payload: DeviceCommandRequest):
     accion = payload.accion.strip().upper()
     if accion not in {"ON", "OFF", "NONE", "CAPTURE", "LOCK", "ROUTE"}:
         raise HTTPException(status_code=400, detail="Accion no soportada")
+
+    if device.get("transport") == "http_polling":
+        if accion not in {"ON", "OFF"}:
+            raise HTTPException(status_code=400, detail="ESP32 HTTP solo admite ON u OFF")
+        delivery = enqueue_http_led_command(
+            device,
+            accion,
+            payload.espacio or infer_device_space(device),
+        )
+        return {
+            "ok": True,
+            "queued": True,
+            "executed": False,
+            "delivery": delivery,
+        }
 
     command_payload = {
         "device_id": device_id,
@@ -1316,7 +1671,7 @@ def fase_3_interpretar_intencion(texto_transcrito: str) -> tuple[str, dict | Non
 
 
 # =========================================================
-# FASE 4: JSON -> MQTT -> ESP32 -> ACTUADOR
+# FASE 4: JSON -> ENTREGA HTTP ESP32 O MQTT LEGACY -> ACTUADOR
 # =========================================================
 
 def cleanup_expired_voice_plans():
@@ -1406,6 +1761,25 @@ def build_light_mqtt_preview(espacio: str, accion: str) -> tuple[dict | None, st
     return payload, topic
 
 
+def build_http_delivery_preview(espacio: str, accion: str) -> dict | None:
+    espacio = normalize_espacio(espacio)
+    accion = accion.upper().strip()
+    device = find_http_esp32_for_space(espacio)
+
+    if device is None or accion not in {"ON", "OFF"}:
+        return None
+
+    return {
+        "transport": "http_polling",
+        "device_id": device["device_id"],
+        "target": "led",
+        "action": "turn_on" if accion == "ON" else "turn_off",
+        "espacio": espacio,
+        "status": "pending_confirmation",
+        "commands_url": "/device/commands",
+    }
+
+
 def build_voice_intent_plan(
     texto_transcrito: str,
     ia_json: dict,
@@ -1421,11 +1795,16 @@ def build_voice_intent_plan(
     action = infer_module_action(module, texto_transcrito, ia_json)
     espacio = ia_json.get("espacio", "desconocido")
     mqtt_preview = None
+    delivery_preview = None
     can_execute = False
 
     if module == "lights":
-        payload, topic = build_light_mqtt_preview(espacio, action)
-        if payload is not None:
+        delivery_preview = build_http_delivery_preview(espacio, action)
+        if delivery_preview is not None:
+            can_execute = True
+        else:
+            payload, topic = build_light_mqtt_preview(espacio, action)
+        if delivery_preview is None and payload is not None:
             mqtt_preview = {
                 "mqtt_topic": topic,
                 "mqtt_payload": payload
@@ -1451,7 +1830,11 @@ def build_voice_intent_plan(
         steps = [
             "Validar lo que se transcribio del comando de voz.",
             f"Preparar {module_label} con accion {action} para {espacio_label}.",
-            f"Esperar confirmacion y publicar el payload MQTT en {mqtt_preview['mqtt_topic']}.",
+            (
+                "Esperar confirmacion y dejar el comando disponible para el ESP32 por HTTPS."
+                if delivery_preview
+                else f"Esperar confirmacion y publicar el payload MQTT en {mqtt_preview['mqtt_topic']}."
+            ),
         ]
     elif module in {"cameras", "doors", "drones"}:
         respuesta = ai_reply or (
@@ -1482,6 +1865,7 @@ def build_voice_intent_plan(
         "action": action,
         "espacio": espacio,
         "mqtt_preview": mqtt_preview,
+        "delivery_preview": delivery_preview,
         "expires_at": to_iso(utc_now() + timedelta(seconds=VOICE_PLAN_TTL_SECONDS)),
     }
 
@@ -1649,9 +2033,10 @@ async def voice_intent(audio: UploadFile = File(...)):
         "plan": plan,
         "fase_4_mqtt": {
             "accion_mqtt": "PENDIENTE_CONFIRMACION" if plan["can_execute"] else "SIN_ACCION",
-            "mqtt_topic": plan["mqtt_preview"]["mqtt_topic"] if plan["mqtt_preview"] else MQTT_TOPIC_LUCES,
+            "mqtt_topic": plan["mqtt_preview"]["mqtt_topic"] if plan["mqtt_preview"] else None,
             "mqtt_payload": plan["mqtt_preview"]["mqtt_payload"] if plan["mqtt_preview"] else None
-        }
+        },
+        "delivery": plan.get("delivery_preview"),
     }
 
 
@@ -1659,7 +2044,8 @@ async def voice_intent(audio: UploadFile = File(...)):
 def confirm_voice_intent(payload: VoiceIntentConfirmRequest):
     """
     Ejecuta un plan de voz previamente devuelto por /voice-intent.
-    En esta version solo las luces publican MQTT real.
+    Para ESP32 enlazados, encola una orden HTTPS hasta que el dispositivo envie ACK.
+    Para luces legacy, mantiene la publicacion MQTT existente.
     """
     cleanup_expired_voice_plans()
 
@@ -1699,6 +2085,28 @@ def confirm_voice_intent(payload: VoiceIntentConfirmRequest):
 
     espacio = str(plan.get("espacio", "desconocido"))
     action = str(plan.get("action", "NONE"))
+    http_device = find_http_esp32_for_space(espacio)
+    if http_device is not None:
+        delivery = enqueue_http_led_command(
+            http_device,
+            action,
+            espacio,
+            source_request_id=request_id,
+        )
+        return {
+            "ok": True,
+            "queued": True,
+            "executed": False,
+            "message": "Comando enviado a la cola del ESP32. Esperando confirmacion del LED.",
+            "plan": plan,
+            "delivery": delivery,
+            "fase_4_mqtt": {
+                "accion_mqtt": "COLA_HTTP_ESP32",
+                "mqtt_topic": None,
+                "mqtt_payload": None,
+            }
+        }
+
     ok, mqtt_payload, mqtt_topic = send_mqtt_luz(espacio, action)
     accion_mqtt = (
         f"MQTT_{action}_{normalize_espacio(espacio)}_OK"
