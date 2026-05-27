@@ -1,5 +1,6 @@
 import type { EmailOtpType } from "@supabase/supabase-js";
 import { type NextRequest, NextResponse } from "next/server";
+import { createPublicRedirectUrl } from "@/lib/public-redirect";
 import { createClient } from "@/lib/supabase/server";
 
 function safeNextPath(value: string | null) {
@@ -12,10 +13,10 @@ export async function GET(request: NextRequest) {
   const tokenHash = request.nextUrl.searchParams.get("token_hash");
   const type = request.nextUrl.searchParams.get("type") as EmailOtpType | null;
   const code = request.nextUrl.searchParams.get("code");
-  const redirectTo = request.nextUrl.clone();
-
-  redirectTo.pathname = safeNextPath(request.nextUrl.searchParams.get("next"));
-  redirectTo.search = "";
+  const redirectTo = createPublicRedirectUrl(
+    request,
+    safeNextPath(request.nextUrl.searchParams.get("next")),
+  );
 
   const supabase = await createClient();
   if (tokenHash && type) {

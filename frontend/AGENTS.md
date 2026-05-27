@@ -55,6 +55,7 @@ La configuracion final que funciono localmente y se dejo para Hostinger:
   - `build`: `next build`
   - `start`: `node server.js`
 - Variables publicas de produccion configuradas en Hostinger:
+  - `NEXT_PUBLIC_SITE_URL=https://afcrseguridad.com`
   - `NEXT_PUBLIC_API_BASE_URL=https://api.afcrseguridad.com`
   - `NEXT_PUBLIC_SUPABASE_URL=https://omkbowrspgbuwpifksfk.supabase.co`
   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<clave_publishable>`
@@ -68,7 +69,7 @@ La configuracion final que funciono localmente y se dejo para Hostinger:
   - Usa `process.env.PORT || 3000`.
   - Log esperado al arrancar: `AFCR_FRONTEND_READY=http://0.0.0.0:<port>`.
 - `scripts/print-deploy-info.js`
-  - Imprime `AFCR_FRONTEND_BUILD=f.31`.
+  - Imprime `AFCR_FRONTEND_BUILD=f.32`.
   - Imprime `AFCR_FRONTEND_MODE=next-server`.
 
 Lecciones aprendidas:
