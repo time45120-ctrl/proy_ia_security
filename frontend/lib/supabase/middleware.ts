@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { createPublicRedirectUrl } from "../public-redirect";
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "./config";
 
 export async function updateSession(request: NextRequest) {
@@ -24,8 +25,7 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   if (!user && request.nextUrl.pathname.startsWith("/desarrollo")) {
-    const url = request.nextUrl.clone();
-    url.pathname = "/welcome";
+    const url = createPublicRedirectUrl(request, "/welcome");
     return NextResponse.redirect(url);
   }
 

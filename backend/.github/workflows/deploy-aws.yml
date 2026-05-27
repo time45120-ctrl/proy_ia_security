@@ -49,7 +49,8 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          REMOTE_COMMAND="set -Eeuo pipefail; test -d '${BACKEND_APP_DIR}/.git'; test -f '${BACKEND_APP_DIR}/.env'; runuser -u '${BACKEND_APP_USER}' -- git -C '${BACKEND_APP_DIR}' fetch origin main; runuser -u '${BACKEND_APP_USER}' -- git -C '${BACKEND_APP_DIR}' checkout main; runuser -u '${BACKEND_APP_USER}' -- git -C '${BACKEND_APP_DIR}' merge --ff-only origin/main; BACKEND_APP_USER='${BACKEND_APP_USER}' BACKEND_APP_DIR='${BACKEND_APP_DIR}' BACKEND_VENV_DIR='${BACKEND_VENV_DIR}' BACKEND_SERVICE_NAME='${BACKEND_SERVICE_NAME}' BACKEND_LOCAL_HEALTH_URL='${BACKEND_LOCAL_HEALTH_URL}' bash '${BACKEND_APP_DIR}/scripts/deploy-ec2.sh'"
+          REMOTE_SCRIPT="set -Eeuo pipefail; test -d '${BACKEND_APP_DIR}/.git'; test -f '${BACKEND_APP_DIR}/.env'; runuser -u '${BACKEND_APP_USER}' -- git -C '${BACKEND_APP_DIR}' fetch origin main; runuser -u '${BACKEND_APP_USER}' -- git -C '${BACKEND_APP_DIR}' checkout main; runuser -u '${BACKEND_APP_USER}' -- git -C '${BACKEND_APP_DIR}' merge --ff-only origin/main; BACKEND_APP_USER='${BACKEND_APP_USER}' BACKEND_APP_DIR='${BACKEND_APP_DIR}' BACKEND_VENV_DIR='${BACKEND_VENV_DIR}' BACKEND_SERVICE_NAME='${BACKEND_SERVICE_NAME}' BACKEND_LOCAL_HEALTH_URL='${BACKEND_LOCAL_HEALTH_URL}' bash '${BACKEND_APP_DIR}/scripts/deploy-ec2.sh'"
+          REMOTE_COMMAND="bash -lc $(printf '%q' "${REMOTE_SCRIPT}")"
           PARAMETERS="$(jq -cn --arg command "${REMOTE_COMMAND}" '{commands:[$command]}')"
           COMMAND_ID="$(aws ssm send-command \
             --instance-ids "${AWS_INSTANCE_ID}" \
