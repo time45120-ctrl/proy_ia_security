@@ -36,4 +36,14 @@ else
   sudo systemctl restart "${SERVICE_NAME}"
   sudo systemctl is-active --quiet "${SERVICE_NAME}"
 fi
-curl --fail --silent --show-error --retry 5 --retry-delay 2 "${LOCAL_HEALTH_URL}"
+
+for attempt in {1..15}; do
+  if curl --fail --silent --show-error "${LOCAL_HEALTH_URL}"; then
+    printf '\n'
+    exit 0
+  fi
+  sleep 2
+done
+
+printf 'Backend health check failed after restart: %s\n' "${LOCAL_HEALTH_URL}" >&2
+exit 1
