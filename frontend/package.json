@@ -6,10 +6,12 @@
     "predev": "node scripts/clean-dev-cache.js",
     "dev": "next dev",
     "prebuild": "node scripts/print-deploy-info.js",
-    "build": "NEXT_PUBLIC_API_BASE_URL=https://api.afcrseguridad.com next build",
+    "build": "next build",
     "start": "node server.js"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.10.3",
+    "@supabase/supabase-js": "^2.106.2",
     "next": "^15.5.15",
     "react": "19.1.0",
     "react-dom": "19.1.0"

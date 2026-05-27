@@ -26,6 +26,11 @@ valida del proyecto es esta raiz.
 - Endpoint principal: `POST /voice-intent`
 - Endpoint ESP32: `GET /device/commands?device_id=...`
 - Confirmacion ESP32: `POST /device/commands/{command_id}/ack`
+- Supabase: proyecto `proy_ia_security` (`omkbowrspgbuwpifksfk`) para Auth,
+  organizaciones, dispositivos, comandos y auditoria de voz
+- Storage privado: bucket `voice-audio`, retencion automatica de 30 dias
+- Automatizacion AWS backend preparada localmente en `backend/` mediante
+  GitHub Actions + SSM; pendiente configurar EC2/IAM y autorizar publicacion
 - Broker MQTT esperado en `127.0.0.1:1883` desde el backend
 - Topic MQTT legacy: `casa/esp32/luces`
 - Payload MQTT activo:
@@ -63,10 +68,11 @@ Frontend Next.js
    v
 Backend FastAPI (backend/app_api.py)
    |
-   +-- guarda audio en audios_recibidos/
+   +-- valida JWT de Supabase y aisla datos por organizacion (RLS)
+   +-- guarda audio nuevo en Storage privado voice-audio
    +-- Whisper tiny -> texto
    +-- OpenAI u Ollama -> JSON de intencion
-   +-- confirmacion UI -> cola SQLite device_commands
+   +-- confirmacion UI -> cola Supabase device_commands
    `-- GET HTTPS autenticado <- ESP32
           |
           +-- GPIO 2 LED
@@ -101,10 +107,24 @@ Produccion en Hostinger:
 
 ```bash
 NEXT_PUBLIC_API_BASE_URL=https://api.afcrseguridad.com
+NEXT_PUBLIC_SUPABASE_URL=https://omkbowrspgbuwpifksfk.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<clave_publishable>
 ```
 
 No subir `frontend/.env.local` al repo. Para produccion, configurar la variable
 en Hostinger antes de compilar/desplegar el frontend.
+
+Supabase Auth usa confirmacion por correo. En el Dashboard de Supabase,
+configurar como URLs de redireccion permitidas:
+
+```text
+http://localhost:3000/auth/confirm
+http://localhost:3001/auth/confirm
+https://afcrseguridad.com/auth/confirm
+```
+
+La ruta Next.js `GET /auth/confirm` intercambia el token del email por la
+sesion y redirige a `/desarrollo/sync`.
 
 Comandos:
 
@@ -159,6 +179,11 @@ El backend carga variables locales desde `backend/.env`. Ese archivo no debe
 subirse a git; usa `backend/.env.example` como plantilla. `frontend/.env.local`
 es solo para variables del frontend como `NEXT_PUBLIC_API_BASE_URL`; no pongas
 secretos ahi porque cualquier variable `NEXT_PUBLIC_*` llega al navegador.
+La clave `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` esta disenada para navegador;
+las reglas RLS controlan acceso a datos. `SUPABASE_SECRET_KEY` se configura
+solo en FastAPI para operaciones privilegiadas y nunca se publica en el
+frontend. `SUPABASE_SERVICE_ROLE_KEY` se admite solo como compatibilidad
+legacy temporal.
 
 El CORS del backend se configura con `CORS_ALLOW_ORIGINS`, separado por comas.
 Por defecto permite produccion y desarrollo local:
@@ -260,17 +285,33 @@ Para enlace real desde el frontend publico HTTPS, el flujo ESP32 usa pairing y
 polling autenticado:
 
 1. Frontend crea un token con `POST /devices/pairing-token`.
-2. ESP32 crea un AP temporal, por ejemplo `AFCR-ESP32-XXXX`.
-3. Usuario abre `http://192.168.4.1` y escribe SSID, password, API URL y token.
-4. ESP32 llama `POST /devices/claim` contra `https://api.afcrseguridad.com`.
-5. Backend guarda el dispositivo en SQLite y entrega una `device_api_key` una
-   sola vez; en base solo persiste su hash.
-6. Al confirmar un comando, el backend lo guarda en `device_commands`.
+2. La web muestra el sketch base para Arduino IDE; el usuario escribe su SSID,
+   password WiFi y token temporal en las tres constantes editables.
+3. Usuario carga el sketch por USB a un `ESP32 Dev Module`.
+4. ESP32 se conecta directamente al WiFi y llama `POST /devices/claim` contra
+   `https://api.afcrseguridad.com`.
+5. Backend guarda el dispositivo en Supabase y entrega una `device_api_key`
+   una sola vez; en base solo persiste su hash.
+6. Al confirmar un comando, el backend lo guarda en `device_commands` bajo la
+   organizacion autenticada.
 7. ESP32 consulta `GET /device/commands?device_id=...` con bearer token,
    ejecuta su LED GPIO 2 y envia `POST /device/commands/{id}/ack`.
 
-El backend no recibe ni guarda la contraseña WiFi. Esa clave solo se escribe en
-el portal local del ESP32.
+El backend no recibe ni guarda la contraseña WiFi. Esa clave solo queda en el
+sketch local que el usuario carga desde Arduino IDE.
+
+En laboratorio local, iniciar el backend con una URL alcanzable desde el
+ESP32, no con `localhost`:
+
+```bash
+PUBLIC_API_URL=http://<IP-LAN-Windows>:8000 uvicorn app_api:app --host 0.0.0.0 --port 8000
+```
+
+La web inserta esa `API URL` en el sketch copiado. Las conexiones HTTP se usan
+solo en la red local de prueba; al publicar se vuelve a
+`https://api.afcrseguridad.com`, validado por la CA incluida en el firmware.
+Antes de cargar el ESP32, abrir `http://<IP-LAN-Windows>:8000/ping` desde otro
+equipo conectado al mismo WiFi; si no responde, corregir `portproxy` o firewall.
 
 Endpoints nuevos:
 
@@ -342,10 +383,10 @@ curl http://localhost:8000/ping
 
 Prueba funcional manual:
 
-1. Flashear `firmware/esp32_pairing_portal/esp32_pairing_portal.ino`.
-2. En Sincronizacion elegir `ESP32`, ambiente `cocina` y crear el enlace.
-3. Conectarse a `AFCR-ESP32-XXXX`, abrir `http://192.168.4.1` e introducir
-   WiFi, API URL y pairing token.
+1. En Sincronizacion elegir `ESP32`, ambiente `cocina` y crear el enlace.
+2. Copiar el sketch mostrado por la web y reemplazar `WIFI_SSID`,
+   `WIFI_PASSWORD` y `PAIRING_TOKEN` en Arduino IDE.
+3. Seleccionar `ESP32 Dev Module` y subir el sketch por USB.
 4. Esperar que el inventario de la web muestre el ESP32 `Online`.
 5. Enviar voz diciendo `prende la luz de la cocina` y confirmar el plan.
 6. Verificar LED encendido y estado `LED ejecutado y confirmado por el ESP32`.
@@ -378,9 +419,13 @@ Revisar:
 
 1. Que el token siga vigente al reclamarlo.
 2. Que el ESP32 haya guardado `device_id` y `device_api_key` durante el claim.
-3. Que tenga salida HTTPS hacia `api.afcrseguridad.com`.
-4. Que la cadena TLS publica siga siendo valida para `ISRG Root X1`.
+3. En laboratorio, que la API mostrada en el sketch sea la IP LAN de Windows
+   con `portproxy` activo hacia WSL, nunca `localhost`.
+4. En produccion, que tenga salida HTTPS hacia `api.afcrseguridad.com` y que
+   su cadena TLS siga siendo valida para `ISRG Root X1`.
 5. Que el equipo se haya asignado al mismo ambiente dicho por voz.
+6. Que `WIFI_SSID` y `WIFI_PASSWORD` correspondan a una red de 2.4 GHz
+   accesible desde el ESP32.
 
 ### Un dispositivo legacy no conecta al broker MQTT
 

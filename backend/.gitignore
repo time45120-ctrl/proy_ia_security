@@ -15,3 +15,6 @@ __pycache__/
 .ruff_cache/
 
 audios_recibidos/
+
+*.ppk
+*.pem

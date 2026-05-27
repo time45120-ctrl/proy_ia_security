@@ -7,6 +7,10 @@ import unittest
 TEST_DB_PATH = Path("/tmp/afcr_devices_http_polling_test.db")
 os.environ["DEVICES_DB_PATH"] = str(TEST_DB_PATH)
 os.environ["AI_PROVIDER"] = "disabled-for-tests"
+os.environ["SUPABASE_URL"] = ""
+os.environ["SUPABASE_PUBLISHABLE_KEY"] = ""
+os.environ["SUPABASE_SECRET_KEY"] = ""
+os.environ["SUPABASE_SERVICE_ROLE_KEY"] = ""
 
 if TEST_DB_PATH.exists():
     TEST_DB_PATH.unlink()
@@ -57,6 +61,7 @@ class HttpPollingDeviceTests(unittest.TestCase):
             api.PairingTokenRequest(name="Luz cocina", type="ESP32", model="ESP32")
         )
         self.assertEqual(pairing["transport"], "http_polling")
+        self.assertNotIn("esp32_portal_url", pairing)
 
         claimed = api.claim_device(api.ClaimDeviceRequest(token=pairing["pairing_token"]))
         api_key = claimed["device_api_key"]
@@ -148,6 +153,33 @@ class HttpPollingDeviceTests(unittest.TestCase):
         )
         self.assertTrue(confirmed["executed"])
         self.assertEqual(len(api.mqtt_client.published), 1)
+
+    def test_modern_supabase_secret_key_is_not_sent_as_bearer_token(self):
+        previous = (
+            api.SUPABASE_URL,
+            api.SUPABASE_PUBLISHABLE_KEY,
+            api.SUPABASE_SECRET_KEY,
+            api.SUPABASE_SERVICE_ROLE_KEY,
+            api.SUPABASE_SERVER_KEY,
+        )
+        try:
+            api.SUPABASE_URL = "https://example.supabase.co"
+            api.SUPABASE_PUBLISHABLE_KEY = "sb_publishable_test"
+            api.SUPABASE_SECRET_KEY = "sb_secret_test"
+            api.SUPABASE_SERVICE_ROLE_KEY = ""
+            api.SUPABASE_SERVER_KEY = api.SUPABASE_SECRET_KEY
+
+            headers = api.supabase_headers(service_role=True)
+            self.assertEqual(headers["apikey"], "sb_secret_test")
+            self.assertNotIn("Authorization", headers)
+        finally:
+            (
+                api.SUPABASE_URL,
+                api.SUPABASE_PUBLISHABLE_KEY,
+                api.SUPABASE_SECRET_KEY,
+                api.SUPABASE_SERVICE_ROLE_KEY,
+                api.SUPABASE_SERVER_KEY,
+            ) = previous
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { listDevices, type LinkedDeviceRecord } from "@/lib/backend-api";
-import { getLandingSession } from "@/lib/landing-session";
+import { createClient } from "@/lib/supabase/client";
 
 export type DevelopmentView = "sync" | "dashboard";
 
@@ -95,15 +95,31 @@ export function DevelopmentWorkspaceProvider({
   }
 
   useEffect(() => {
-    if (!getLandingSession()) {
-      router.replace("/welcome");
+    let isMounted = true;
+
+    async function verifyAccess() {
+      const {
+        data: { user },
+      } = await createClient().auth.getUser();
+
+      if (!isMounted) {
+        return;
+      }
+      if (!user) {
+        router.replace("/welcome");
+        setIsCheckingAccess(false);
+        return;
+      }
+
+      setHasLaboratoryAccess(true);
       setIsCheckingAccess(false);
-      return;
+      void refreshDevices();
     }
 
-    setHasLaboratoryAccess(true);
-    setIsCheckingAccess(false);
-    void refreshDevices();
+    void verifyAccess();
+    return () => {
+      isMounted = false;
+    };
   }, [router]);
 
   function navigateToView(nextView: DevelopmentView) {

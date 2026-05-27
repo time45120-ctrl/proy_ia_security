@@ -34,6 +34,10 @@ import textwrap
 import hashlib
 import secrets
 import sqlite3
+import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 try:
@@ -90,6 +94,19 @@ PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "https://api.afcrseguridad.com").rs
 PAIRING_TOKEN_MINUTES = int(os.getenv("PAIRING_TOKEN_MINUTES", "10"))
 DEVICE_ONLINE_WINDOW_SECONDS = int(os.getenv("DEVICE_ONLINE_WINDOW_SECONDS", "120"))
 DEVICE_COMMAND_TTL_SECONDS = int(os.getenv("DEVICE_COMMAND_TTL_SECONDS", "300"))
+
+# --- Supabase: persistencia principal al configurar estas variables ---
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
+SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY", "").strip()
+SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "").strip()
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
+SUPABASE_SERVER_KEY = SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY
+SUPABASE_AUDIO_BUCKET = os.getenv("SUPABASE_AUDIO_BUCKET", "voice-audio").strip()
+VOICE_AUDIO_RETENTION_DAYS = int(os.getenv("VOICE_AUDIO_RETENTION_DAYS", "30"))
+SUPABASE_DEVICE_SAFE_COLUMNS = (
+    "device_id,organization_id,created_by,name,type,model,assigned_space,status,"
+    "mqtt_topic,last_seen,created_at,pairing_expires_at,claimed_at"
+)
 
 # --- Transcripcion ---
 OPENAI_TRANSCRIBE_MODEL = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
@@ -254,6 +271,7 @@ class PairingTokenRequest(BaseModel):
     type: str
     model: str
     network: str | None = None
+    assigned_space: str | None = None
 
 
 class ClaimDeviceRequest(BaseModel):
@@ -307,6 +325,144 @@ def hash_pairing_token(token: str) -> str:
 
 def hash_device_api_key(api_key: str) -> str:
     return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+
+
+def using_supabase() -> bool:
+    return bool(SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY)
+
+
+def ensure_supabase_configuration() -> None:
+    if not using_supabase():
+        raise HTTPException(status_code=503, detail="Supabase no esta configurado en el backend")
+
+
+def bearer_token(authorization: str | None) -> str:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Sesion requerida")
+
+    token = authorization.removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Sesion requerida")
+    return token
+
+
+def supabase_headers(access_token: str | None = None, service_role: bool = False) -> dict[str, str]:
+    ensure_supabase_configuration()
+    if service_role:
+        if not SUPABASE_SERVER_KEY:
+            raise HTTPException(
+                status_code=503,
+                detail="SUPABASE_SECRET_KEY es requerida para operaciones privilegiadas",
+            )
+        # Modern sb_secret keys identify service_role through apikey and are not JWTs.
+        return {"apikey": SUPABASE_SERVER_KEY}
+
+    headers = {"apikey": SUPABASE_PUBLISHABLE_KEY}
+    if access_token:
+        headers["Authorization"] = f"Bearer {access_token}"
+    return headers
+
+
+def supabase_http_request(
+    method: str,
+    endpoint: str,
+    *,
+    access_token: str | None = None,
+    service_role: bool = False,
+    payload: object | bytes | None = None,
+    headers: dict[str, str] | None = None,
+) -> object | None:
+    request_headers = supabase_headers(access_token, service_role)
+    request_headers.update(headers or {})
+    data = None
+    if isinstance(payload, bytes):
+        data = payload
+    elif payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+        request_headers.setdefault("Content-Type", "application/json")
+
+    request = urllib.request.Request(
+        f"{SUPABASE_URL}{endpoint}",
+        data=data,
+        headers=request_headers,
+        method=method,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            raw = response.read()
+            if not raw:
+                return None
+            return json.loads(raw.decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")
+        print(f"SUPABASE HTTP {error.code}: {detail}")
+        raise HTTPException(status_code=error.code, detail="Operacion Supabase rechazada") from error
+    except urllib.error.URLError as error:
+        print("SUPABASE CONNECTION ERROR:", error)
+        raise HTTPException(status_code=503, detail="No se pudo conectar a Supabase") from error
+
+
+def supabase_rest(
+    method: str,
+    resource: str,
+    *,
+    access_token: str | None = None,
+    service_role: bool = False,
+    payload: dict | None = None,
+    representation: bool = False,
+) -> list[dict] | dict | None:
+    headers = {"Prefer": "return=representation"} if representation else {}
+    return supabase_http_request(
+        method,
+        f"/rest/v1/{resource}",
+        access_token=access_token,
+        service_role=service_role,
+        payload=payload,
+        headers=headers,
+    )
+
+
+def authenticated_context(authorization: str | None) -> dict:
+    token = bearer_token(authorization)
+    user = supabase_http_request("GET", "/auth/v1/user", access_token=token)
+    if not isinstance(user, dict) or not user.get("id"):
+        raise HTTPException(status_code=401, detail="Sesion invalida")
+
+    user_id = str(user["id"])
+    query = (
+        "organization_members?select=organization_id,role"
+        f"&user_id=eq.{urllib.parse.quote(user_id)}&limit=1"
+    )
+    memberships = supabase_rest("GET", query, access_token=token)
+    if not isinstance(memberships, list) or not memberships:
+        raise HTTPException(status_code=403, detail="La cuenta no tiene empresa asociada")
+
+    return {
+        "token": token,
+        "user_id": user_id,
+        "organization_id": memberships[0]["organization_id"],
+        "role": memberships[0]["role"],
+    }
+
+
+def upload_private_audio(
+    context: dict,
+    request_id: str,
+    filename: str,
+    content_type: str,
+    content: bytes,
+) -> tuple[str, str]:
+    object_path = f"{context['user_id']}/{request_id}/{filename}"
+    quoted_path = urllib.parse.quote(object_path, safe="/")
+    supabase_http_request(
+        "POST",
+        f"/storage/v1/object/{SUPABASE_AUDIO_BUCKET}/{quoted_path}",
+        access_token=context["token"],
+        payload=content,
+        headers={"Content-Type": content_type or "application/octet-stream", "x-upsert": "false"},
+    )
+    expires_at = to_iso(utc_now() + timedelta(days=VOICE_AUDIO_RETENTION_DAYS))
+    return object_path, expires_at
 
 
 def get_db_connection():
@@ -408,7 +564,7 @@ def create_device_id(name: str, model: str) -> str:
     return f"{readable[:32]}-{suffix}"
 
 
-def device_row_to_dict(row: sqlite3.Row) -> dict:
+def device_row_to_dict(row: sqlite3.Row | dict) -> dict:
     device = dict(row)
     status = device.get("status", "offline")
     last_seen = parse_iso(device.get("last_seen"))
@@ -440,7 +596,19 @@ def device_row_to_dict(row: sqlite3.Row) -> dict:
     return device
 
 
-def get_device(device_id: str) -> dict | None:
+def get_device(device_id: str, access_token: str | None = None) -> dict | None:
+    if using_supabase():
+        if not access_token:
+            raise HTTPException(status_code=401, detail="Sesion requerida")
+        query = (
+            f"devices?select={SUPABASE_DEVICE_SAFE_COLUMNS}"
+            f"&device_id=eq.{urllib.parse.quote(device_id)}&limit=1"
+        )
+        rows = supabase_rest("GET", query, access_token=access_token)
+        if not isinstance(rows, list) or not rows:
+            return None
+        return device_row_to_dict(rows[0])
+
     with get_db_connection() as conn:
         row = conn.execute(
             "SELECT * FROM devices WHERE device_id = ?",
@@ -453,19 +621,34 @@ def get_device(device_id: str) -> dict | None:
     return device_row_to_dict(row)
 
 
-def find_light_device_for_space(espacio: str) -> dict | None:
+def find_light_device_for_space(
+    espacio: str,
+    organization_id: str | None = None,
+    access_token: str | None = None,
+) -> dict | None:
     normalized_space = normalize_espacio(espacio)
     space_text = normalized_space.replace("_", " ")
 
-    with get_db_connection() as conn:
-        rows = conn.execute(
-            """
-            SELECT * FROM devices
-            WHERE claimed_at IS NOT NULL
-              AND lower(type) IN ('luces', 'luz', 'light', 'lights')
-            ORDER BY claimed_at DESC
-            """
-        ).fetchall()
+    if using_supabase():
+        if not organization_id or not access_token:
+            return None
+        query = (
+            f"devices?select={SUPABASE_DEVICE_SAFE_COLUMNS}&claimed_at=not.is.null"
+            "&type=in.(Luces,luz,light,lights)"
+            f"&organization_id=eq.{urllib.parse.quote(organization_id)}"
+            "&order=claimed_at.desc"
+        )
+        rows = supabase_rest("GET", query, access_token=access_token)
+    else:
+        with get_db_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM devices
+                WHERE claimed_at IS NOT NULL
+                  AND lower(type) IN ('luces', 'luz', 'light', 'lights')
+                ORDER BY claimed_at DESC
+                """
+            ).fetchall()
 
     if not rows:
         return None
@@ -479,9 +662,27 @@ def find_light_device_for_space(espacio: str) -> dict | None:
     return device_row_to_dict(rows[0])
 
 
-def find_http_esp32_for_space(espacio: str) -> dict | None:
+def find_http_esp32_for_space(
+    espacio: str,
+    organization_id: str | None = None,
+    access_token: str | None = None,
+) -> dict | None:
     normalized_space = normalize_espacio(espacio)
     if normalized_space not in ESPACIOS_VALIDOS:
+        return None
+
+    if using_supabase():
+        if not organization_id or not access_token:
+            return None
+        query = (
+            f"devices?select={SUPABASE_DEVICE_SAFE_COLUMNS}&claimed_at=not.is.null&type=eq.ESP32"
+            f"&organization_id=eq.{urllib.parse.quote(organization_id)}"
+            f"&assigned_space=eq.{urllib.parse.quote(normalized_space)}"
+            "&order=claimed_at.desc&limit=1"
+        )
+        rows = supabase_rest("GET", query, access_token=access_token)
+        if isinstance(rows, list) and rows:
+            return device_row_to_dict(rows[0])
         return None
 
     space_aliases = {
@@ -524,7 +725,26 @@ def infer_device_space(device: dict) -> str:
     return "desconocido"
 
 
-def cleanup_expired_device_commands() -> None:
+def cleanup_expired_device_commands(
+    organization_id: str | None = None,
+    access_token: str | None = None,
+) -> None:
+    if using_supabase():
+        if not organization_id or not access_token:
+            return
+        query = (
+            "device_commands?status=in.(queued,delivered)"
+            f"&organization_id=eq.{urllib.parse.quote(organization_id)}"
+            f"&expires_at=lt.{urllib.parse.quote(to_iso(utc_now()))}"
+        )
+        supabase_rest(
+            "PATCH",
+            query,
+            service_role=True,
+            payload={"status": "expired"},
+        )
+        return
+
     with get_db_connection() as conn:
         conn.execute(
             """
@@ -538,7 +758,7 @@ def cleanup_expired_device_commands() -> None:
         conn.commit()
 
 
-def command_row_to_dict(row: sqlite3.Row) -> dict:
+def command_row_to_dict(row: sqlite3.Row | dict) -> dict:
     command = dict(row)
     command["transport"] = "http_polling"
     command["commands_url"] = "/device/commands"
@@ -550,6 +770,7 @@ def enqueue_http_led_command(
     accion: str,
     espacio: str,
     source_request_id: str | None = None,
+    context: dict | None = None,
 ) -> dict:
     accion = accion.strip().upper()
     normalized_space = normalize_espacio(espacio)
@@ -562,27 +783,49 @@ def enqueue_http_led_command(
     expires_at = created_at + timedelta(seconds=DEVICE_COMMAND_TTL_SECONDS)
     command_id = f"cmd_{secrets.token_urlsafe(16)}"
 
-    with get_db_connection() as conn:
-        conn.execute(
-            """
-            INSERT INTO device_commands (
-                command_id, device_id, target, action, espacio, status,
-                source_request_id, created_at, expires_at
-            )
-            VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)
-            """,
-            (
-                command_id,
-                device["device_id"],
-                "led",
-                action,
-                normalized_space,
-                source_request_id,
-                to_iso(created_at),
-                to_iso(expires_at),
-            )
+    if using_supabase():
+        if context is None:
+            raise HTTPException(status_code=401, detail="Sesion requerida")
+        supabase_rest(
+            "POST",
+            "device_commands",
+            service_role=True,
+            payload={
+                "command_id": command_id,
+                "organization_id": context["organization_id"],
+                "device_id": device["device_id"],
+                "created_by": context["user_id"],
+                "target": "led",
+                "action": action,
+                "espacio": normalized_space,
+                "status": "queued",
+                "source_request_id": source_request_id,
+                "created_at": to_iso(created_at),
+                "expires_at": to_iso(expires_at),
+            },
         )
-        conn.commit()
+    else:
+        with get_db_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO device_commands (
+                    command_id, device_id, target, action, espacio, status,
+                    source_request_id, created_at, expires_at
+                )
+                VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)
+                """,
+                (
+                    command_id,
+                    device["device_id"],
+                    "led",
+                    action,
+                    normalized_space,
+                    source_request_id,
+                    to_iso(created_at),
+                    to_iso(expires_at),
+                )
+            )
+            conn.commit()
 
     return {
         "transport": "http_polling",
@@ -602,6 +845,11 @@ def authenticate_http_device(device_id: str, authorization: str | None) -> dict:
         raise HTTPException(status_code=401, detail="Credencial de dispositivo requerida")
 
     api_key = authorization.removeprefix("Bearer ").strip()
+    if using_supabase():
+        if not api_key:
+            raise HTTPException(status_code=401, detail="Credencial de dispositivo invalida")
+        return {"device_id": device_id, "device_api_key_hash": hash_device_api_key(api_key)}
+
     with get_db_connection() as conn:
         row = conn.execute(
             "SELECT * FROM devices WHERE device_id = ?",
@@ -618,7 +866,8 @@ def authenticate_http_device(device_id: str, authorization: str | None) -> dict:
     return device_row_to_dict(row)
 
 
-init_devices_db()
+if not using_supabase():
+    init_devices_db()
 
 
 # =========================================================
@@ -648,7 +897,10 @@ def ping():
 
 
 @app.post("/devices/pairing-token")
-def create_pairing_token(payload: PairingTokenRequest):
+def create_pairing_token(
+    payload: PairingTokenRequest,
+    authorization: str | None = Header(default=None),
+):
     """
     Crea un token temporal para enlazar un ESP32.
     La contraseña WiFi no se recibe ni se guarda en este backend.
@@ -666,31 +918,56 @@ def create_pairing_token(payload: PairingTokenRequest):
     created_at = utc_now()
     expires_at = created_at + timedelta(minutes=PAIRING_TOKEN_MINUTES)
     mqtt_topic = f"{MQTT_DEVICE_TOPIC_PREFIX}/{device_id}/commands"
+    assigned_space = normalize_espacio(payload.assigned_space or name)
+    if assigned_space not in ESPACIOS_VALIDOS:
+        assigned_space = None
 
-    with get_db_connection() as conn:
-        conn.execute(
-            """
-            INSERT INTO devices (
-                device_id, name, type, model, status, mqtt_topic, last_seen,
-                created_at, pairing_token_hash, pairing_expires_at, claimed_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                device_id,
-                name,
-                device_type,
-                model,
-                "pending",
-                mqtt_topic,
-                None,
-                to_iso(created_at),
-                token_hash,
-                to_iso(expires_at),
-                None,
-            )
+    if using_supabase():
+        context = authenticated_context(authorization)
+        supabase_rest(
+            "POST",
+            "devices",
+            service_role=True,
+            payload={
+                "device_id": device_id,
+                "organization_id": context["organization_id"],
+                "created_by": context["user_id"],
+                "name": name,
+                "type": device_type,
+                "model": model,
+                "assigned_space": assigned_space,
+                "status": "pending",
+                "mqtt_topic": mqtt_topic,
+                "created_at": to_iso(created_at),
+                "pairing_token_hash": token_hash,
+                "pairing_expires_at": to_iso(expires_at),
+            },
         )
-        conn.commit()
+    else:
+        with get_db_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO devices (
+                    device_id, name, type, model, status, mqtt_topic, last_seen,
+                    created_at, pairing_token_hash, pairing_expires_at, claimed_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    device_id,
+                    name,
+                    device_type,
+                    model,
+                    "pending",
+                    mqtt_topic,
+                    None,
+                    to_iso(created_at),
+                    token_hash,
+                    to_iso(expires_at),
+                    None,
+                )
+            )
+            conn.commit()
 
     return {
         "ok": True,
@@ -698,7 +975,6 @@ def create_pairing_token(payload: PairingTokenRequest):
         "pairing_token": token,
         "pairing_expires_at": to_iso(expires_at),
         "api_url": PUBLIC_API_URL,
-        "esp32_portal_url": "http://192.168.4.1",
         "mqtt_topic": mqtt_topic,
         "mqtt_server": MQTT_SERVER,
         "mqtt_port": MQTT_PORT,
@@ -716,6 +992,28 @@ def claim_device(payload: ClaimDeviceRequest):
     token_hash = hash_pairing_token(payload.token.strip())
     now = utc_now()
     device_api_key = None
+
+    if using_supabase():
+        device_api_key = secrets.token_urlsafe(32)
+        device = supabase_http_request(
+            "POST",
+            "/rest/v1/rpc/claim_device",
+            service_role=True,
+            payload={
+                "p_token_hash": token_hash,
+                "p_device_api_key_hash": hash_device_api_key(device_api_key),
+            },
+        )
+        if not isinstance(device, dict):
+            raise HTTPException(status_code=404, detail="Token invalido, expirado o ya usado")
+        if normalize_device_type(str(device.get("type", ""))) != "ESP32":
+            device_api_key = None
+        return {
+            "ok": True,
+            "device": device_row_to_dict(device),
+            "device_api_key": device_api_key,
+            "commands_url": "/device/commands" if device_api_key else None,
+        }
 
     with get_db_connection() as conn:
         row = conn.execute(
@@ -765,7 +1063,20 @@ def claim_device(payload: ClaimDeviceRequest):
 
 
 @app.get("/devices")
-def list_devices():
+def list_devices(authorization: str | None = Header(default=None)):
+    if using_supabase():
+        context = authenticated_context(authorization)
+        query = (
+            f"devices?select={SUPABASE_DEVICE_SAFE_COLUMNS}"
+            f"&organization_id=eq.{urllib.parse.quote(context['organization_id'])}"
+            "&order=created_at.desc"
+        )
+        rows = supabase_rest("GET", query, access_token=context["token"])
+        return {
+            "ok": True,
+            "devices": [device_row_to_dict(row) for row in (rows or [])],
+        }
+
     with get_db_connection() as conn:
         rows = conn.execute(
             "SELECT * FROM devices ORDER BY created_at DESC"
@@ -778,12 +1089,32 @@ def list_devices():
 
 
 @app.post("/devices/{device_id}/heartbeat")
-def device_heartbeat(device_id: str, payload: HeartbeatRequest):
+def device_heartbeat(
+    device_id: str,
+    payload: HeartbeatRequest,
+    authorization: str | None = Header(default=None),
+):
     status = (payload.status or "online").strip().lower()
     if status not in {"online", "offline", "linked"}:
         status = "online"
 
     now = utc_now()
+
+    if using_supabase():
+        device_auth = authenticate_http_device(device_id, authorization)
+        updated = supabase_http_request(
+            "POST",
+            "/rest/v1/rpc/heartbeat_device",
+            service_role=True,
+            payload={
+                "p_device_id": device_id,
+                "p_device_api_key_hash": device_auth["device_api_key_hash"],
+                "p_status": status,
+            },
+        )
+        if not updated:
+            raise HTTPException(status_code=404, detail="Dispositivo no encontrado")
+        return {"ok": True, "device_id": device_id, "status": status, "last_seen": to_iso(now)}
 
     with get_db_connection() as conn:
         result = conn.execute(
@@ -810,7 +1141,21 @@ def poll_device_commands(
     device_id: str,
     authorization: str | None = Header(default=None),
 ):
-    authenticate_http_device(device_id, authorization)
+    device_auth = authenticate_http_device(device_id, authorization)
+    if using_supabase():
+        result = supabase_http_request(
+            "POST",
+            "/rest/v1/rpc/poll_device_command",
+            service_role=True,
+            payload={
+                "p_device_id": device_id,
+                "p_device_api_key_hash": device_auth["device_api_key_hash"],
+            },
+        )
+        if not isinstance(result, dict):
+            raise HTTPException(status_code=401, detail="Credencial de dispositivo invalida")
+        return {"ok": True, **result}
+
     cleanup_expired_device_commands()
     now = to_iso(utc_now())
 
@@ -877,11 +1222,28 @@ def acknowledge_device_command(
     payload: DeviceCommandAckRequest,
     authorization: str | None = Header(default=None),
 ):
-    authenticate_http_device(payload.device_id.strip(), authorization)
+    device_auth = authenticate_http_device(payload.device_id.strip(), authorization)
     cleanup_expired_device_commands()
     status = payload.status.strip().lower()
     if status not in {"executed", "failed"}:
         raise HTTPException(status_code=400, detail="status debe ser executed o failed")
+
+    if using_supabase():
+        delivery = supabase_http_request(
+            "POST",
+            "/rest/v1/rpc/ack_device_command",
+            service_role=True,
+            payload={
+                "p_command_id": command_id,
+                "p_device_id": payload.device_id.strip(),
+                "p_device_api_key_hash": device_auth["device_api_key_hash"],
+                "p_status": status,
+                "p_detail": payload.detail,
+            },
+        )
+        if not isinstance(delivery, dict):
+            raise HTTPException(status_code=404, detail="Comando no encontrado o expirado")
+        return {"ok": status == "executed", "delivery": delivery}
 
     with get_db_connection() as conn:
         row = conn.execute(
@@ -924,7 +1286,19 @@ def acknowledge_device_command(
 
 
 @app.get("/device/commands/{command_id}/status")
-def get_device_command_status(command_id: str):
+def get_device_command_status(
+    command_id: str,
+    authorization: str | None = Header(default=None),
+):
+    if using_supabase():
+        context = authenticated_context(authorization)
+        cleanup_expired_device_commands(context["organization_id"], context["token"])
+        query = f"device_commands?select=*&command_id=eq.{urllib.parse.quote(command_id)}&limit=1"
+        rows = supabase_rest("GET", query, access_token=context["token"])
+        if not isinstance(rows, list) or not rows:
+            raise HTTPException(status_code=404, detail="Comando no encontrado")
+        return {"ok": True, "delivery": command_row_to_dict(rows[0])}
+
     cleanup_expired_device_commands()
     with get_db_connection() as conn:
         row = conn.execute(
@@ -942,8 +1316,13 @@ def get_device_command_status(command_id: str):
 
 
 @app.post("/devices/{device_id}/command")
-def send_device_command(device_id: str, payload: DeviceCommandRequest):
-    device = get_device(device_id)
+def send_device_command(
+    device_id: str,
+    payload: DeviceCommandRequest,
+    authorization: str | None = Header(default=None),
+):
+    context = authenticated_context(authorization) if using_supabase() else None
+    device = get_device(device_id, context["token"] if context else None)
     if device is None:
         raise HTTPException(status_code=404, detail="Dispositivo no encontrado")
 
@@ -958,6 +1337,7 @@ def send_device_command(device_id: str, payload: DeviceCommandRequest):
             device,
             accion,
             payload.espacio or infer_device_space(device),
+            context=context,
         )
         return {
             "ok": True,
@@ -1018,12 +1398,23 @@ async def fase_1_recibir_y_guardar_audio(audio: UploadFile):
     content = await audio.read()
     content_type = audio.content_type or ""
 
-    filename, file_path = save_uploaded_audio(audio, content)
+    if using_supabase():
+        suffix = Path(audio.filename or "audio.webm").suffix or ".webm"
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"{timestamp}_{Path(audio.filename or 'audio.webm').name}"
+        temporary = tempfile.NamedTemporaryFile(prefix="afcr_voice_", suffix=suffix, delete=False)
+        temporary.write(content)
+        temporary.close()
+        file_path = temporary.name
+    else:
+        filename, file_path = save_uploaded_audio(audio, content)
 
     return {
         "filename": filename,
         "file_path": file_path,
-        "content_type": content_type
+        "content_type": content_type,
+        "content": content,
+        "temporary": using_supabase(),
     }
 
 
@@ -1737,7 +2128,12 @@ def infer_module_action(module: str, texto_transcrito: str, ia_json: dict) -> st
     return "NONE"
 
 
-def build_light_mqtt_preview(espacio: str, accion: str) -> tuple[dict | None, str]:
+def build_light_mqtt_preview(
+    espacio: str,
+    accion: str,
+    organization_id: str | None = None,
+    access_token: str | None = None,
+) -> tuple[dict | None, str]:
     """
     Construye el payload MQTT esperado sin publicarlo.
     """
@@ -1752,7 +2148,7 @@ def build_light_mqtt_preview(espacio: str, accion: str) -> tuple[dict | None, st
         "accion": accion
     }
 
-    device = find_light_device_for_space(espacio)
+    device = find_light_device_for_space(espacio, organization_id, access_token)
     topic = device["mqtt_topic"] if device else MQTT_TOPIC_LUCES
 
     if device:
@@ -1761,10 +2157,15 @@ def build_light_mqtt_preview(espacio: str, accion: str) -> tuple[dict | None, st
     return payload, topic
 
 
-def build_http_delivery_preview(espacio: str, accion: str) -> dict | None:
+def build_http_delivery_preview(
+    espacio: str,
+    accion: str,
+    organization_id: str | None = None,
+    access_token: str | None = None,
+) -> dict | None:
     espacio = normalize_espacio(espacio)
     accion = accion.upper().strip()
-    device = find_http_esp32_for_space(espacio)
+    device = find_http_esp32_for_space(espacio, organization_id, access_token)
 
     if device is None or accion not in {"ON", "OFF"}:
         return None
@@ -1784,6 +2185,8 @@ def build_voice_intent_plan(
     texto_transcrito: str,
     ia_json: dict,
     respuesta_usuario: str = "",
+    organization_id: str | None = None,
+    access_token: str | None = None,
 ) -> dict:
     """
     Crea un plan pendiente para que el usuario lo confirme antes de ejecutar.
@@ -1799,11 +2202,15 @@ def build_voice_intent_plan(
     can_execute = False
 
     if module == "lights":
-        delivery_preview = build_http_delivery_preview(espacio, action)
+        delivery_preview = build_http_delivery_preview(
+            espacio, action, organization_id, access_token
+        )
         if delivery_preview is not None:
             can_execute = True
         else:
-            payload, topic = build_light_mqtt_preview(espacio, action)
+            payload, topic = build_light_mqtt_preview(
+                espacio, action, organization_id, access_token
+            )
         if delivery_preview is None and payload is not None:
             mqtt_preview = {
                 "mqtt_topic": topic,
@@ -1869,15 +2276,21 @@ def build_voice_intent_plan(
         "expires_at": to_iso(utc_now() + timedelta(seconds=VOICE_PLAN_TTL_SECONDS)),
     }
 
-    PENDING_VOICE_PLANS[request_id] = {
-        "expires_at": utc_now() + timedelta(seconds=VOICE_PLAN_TTL_SECONDS),
-        "plan": plan,
-    }
+    if not using_supabase():
+        PENDING_VOICE_PLANS[request_id] = {
+            "expires_at": utc_now() + timedelta(seconds=VOICE_PLAN_TTL_SECONDS),
+            "plan": plan,
+        }
 
     return plan
 
 
-def send_mqtt_luz(espacio: str, accion: str) -> tuple[bool, dict | None, str]:
+def send_mqtt_luz(
+    espacio: str,
+    accion: str,
+    organization_id: str | None = None,
+    access_token: str | None = None,
+) -> tuple[bool, dict | None, str]:
     """
     Publica el comando MQTT para el ESP32.
 
@@ -1902,7 +2315,7 @@ def send_mqtt_luz(espacio: str, accion: str) -> tuple[bool, dict | None, str]:
             "accion": accion
         }
 
-        device = find_light_device_for_space(espacio)
+        device = find_light_device_for_space(espacio, organization_id, access_token)
         topic = device["mqtt_topic"] if device else MQTT_TOPIC_LUCES
 
         if device:
@@ -1966,7 +2379,10 @@ def fase_4_ejecutar_json_con_mqtt(ia_json: dict):
 # =========================================================
 
 @app.post("/voice-intent")
-async def voice_intent(audio: UploadFile = File(...)):
+async def voice_intent(
+    audio: UploadFile = File(...),
+    authorization: str | None = Header(default=None),
+):
     """
     Flujo principal:
     FASE 1: Recibir y guardar audio
@@ -1975,29 +2391,61 @@ async def voice_intent(audio: UploadFile = File(...)):
     FASE 4: Ejecutar acción por MQTT
     """
 
-    # -------------------------
-    # FASE 1
-    # -------------------------
+    context = authenticated_context(authorization) if using_supabase() else None
     fase_1 = await fase_1_recibir_y_guardar_audio(audio)
+    audio_path = None
+    audio_expires_at = None
 
-    # -------------------------
-    # FASE 2
-    # -------------------------
-    texto_transcrito = fase_2_transcribir_audio(
-        file_path=fase_1["file_path"],
-        filename=fase_1["filename"],
-        content_type=fase_1["content_type"]
-    )
+    try:
+        texto_transcrito = fase_2_transcribir_audio(
+            file_path=fase_1["file_path"],
+            filename=fase_1["filename"],
+            content_type=fase_1["content_type"]
+        )
+        ia_raw, ia_json_raw, ia_json, respuesta_usuario = fase_3_interpretar_intencion(texto_transcrito)
+        plan = build_voice_intent_plan(
+            texto_transcrito,
+            ia_json,
+            respuesta_usuario,
+            context["organization_id"] if context else None,
+            context["token"] if context else None,
+        )
 
-    # -------------------------
-    # FASE 3
-    # -------------------------
-    ia_raw, ia_json_raw, ia_json, respuesta_usuario = fase_3_interpretar_intencion(texto_transcrito)
-
-    # -------------------------
-    # PLAN PENDIENTE
-    # -------------------------
-    plan = build_voice_intent_plan(texto_transcrito, ia_json, respuesta_usuario)
+        if context:
+            audio_path, audio_expires_at = upload_private_audio(
+                context,
+                plan["request_id"],
+                fase_1["filename"],
+                fase_1["content_type"],
+                fase_1["content"],
+            )
+            supabase_rest(
+                "POST",
+                "voice_intents",
+                service_role=True,
+                payload={
+                    "request_id": plan["request_id"],
+                    "organization_id": context["organization_id"],
+                    "user_id": context["user_id"],
+                    "filename": fase_1["filename"],
+                    "content_type": fase_1["content_type"],
+                    "audio_path": audio_path,
+                    "audio_expires_at": audio_expires_at,
+                    "transcription": texto_transcrito,
+                    "ai_provider": AI_PROVIDER,
+                    "response_for_user": respuesta_usuario,
+                    "device_intent": ia_json,
+                    "plan": plan,
+                    "status": "pending_confirmation" if plan["can_execute"] else "not_executable",
+                    "expires_at": plan["expires_at"],
+                },
+            )
+    finally:
+        if fase_1.get("temporary"):
+            try:
+                os.unlink(fase_1["file_path"])
+            except FileNotFoundError:
+                pass
 
     # -------------------------
     # RESPUESTA FINAL
@@ -2008,8 +2456,9 @@ async def voice_intent(audio: UploadFile = File(...)):
 
         "fase_1_audio_guardado": {
             "filename": fase_1["filename"],
-            "saved_path": fase_1["file_path"],
-            "content_type": fase_1["content_type"]
+            "content_type": fase_1["content_type"],
+            "stored": bool(audio_path) if context else True,
+            "audio_expires_at": audio_expires_at,
         },
 
         "fase_2_transcripcion": {
@@ -2041,23 +2490,52 @@ async def voice_intent(audio: UploadFile = File(...)):
 
 
 @app.post("/voice-intent/confirm")
-def confirm_voice_intent(payload: VoiceIntentConfirmRequest):
+def confirm_voice_intent(
+    payload: VoiceIntentConfirmRequest,
+    authorization: str | None = Header(default=None),
+):
     """
     Ejecuta un plan de voz previamente devuelto por /voice-intent.
     Para ESP32 enlazados, encola una orden HTTPS hasta que el dispositivo envie ACK.
     Para luces legacy, mantiene la publicacion MQTT existente.
     """
-    cleanup_expired_voice_plans()
-
     request_id = payload.request_id.strip()
-    pending = PENDING_VOICE_PLANS.pop(request_id, None)
-
-    if pending is None:
-        raise HTTPException(status_code=404, detail="Plan no encontrado o expirado")
-
-    plan = pending["plan"]
+    context = authenticated_context(authorization) if using_supabase() else None
+    if context:
+        query = (
+            "voice_intents?select=request_id,plan,status,expires_at"
+            f"&request_id=eq.{urllib.parse.quote(request_id)}&limit=1"
+        )
+        rows = supabase_rest("GET", query, access_token=context["token"])
+        if not isinstance(rows, list) or not rows:
+            raise HTTPException(status_code=404, detail="Plan no encontrado o expirado")
+        pending = rows[0]
+        expires_at = parse_iso(pending.get("expires_at"))
+        if pending.get("status") != "pending_confirmation" or not expires_at or expires_at < utc_now():
+            if pending.get("status") == "pending_confirmation":
+                supabase_rest(
+                    "PATCH",
+                    f"voice_intents?request_id=eq.{urllib.parse.quote(request_id)}",
+                    service_role=True,
+                    payload={"status": "expired"},
+                )
+            raise HTTPException(status_code=404, detail="Plan no encontrado o expirado")
+        plan = pending["plan"]
+    else:
+        cleanup_expired_voice_plans()
+        pending = PENDING_VOICE_PLANS.pop(request_id, None)
+        if pending is None:
+            raise HTTPException(status_code=404, detail="Plan no encontrado o expirado")
+        plan = pending["plan"]
 
     if not plan.get("can_execute"):
+        if context:
+            supabase_rest(
+                "PATCH",
+                f"voice_intents?request_id=eq.{urllib.parse.quote(request_id)}",
+                service_role=True,
+                payload={"status": "not_executable", "confirmed_at": to_iso(utc_now())},
+            )
         return {
             "ok": True,
             "executed": False,
@@ -2085,14 +2563,26 @@ def confirm_voice_intent(payload: VoiceIntentConfirmRequest):
 
     espacio = str(plan.get("espacio", "desconocido"))
     action = str(plan.get("action", "NONE"))
-    http_device = find_http_esp32_for_space(espacio)
+    http_device = find_http_esp32_for_space(
+        espacio,
+        context["organization_id"] if context else None,
+        context["token"] if context else None,
+    )
     if http_device is not None:
         delivery = enqueue_http_led_command(
             http_device,
             action,
             espacio,
             source_request_id=request_id,
+            context=context,
         )
+        if context:
+            supabase_rest(
+                "PATCH",
+                f"voice_intents?request_id=eq.{urllib.parse.quote(request_id)}",
+                service_role=True,
+                payload={"status": "queued", "confirmed_at": to_iso(utc_now())},
+            )
         return {
             "ok": True,
             "queued": True,
@@ -2107,7 +2597,22 @@ def confirm_voice_intent(payload: VoiceIntentConfirmRequest):
             }
         }
 
-    ok, mqtt_payload, mqtt_topic = send_mqtt_luz(espacio, action)
+    ok, mqtt_payload, mqtt_topic = send_mqtt_luz(
+        espacio,
+        action,
+        context["organization_id"] if context else None,
+        context["token"] if context else None,
+    )
+    if context:
+        supabase_rest(
+            "PATCH",
+            f"voice_intents?request_id=eq.{urllib.parse.quote(request_id)}",
+            service_role=True,
+            payload={
+                "status": "executed" if ok else "failed",
+                "confirmed_at": to_iso(utc_now()),
+            },
+        )
     accion_mqtt = (
         f"MQTT_{action}_{normalize_espacio(espacio)}_OK"
         if ok
@@ -2125,3 +2630,19 @@ def confirm_voice_intent(payload: VoiceIntentConfirmRequest):
             "mqtt_payload": mqtt_payload
         }
     }
+
+
+@app.get("/voice-intents/recent")
+def recent_voice_intents(authorization: str | None = Header(default=None)):
+    if not using_supabase():
+        return {"ok": True, "items": []}
+
+    context = authenticated_context(authorization)
+    query = (
+        "voice_intents?select=request_id,transcription,response_for_user,device_intent,"
+        "status,created_at,confirmed_at,audio_expires_at,audio_purged_at"
+        f"&organization_id=eq.{urllib.parse.quote(context['organization_id'])}"
+        "&order=created_at.desc&limit=12"
+    )
+    items = supabase_rest("GET", query, access_token=context["token"])
+    return {"ok": True, "items": items or []}

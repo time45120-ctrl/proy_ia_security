@@ -2,9 +2,9 @@
   AFCR ESP32 laboratory client
 
   Flujo:
-  1. Sin configuracion, expone la red temporal AFCR-ESP32-XXXX.
-  2. El usuario introduce WiFi, API URL y pairing token en http://192.168.4.1.
-  3. Reclama el token con POST /devices/claim y guarda device_id/api_key.
+  1. Edita WIFI_SSID, WIFI_PASSWORD y PAIRING_TOKEN en Arduino IDE.
+  2. Carga este sketch al ESP32 mediante USB.
+  3. El ESP32 se conecta al WiFi y reclama el token con POST /devices/claim.
   4. Consulta GET /device/commands cada 5 segundos mediante HTTPS autenticado.
   5. Ejecuta el LED integrado y confirma con POST /device/commands/{id}/ack.
 
@@ -12,7 +12,6 @@
   - ArduinoJson
   - HTTPClient
   - Preferences
-  - WebServer
   - WiFi
   - WiFiClientSecure
 */
@@ -20,20 +19,27 @@
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <Preferences.h>
-#include <WebServer.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 
 Preferences prefs;
-WebServer server(80);
 
 String deviceId;
 String deviceApiKey;
-String apiUrl;
+
+// Edita solamente estas tres lineas antes de subir el sketch.
+const char* WIFI_SSID = "TU_WIFI";
+const char* WIFI_PASSWORD = "TU_PASSWORD";
+const char* PAIRING_TOKEN = "PEGA_AQUI_TU_TOKEN";
+
+// La web reemplaza esta URL por la API activa al copiar el sketch.
+const char* API_URL = "https://api.afcrseguridad.com";
 
 const int LED_PIN = 2;
 const unsigned long POLL_INTERVAL_MS = 5000;
+const unsigned long LINK_RETRY_INTERVAL_MS = 10000;
 unsigned long lastPollAt = 0;
+unsigned long lastLinkAttemptAt = 0;
 
 // ISRG Root X1: valida la cadena Let's Encrypt de api.afcrseguridad.com.
 const char ISRG_ROOT_X1[] PROGMEM = R"EOF(
@@ -70,90 +76,41 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 -----END CERTIFICATE-----
 )EOF";
 
-String chipSuffix() {
-  uint64_t mac = ESP.getEfuseMac();
-  char suffix[7];
-  snprintf(suffix, sizeof(suffix), "%06X", (uint32_t)(mac & 0xFFFFFF));
-  return String(suffix);
+bool beginApiRequest(HTTPClient& http, WiFiClientSecure& secureClient, const String& endpoint) {
+  String url = String(API_URL) + endpoint;
+
+  if (url.startsWith("https://")) {
+    secureClient.setCACert(ISRG_ROOT_X1);
+    return http.begin(secureClient, url);
+  }
+
+  // HTTP se admite solo para pruebas en la red local del laboratorio.
+  return http.begin(url);
 }
 
-String htmlForm() {
-  return R"HTML(
-<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AFCR ESP32 Setup</title>
-  <style>
-    body{font-family:Arial;background:#07111d;color:#fff;padding:24px}
-    label{display:block;margin:14px 0 6px;color:#a4e6ff;text-transform:uppercase;font-size:12px;letter-spacing:.12em}
-    input{width:100%;box-sizing:border-box;padding:12px;border-radius:8px;border:1px solid #28445a;background:#050c16;color:#fff}
-    button{margin-top:18px;width:100%;padding:14px;border:0;border-radius:8px;background:#a4e6ff;color:#003543;font-weight:700}
-    main{max-width:520px;margin:auto}
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Enlazar ESP32</h1>
-    <p>Tu clave WiFi se guarda solo en este dispositivo.</p>
-    <form method="post" action="/save">
-      <label>SSID WiFi</label>
-      <input name="ssid" required>
-      <label>Password WiFi</label>
-      <input name="password" type="password" required>
-      <label>API URL</label>
-      <input name="api_url" value="https://api.afcrseguridad.com" required>
-      <label>Pairing token</label>
-      <input name="token" required>
-      <button>Guardar y enlazar</button>
-    </form>
-  </main>
-</body>
-</html>
-)HTML";
+String tokenFingerprint() {
+  uint32_t fingerprint = 2166136261UL;
+  String token = String(PAIRING_TOKEN);
+
+  for (unsigned int i = 0; i < token.length(); i++) {
+    fingerprint ^= static_cast<uint8_t>(token[i]);
+    fingerprint *= 16777619UL;
+  }
+
+  return String(fingerprint, HEX);
 }
 
-void startPortal() {
-  String apName = "AFCR-ESP32-" + chipSuffix();
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP(apName.c_str());
-  Serial.println("Portal de configuracion activo: " + apName);
-
-  server.on("/", HTTP_GET, []() {
-    server.send(200, "text/html", htmlForm());
-  });
-
-  server.on("/save", HTTP_POST, []() {
-    prefs.begin("afcr", false);
-    prefs.putString("ssid", server.arg("ssid"));
-    prefs.putString("password", server.arg("password"));
-    prefs.putString("api_url", server.arg("api_url"));
-    prefs.putString("token", server.arg("token"));
-    prefs.remove("device_id");
-    prefs.remove("device_api_key");
-    prefs.end();
-
-    server.send(200, "text/html", "<h1>Datos guardados</h1><p>El ESP32 reiniciara para enlazarse.</p>");
-    delay(1200);
-    ESP.restart();
-  });
-
-  server.begin();
+bool configurationReady() {
+  return String(WIFI_SSID) != "TU_WIFI"
+    && String(WIFI_SSID).length() > 0
+    && String(WIFI_PASSWORD) != "TU_PASSWORD"
+    && String(PAIRING_TOKEN) != "PEGA_AQUI_TU_TOKEN"
+    && String(PAIRING_TOKEN).length() > 0;
 }
 
 bool connectWifi() {
-  prefs.begin("afcr", true);
-  String ssid = prefs.getString("ssid", "");
-  String password = prefs.getString("password", "");
-  prefs.end();
-
-  if (ssid == "") {
-    return false;
-  }
-
   WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid.c_str(), password.c_str());
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   Serial.println("Conectando al WiFi...");
   for (int i = 0; i < 40 && WiFi.status() != WL_CONNECTED; i++) {
@@ -171,30 +128,44 @@ bool connectWifi() {
 }
 
 bool claimDevice() {
+  String currentTokenFingerprint = tokenFingerprint();
+
   prefs.begin("afcr", true);
-  apiUrl = prefs.getString("api_url", "https://api.afcrseguridad.com");
-  String token = prefs.getString("token", "");
   deviceId = prefs.getString("device_id", "");
   deviceApiKey = prefs.getString("device_api_key", "");
+  String savedTokenFingerprint = prefs.getString("token_hash", "");
   prefs.end();
 
-  if (deviceId != "" && deviceApiKey != "") {
+  if (
+    deviceId != ""
+    && deviceApiKey != ""
+    && savedTokenFingerprint == currentTokenFingerprint
+  ) {
+    Serial.println("Credencial guardada encontrada. Reutilizando enlace.");
     return true;
   }
 
-  if (token == "") {
-    return false;
+  if (deviceId != "" || deviceApiKey != "" || savedTokenFingerprint != "") {
+    prefs.begin("afcr", false);
+    prefs.remove("device_id");
+    prefs.remove("device_api_key");
+    prefs.remove("token_hash");
+    prefs.end();
+    deviceId = "";
+    deviceApiKey = "";
+    Serial.println("Token diferente. Iniciando un enlace nuevo.");
   }
 
   WiFiClientSecure client;
-  client.setCACert(ISRG_ROOT_X1);
-
   HTTPClient http;
-  http.begin(client, apiUrl + "/devices/claim");
+  if (!beginApiRequest(http, client, "/devices/claim")) {
+    Serial.println("No se pudo iniciar la solicitud de enlace.");
+    return false;
+  }
   http.addHeader("Content-Type", "application/json");
 
   StaticJsonDocument<256> request;
-  request["token"] = token;
+  request["token"] = PAIRING_TOKEN;
 
   String body;
   serializeJson(request, body);
@@ -226,7 +197,7 @@ bool claimDevice() {
   prefs.begin("afcr", false);
   prefs.putString("device_id", deviceId);
   prefs.putString("device_api_key", deviceApiKey);
-  prefs.remove("token");
+  prefs.putString("token_hash", currentTokenFingerprint);
   prefs.end();
 
   Serial.println("ESP32 enlazado: " + deviceId);
@@ -235,10 +206,10 @@ bool claimDevice() {
 
 bool acknowledgeCommand(const String& commandId, const String& status, const String& detail) {
   WiFiClientSecure client;
-  client.setCACert(ISRG_ROOT_X1);
-
   HTTPClient http;
-  http.begin(client, apiUrl + "/device/commands/" + commandId + "/ack");
+  if (!beginApiRequest(http, client, "/device/commands/" + commandId + "/ack")) {
+    return false;
+  }
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Authorization", "Bearer " + deviceApiKey);
 
@@ -262,11 +233,11 @@ void pollCommands() {
   lastPollAt = millis();
 
   WiFiClientSecure client;
-  client.setCACert(ISRG_ROOT_X1);
-
   HTTPClient http;
-  String url = apiUrl + "/device/commands?device_id=" + deviceId;
-  http.begin(client, url);
+  if (!beginApiRequest(http, client, "/device/commands?device_id=" + deviceId)) {
+    Serial.println("No se pudo iniciar polling HTTP.");
+    return;
+  }
   http.addHeader("Authorization", "Bearer " + deviceApiKey);
 
   int code = http.GET();
@@ -318,21 +289,43 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
 
-  if (!connectWifi() || !claimDevice()) {
-    startPortal();
+  if (!configurationReady()) {
+    Serial.println("Edita WIFI_SSID, WIFI_PASSWORD y PAIRING_TOKEN en Arduino IDE.");
+    return;
+  }
+
+  if (!connectWifi()) {
+    Serial.println("No fue posible conectar al WiFi configurado.");
+    return;
+  }
+
+  if (!claimDevice()) {
+    Serial.println("No fue posible enlazar el ESP32. Revisa el token y vuelve a cargar el sketch.");
   }
 }
 
 void loop() {
-  if (WiFi.getMode() == WIFI_AP) {
-    server.handleClient();
+  if (!configurationReady()) {
+    delay(1000);
     return;
   }
 
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi desconectado; intentando reconectar.");
-    WiFi.reconnect();
-    delay(1000);
+    if (millis() - lastLinkAttemptAt >= LINK_RETRY_INTERVAL_MS) {
+      lastLinkAttemptAt = millis();
+      Serial.println("WiFi desconectado; intentando reconectar.");
+      WiFi.reconnect();
+    }
+    delay(250);
+    return;
+  }
+
+  if (deviceId == "" || deviceApiKey == "") {
+    if (millis() - lastLinkAttemptAt >= LINK_RETRY_INTERVAL_MS) {
+      lastLinkAttemptAt = millis();
+      claimDevice();
+    }
+    delay(250);
     return;
   }
 

@@ -1,18 +1,33 @@
 # AGENTS.md - Memoria compacta de Codex
 
-Ultima revision: 2026-05-12.
+Ultima revision: 2026-05-25.
 
 ## Contexto rapido
 
 Proyecto de asistente de voz IoT/domotico con dashboard web, backend FastAPI,
 IA para interpretar comandos y flujo de confirmacion antes de ejecutar acciones
-por polling HTTPS en ESP32 reales, con MQTT legacy. La fuente activa es:
+por polling HTTP(S) en ESP32 reales, con MQTT legacy. La fuente activa es:
 
 ```text
 /home/abraham/proy_ia_security
 ```
 
 No recrear la copia legacy anidada `proy_ia_security/`.
+
+## Estado operativo actual
+
+- El usuario esta validando primero en entorno local. No desplegar, hacer
+  commits ni `git push` hacia produccion hasta que lo autorice expresamente.
+- Frontend local de prueba observado: `http://localhost:3001`.
+- Backend local de prueba debe correr en `http://localhost:8000`; para el
+  ESP32 fisico debe anunciar una URL LAN accesible, no `localhost`.
+- El flujo ESP32 nuevo esta implementado localmente, pero el backend publico
+  consultado el 2026-05-25 todavia respondia el contrato anterior con
+  `esp32_portal_url`; no asumir que produccion ya incluye estos cambios.
+- Supabase MCP esta enlazado al proyecto `proy_ia_security`, referencia
+  `omkbowrspgbuwpifksfk`. El 2026-05-25 se aplico la migracion
+  `initial_platform` con Auth multiempresa, RLS, dispositivos, comandos,
+  auditoria de voz, Storage privado y retencion.
 
 ## Repos Git activos
 
@@ -29,6 +44,8 @@ Hay repos Git separados. Usar el repo correcto para commits y push:
   - Remoto: `time45120-ctrl/proy_ia_backend`
   - Rama: `main`
   - Ultimo cambio operativo conocido: `b1.6`
+  - Automatizacion AWS GitHub Actions + SSM preparada localmente; pendiente
+    configurar EC2/IAM y autorizacion explicita antes del primer `git push`.
 
 Para cambios reales de frontend:
 
@@ -61,19 +78,28 @@ No confundir con commits desde la raiz: el backend desplegable se versiona en
 - Firmware ESP32: `firmware/esp32_pairing_portal/esp32_pairing_portal.ino`
 - Audios recibidos: `audios_recibidos/`
 - README principal: `README.md`
-- Persistencia local de dispositivos: `backend/devices.db` por defecto
+- Persistencia activa al configurar Supabase: proyecto `omkbowrspgbuwpifksfk`
+- Persistencia fallback de pruebas sin variables Supabase: `backend/devices.db`
 
 Frontend relevante:
 
 ```text
 frontend/
 |-- app/
+|   |-- desarrollo/
+|   |   |-- dashboard/page.tsx
+|   |   |-- sync/
+|   |   |   |-- esp32-direct-sketch.ts
+|   |   |   |-- page.tsx
+|   |   |   `-- sync-lab.tsx
+|   |   |-- layout.tsx
+|   |   `-- workspace-context.tsx
+|   |-- welcome/page.tsx
 |   |-- globals.css
 |   |-- layout.tsx
 |   `-- page.tsx
 |-- components/
-|   |-- voice-dashboard.tsx
-|   `-- welcome-gate.tsx
+|   `-- voice-dashboard.tsx
 |-- lib/
 |   `-- backend-api.ts
 |-- package.json
@@ -96,10 +122,10 @@ backend/
 ## Stack
 
 - Frontend: Next.js 15, React 19, TypeScript y Tailwind 3.
-- Backend: FastAPI, OpenAI, Ollama opcional, Whisper local opcional, SQLite,
-  `python-dotenv` y MQTT con `paho-mqtt`.
-- Firmware: Arduino/ESP32 con WiFi, WebServer, HTTPClient, WiFiClientSecure,
-  Preferences, PubSubClient y ArduinoJson.
+- Backend: FastAPI, Supabase Auth/Postgres/Storage, OpenAI, Ollama opcional,
+  Whisper local opcional, SQLite fallback de pruebas, `python-dotenv` y MQTT.
+- Firmware: Arduino/ESP32 con WiFi, HTTPClient, WiFiClientSecure,
+  Preferences, ArduinoJson y huella local del token configurado.
 - Broker MQTT por defecto del backend: `127.0.0.1:1883`.
 
 ## Despliegue
@@ -108,6 +134,8 @@ backend/
 - Backend publico AWS: `https://api.afcrseguridad.com`
 - IP backend AWS: `3.132.192.3`
 - DNS: `api.afcrseguridad.com` apunta a `3.132.192.3`.
+- Base de datos de aplicacion: Supabase `omkbowrspgbuwpifksfk`; requiere
+  variables de `backend/.env.example` en cada entorno desplegado.
 - Produccion frontend debe usar:
 
 ```bash
@@ -146,27 +174,42 @@ AFCR_FRONTEND_MODE=next-server
 - `npm audit` puede mostrar vulnerabilidades; eso no fue la causa del fallo de
   despliegue. La causa fue incompatibilidad entre la salida esperada y lo que
   Hostinger estaba construyendo/arrancando.
+- En desarrollo local no correr dos procesos `next dev` para el mismo
+  `frontend/` ni ejecutar `npm run build` mientras un `next dev` activo usa el
+  mismo `.next`; el 2026-05-25 eso corrompio chunks y produjo
+  `Cannot find module './820.js'`. Recuperacion: detener instancias, borrar
+  `frontend/.next` y arrancar una sola instancia.
 
 ## Frontend actual
 
 Entrypoint:
 
-- `frontend/app/page.tsx` renderiza `WelcomeGate`.
+- `frontend/app/page.tsx` redirige a `/welcome`.
+- `frontend/app/welcome/page.tsx` implementa acceso/bienvenida.
+- `frontend/app/desarrollo/layout.tsx` implementa shell y acceso al laboratorio.
 - `frontend/app/layout.tsx` define idioma `es`, metadata y estilos globales.
 - `frontend/app/globals.css` contiene estilos globales responsive.
 
-Vistas principales en `frontend/components/welcome-gate.tsx`:
+Vistas principales:
 
-- `welcome`: pantalla inicial.
-- `sync`: enlace de dispositivos ESP32.
-- `dashboard`: panel principal con voz, modulos y detalle por categoria.
+- `/welcome`: `frontend/app/welcome/page.tsx`.
+- `/desarrollo/sync`: `frontend/app/desarrollo/sync/sync-lab.tsx`.
+- `/desarrollo/dashboard`: `frontend/components/voice-dashboard.tsx`.
 
 La vista `sync`:
 
 - Llama `GET /devices`.
 - Crea tokens con `POST /devices/pairing-token`.
 - Para `ESP32`, asigna el LED a un ambiente, muestra API URL, token, vigencia
-  y modo HTTPS polling; SSID/password se ingresan solo en el portal local.
+  y modo HTTPS polling; muestra el sketch para Arduino IDE y el usuario edita
+  `WIFI_SSID`, `WIFI_PASSWORD` y `PAIRING_TOKEN` antes de subirlo por USB.
+- En laboratorio, el backend debe responder una `api_url` LAN alcanzable por
+  el ESP32 (por ejemplo `http://192.168.0.5:8000`), no `localhost`; el sketch
+  copiado la inserta automaticamente y admite HTTP solo para la red local. En
+  produccion usa `https://api.afcrseguridad.com` con CA.
+- Tras crear el token, la pantalla desplaza al usuario a la guia Arduino IDE,
+  ofrece copiar token/sketch e indica probar `<api_url>/ping` desde un celular
+  en la misma WiFi antes de cargar un ESP32 real.
 - Incluye un dispositivo demo `demo-luz-cocina` solo como muestra visual; no
   cuenta como hardware enlazado.
 
@@ -228,8 +271,10 @@ Responsabilidades:
 - Inicializar cliente MQTT.
 - Inicializar OpenAI si `AI_PROVIDER=openai`.
 - Inicializar Whisper local solo si no se usa OpenAI.
-- Crear/migrar tablas SQLite `devices` y `device_commands`.
-- Guardar audios recibidos en `audios_recibidos/`.
+- Usar Supabase para empresas, dispositivos, planes y comandos si esta
+  configurado; SQLite solo queda como fallback sin variables Supabase.
+- Guardar audio nuevo en Storage privado `voice-audio` cuando Supabase esta
+  configurado; la purga diaria elimina objetos vencidos a los 30 dias.
 - Transcribir audio.
 - Interpretar intencion con OpenAI u Ollama y fallback por reglas.
 - Separar respuesta de IA en:
@@ -340,7 +385,7 @@ conversacional.
 ## ESP32 HTTP
 
 El ESP32 reclamado recibe una `device_api_key` una sola vez y la almacena
-localmente; SQLite persiste solo el hash. Consulta por HTTPS:
+localmente; Supabase persiste solo el hash. En produccion consulta por HTTPS:
 
 ```text
 GET /device/commands?device_id={device_id}
@@ -355,6 +400,10 @@ POST /device/commands/{command_id}/ack
 
 Los comandos expiran a los 300 segundos y el dashboard muestra
 `queued`, `delivered`, `executed`, `failed` o `expired`.
+
+En laboratorio local el mismo sketch usa HTTP hacia la URL LAN que devuelve el
+backend, por ejemplo `http://192.168.0.5:8000`; esto es solo para pruebas
+dentro de la red del usuario y no sustituye HTTPS en produccion.
 
 ## MQTT Legacy
 
@@ -373,7 +422,8 @@ Payload MQTT activo:
 }
 ```
 
-Si existe un dispositivo de luces reclamado en SQLite, el backend puede publicar
+Si existe un dispositivo de luces reclamado en Supabase (o en SQLite fallback),
+el backend puede publicar
 en:
 
 ```text
@@ -411,22 +461,50 @@ Valores relevantes de `fase_4_mqtt.accion_mqtt`:
 Flujo de pairing:
 
 1. Frontend crea token con `POST /devices/pairing-token`.
-2. ESP32 crea AP temporal `AFCR-ESP32-XXXX`.
-3. Usuario abre `http://192.168.4.1`.
-4. Usuario escribe SSID, password WiFi, API URL y token.
-5. ESP32 llama `POST /devices/claim` contra `PUBLIC_API_URL`.
+2. Frontend muestra el sketch base y el token temporal.
+3. Usuario escribe SSID, password WiFi y token en el sketch desde Arduino IDE.
+4. Usuario sube el sketch al ESP32 por USB.
+5. ESP32 se conecta directamente al WiFi y llama `POST /devices/claim` contra
+   la `API_URL` insertada por la web: LAN HTTP en laboratorio o
+   `https://api.afcrseguridad.com` en produccion.
 6. Backend marca dispositivo como `online`, guarda `claimed_at` y entrega
    `device_api_key` una sola vez.
 7. ESP32 consulta `GET /device/commands?device_id=...` con bearer token.
 8. ESP32 ejecuta el LED y envia ACK del comando al backend.
 
-El backend no recibe ni guarda password WiFi.
+El backend no recibe ni guarda password WiFi; queda en el sketch local del
+usuario. Si cambia WiFi, vuelve a cargar el sketch. Si cambia token, el
+firmware descarta su credencial guardada y reclama el enlace nuevo.
 
 Firmware base:
 
 ```text
 firmware/esp32_pairing_portal/esp32_pairing_portal.ino
 ```
+
+## Red De Laboratorio ESP32
+
+- IP LAN Windows observada el 2026-05-25: `192.168.0.5`.
+- IP WSL observada el 2026-05-25: `172.20.119.33`. Puede cambiar tras
+  reiniciar Windows o WSL; volver a consultarla antes de probar hardware.
+- Regla `portproxy` observada: `192.168.0.5:8000 -> 172.20.119.33:8000`.
+- Aunque la regla estaba registrada, `curl http://192.168.0.5:8000/ping`
+  desde Windows fallo el 2026-05-25; un ESP32 fisico no podra reclamar ni
+  consultar comandos hasta que la escucha/firewall/portproxy responda desde
+  otro dispositivo de la LAN.
+- FastAPI local se probo usando base temporal en `/tmp` y:
+
+```bash
+DEVICES_DB_PATH=/tmp/afcr_devices_browser_runtime.db \
+AI_PROVIDER=disabled-for-local \
+CORS_ALLOW_ORIGINS=http://localhost:3001,http://127.0.0.1:3001 \
+PUBLIC_API_URL=http://192.168.0.5:8000 \
+uvicorn app_api:app --host 0.0.0.0 --port 8000
+```
+
+- Antes de flashear hardware, generar un token nuevo y confirmar desde un
+  celular en la misma red que `http://192.168.0.5:8000/ping` devuelve
+  `{"pong":true}`.
 
 ## Comandos utiles
 
@@ -451,6 +529,7 @@ Health checks:
 ```bash
 curl https://api.afcrseguridad.com/ping
 curl -I https://afcrseguridad.com
+curl http://localhost:8000/ping
 ```
 
 ## Reglas para futuras sesiones
@@ -458,11 +537,17 @@ curl -I https://afcrseguridad.com
 - No tocar `.env.local`, claves, tokens ni secretos.
 - No tocar `backend/.env` salvo peticion explicita del usuario.
 - Mantener `api.afcrseguridad.com` como API publica salvo cambio explicito.
+- Mientras el usuario este validando localmente, no desplegar ni hacer
+  `git push`; los cambios de produccion requieren confirmacion explicita.
+- Verificar el destino MCP antes de alterar Supabase; el proyecto autorizado
+  para esta app es `omkbowrspgbuwpifksfk`.
 - No recrear `proy_ia_security/` anidado.
 - Respetar cambios existentes del usuario en el worktree.
 - Antes de cambiar frontend, revisar:
   - `frontend/lib/backend-api.ts`
-  - `frontend/components/welcome-gate.tsx`
+  - `frontend/app/desarrollo/sync/sync-lab.tsx`
+  - `frontend/app/desarrollo/sync/esp32-direct-sketch.ts`
+  - `frontend/app/desarrollo/workspace-context.tsx`
   - `frontend/components/voice-dashboard.tsx`
   - `frontend/package.json`
   - `frontend/server.js`
@@ -470,6 +555,9 @@ curl -I https://afcrseguridad.com
 - Antes de cambiar backend, revisar `backend/app_api.py` completo.
 - Mantener el contrato MQTT salvo solicitud explicita.
 - Recordar que el flujo de voz actual es preview + confirmacion.
+- Para pruebas fisicas locales del ESP32, no usar `localhost` dentro del
+  sketch: usar la API LAN insertada por el backend y validar `/ping` desde otro
+  equipo de la red.
 - Para diagnosticar Hostinger, comparar el log con la marca
   `AFCR_FRONTEND_BUILD=...` de `frontend/scripts/print-deploy-info.js`.
 - Si el sitio publica `503`, revisar primero si Hostinger esta arrancando el

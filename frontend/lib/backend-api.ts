@@ -1,3 +1,5 @@
+import { getAccessToken } from "@/lib/supabase/client";
+
 export type BackendConnectionState =
   | "checking"
   | "online"
@@ -71,8 +73,9 @@ export type VoiceIntentResponse = {
   respuesta_ia_usuario?: string;
   fase_1_audio_guardado?: {
     filename?: string;
-    saved_path?: string;
     content_type?: string;
+    stored?: boolean;
+    audio_expires_at?: string | null;
   };
   fase_2_transcripcion?: {
     texto_transcrito?: string;
@@ -93,6 +96,18 @@ export type VoiceIntentResponse = {
   };
   delivery?: DeviceCommandDelivery | null;
   plan?: VoiceIntentPlan;
+};
+
+export type VoiceIntentAuditRecord = {
+  request_id: string;
+  transcription: string;
+  response_for_user: string;
+  device_intent: VoiceIntentJson;
+  status: string;
+  created_at: string;
+  confirmed_at?: string | null;
+  audio_expires_at?: string | null;
+  audio_purged_at?: string | null;
 };
 
 export type VoiceIntentConfirmResponse = {
@@ -132,7 +147,6 @@ export type PairingTokenResponse = {
   pairing_token: string;
   pairing_expires_at: string;
   api_url: string;
-  esp32_portal_url: string;
   mqtt_topic: string;
   mqtt_server: string;
   mqtt_port: number;
@@ -202,6 +216,18 @@ export const API_BASE_URL = normalizeApiBaseUrl(
   process.env.NEXT_PUBLIC_API_BASE_URL ?? DEFAULT_API_BASE_URL,
 );
 
+async function authenticatedHeaders(headers: Record<string, string> = {}) {
+  const token = await getAccessToken();
+  if (!token) {
+    throw new Error("Inicia sesion para usar el laboratorio.");
+  }
+
+  return {
+    ...headers,
+    Authorization: `Bearer ${token}`,
+  };
+}
+
 export async function pingBackend() {
   const response = await fetch(`${API_BASE_URL}/ping`, {
     cache: "no-store",
@@ -220,6 +246,7 @@ export async function sendVoiceIntentPreview(file: File) {
 
   const response = await fetch(`${API_BASE_URL}/voice-intent`, {
     method: "POST",
+    headers: await authenticatedHeaders(),
     body: formData,
   });
 
@@ -234,7 +261,7 @@ export async function confirmVoiceIntentPlan(requestId: string) {
   const response = await fetch(`${API_BASE_URL}/voice-intent/confirm`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      ...(await authenticatedHeaders({ "Content-Type": "application/json" })),
     },
     body: JSON.stringify({ request_id: requestId }),
   });
@@ -249,7 +276,7 @@ export async function confirmVoiceIntentPlan(requestId: string) {
 export async function getDeviceCommandStatus(commandId: string) {
   const response = await fetch(
     `${API_BASE_URL}/device/commands/${encodeURIComponent(commandId)}/status`,
-    { cache: "no-store" },
+    { cache: "no-store", headers: await authenticatedHeaders() },
   );
 
   if (!response.ok) {
@@ -265,6 +292,7 @@ export async function getDeviceCommandStatus(commandId: string) {
 export async function listDevices() {
   const response = await fetch(`${API_BASE_URL}/devices`, {
     cache: "no-store",
+    headers: await authenticatedHeaders(),
   });
 
   if (!response.ok) {
@@ -281,11 +309,12 @@ export async function createPairingToken(input: {
   name: string;
   type: string;
   model: string;
+  assigned_space?: string;
 }) {
   const response = await fetch(`${API_BASE_URL}/devices/pairing-token`, {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      ...(await authenticatedHeaders({ "Content-Type": "application/json" })),
     },
     body: JSON.stringify(input),
   });
@@ -295,4 +324,20 @@ export async function createPairingToken(input: {
   }
 
   return (await response.json()) as PairingTokenResponse;
+}
+
+export async function listRecentVoiceIntents() {
+  const response = await fetch(`${API_BASE_URL}/voice-intents/recent`, {
+    cache: "no-store",
+    headers: await authenticatedHeaders(),
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  return (await response.json()) as {
+    ok?: boolean;
+    items?: VoiceIntentAuditRecord[];
+  };
 }
