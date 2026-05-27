@@ -68,7 +68,7 @@ La configuracion final que funciono localmente y se dejo para Hostinger:
   - Usa `process.env.PORT || 3000`.
   - Log esperado al arrancar: `AFCR_FRONTEND_READY=http://0.0.0.0:<port>`.
 - `scripts/print-deploy-info.js`
-  - Imprime `AFCR_FRONTEND_BUILD=f1.19`.
+  - Imprime `AFCR_FRONTEND_BUILD=f.31`.
   - Imprime `AFCR_FRONTEND_MODE=next-server`.
 
 Lecciones aprendidas:
