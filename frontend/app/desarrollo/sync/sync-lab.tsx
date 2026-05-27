@@ -1,13 +1,14 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   API_BASE_URL,
   createPairingToken,
   type PairingTokenResponse,
 } from "@/lib/backend-api";
 import { useDevelopmentWorkspace } from "../workspace-context";
+import { ESP32_DIRECT_SKETCH } from "./esp32-direct-sketch";
 
 type DeviceType = "Luces" | "Camaras" | "Puertas" | "Drones" | "ESP32";
 type Esp32Space = "cocina" | "sala" | "comedor" | "cuarto_principal";
@@ -50,6 +51,9 @@ export function SyncLab() {
     }) | null
   >(null);
   const [localNotice, setLocalNotice] = useState<string | null>(null);
+  const [copyNotice, setCopyNotice] = useState<string | null>(null);
+  const noticeRef = useRef<HTMLParagraphElement>(null);
+  const pairingGuideRef = useRef<HTMLElement>(null);
   const isEsp32 = deviceType === "ESP32";
   const selectedDeviceName = isEsp32
     ? `Luz ${esp32Spaces.find((space) => space.value === esp32Space)?.label.toLowerCase()}`
@@ -60,6 +64,12 @@ export function SyncLab() {
   const canSubmit =
     deviceModel.trim().length > 0 &&
     selectedDeviceName.trim().length > 0;
+  const sketchForPairing = pairingInfo
+    ? withActiveApiUrl(ESP32_DIRECT_SKETCH, pairingInfo.api_url)
+    : ESP32_DIRECT_SKETCH;
+  const isLocalLabPairing = pairingInfo
+    ? isLocalLabApiUrl(pairingInfo.api_url)
+    : false;
 
   useEffect(() => {
     if (pendingCount === 0) {
@@ -73,6 +83,19 @@ export function SyncLab() {
     return () => window.clearInterval(intervalId);
   }, [pendingCount, refreshDevices]);
 
+  useEffect(() => {
+    if (!pairingInfo) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      pairingGuideRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }, [pairingInfo]);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -82,12 +105,14 @@ export function SyncLab() {
 
     setIsCreatingPairing(true);
     setLocalNotice(null);
+    setCopyNotice(null);
 
     try {
       const pairing = await createPairingToken({
         type: deviceType,
         model: deviceModel.trim(),
         name: selectedDeviceName.trim(),
+        assigned_space: isEsp32 ? esp32Space : undefined,
       });
 
       setPairingInfo({
@@ -98,13 +123,32 @@ export function SyncLab() {
         space: isEsp32 ? esp32Space : undefined,
       });
       setLocalNotice(
-        "Token creado. Configura el ESP32 desde su portal WiFi temporal.",
+        isEsp32
+          ? "Token creado. Pegalo en el sketch y sube el codigo a tu ESP32 por USB."
+          : "Token creado. Utilizalo para enlazar el dispositivo seleccionado.",
       );
       await refreshDevices();
     } catch (error) {
       setLocalNotice(getErrorMessage(error));
+      window.requestAnimationFrame(() => {
+        noticeRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+      });
     } finally {
       setIsCreatingPairing(false);
+    }
+  }
+
+  async function copyValue(value: string, label: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopyNotice(`${label} copiado. Ya puedes pegarlo en Arduino IDE.`);
+    } catch {
+      setCopyNotice(
+        `No se pudo copiar ${label.toLowerCase()} automaticamente. Seleccionalo y copialo manualmente.`,
+      );
     }
   }
 
@@ -140,9 +184,12 @@ export function SyncLab() {
           </div>
         </header>
 
-        {notice || localNotice ? (
-          <p className="rounded-lg border border-[#44c7f4]/25 bg-[#44c7f4]/10 px-4 py-3 text-sm leading-6 text-[#b7ebff]">
-            {localNotice ?? notice}
+        {notice || localNotice || copyNotice ? (
+          <p
+            ref={noticeRef}
+            className="rounded-lg border border-[#44c7f4]/25 bg-[#44c7f4]/10 px-4 py-3 text-sm leading-6 text-[#b7ebff]"
+          >
+            {copyNotice ?? localNotice ?? notice}
           </p>
         ) : null}
 
@@ -246,17 +293,24 @@ export function SyncLab() {
                 </label>
               )}
 
-              <p className="rounded-lg border border-[#44c7f4]/20 bg-[#44c7f4]/10 px-3 py-3 text-sm leading-6 text-[#b7ebff]">
-                El SSID y la contrasena WiFi se escriben solo en el portal local
-                del ESP32. La plataforma nunca recibe esa contrasena.
-              </p>
+              {isEsp32 ? (
+                <p className="rounded-lg border border-[#44c7f4]/20 bg-[#44c7f4]/10 px-3 py-3 text-sm leading-6 text-[#b7ebff]">
+                  Despues de crear el enlace, copia el sketch en Arduino IDE y
+                  escribe alli el SSID, la contrasena de tu WiFi y el token. La
+                  plataforma nunca recibe tu contrasena.
+                </p>
+              ) : null}
 
               <button
                 type="submit"
                 disabled={!canSubmit || isCreatingPairing}
                 className="inline-flex min-h-12 items-center justify-center rounded-lg bg-[#a4e6ff] px-5 py-3 font-display text-xs font-semibold uppercase tracking-[0.12em] text-[#003543] shadow-[0_0_18px_rgba(0,209,255,0.28)] transition hover:bg-[#b7eaff] disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {isCreatingPairing ? "Creando token..." : "Crear enlace ESP32"}
+                {isCreatingPairing
+                  ? "Creando token..."
+                  : isEsp32
+                    ? "Crear enlace ESP32"
+                    : "Crear enlace"}
               </button>
             </div>
           </form>
@@ -272,8 +326,8 @@ export function SyncLab() {
               {linkedCount > 0
                 ? "La aplicacion ya tiene dispositivos reclamados por ESP32 reales."
                 : pendingCount > 0
-                  ? "Hay enlaces pendientes. Reclama el token desde el portal del ESP32."
-                  : "Crea un enlace y reclama el token desde el ESP32 para continuar."}
+                  ? "Hay enlaces pendientes. Carga el sketch con el token en tu ESP32."
+                  : "Crea un enlace y carga el sketch al ESP32 para continuar."}
             </p>
             <button
               type="button"
@@ -286,28 +340,87 @@ export function SyncLab() {
           </aside>
         </section>
 
-        {pairingInfo ? (
-          <section className="rounded-lg border border-[#44c7f4]/25 bg-[#44c7f4]/10 p-4 sm:p-5">
+        {pairingInfo?.deviceType === "ESP32" ? (
+          <section
+            ref={pairingGuideRef}
+            className="scroll-mt-4 rounded-lg border border-[#44c7f4]/25 bg-[#44c7f4]/10 p-4 sm:p-5"
+          >
             <p className="text-xs uppercase tracking-[0.2em] text-[#9edfff]">
-              portal WiFi temporal del ESP32
+              guia para primer enlace ESP32
             </p>
             <h3 className="mt-2 font-display text-xl font-semibold text-white">
-              Configura {pairingInfo.deviceName}
+              Programa {pairingInfo.deviceName} desde Arduino IDE
             </h3>
             <p className="mt-3 text-sm leading-6 text-slate-300">
-              Sigue los pasos para terminar el enlace. El estado cambiara a
-              Online cuando el dispositivo reclame correctamente el token.
+              Tu token ya esta listo. Sube el sketch por USB antes de que
+              venza; el estado cambiara a Online cuando el ESP32 se conecte.
             </p>
-            <ol className="mt-4 grid gap-2 rounded-lg border border-white/10 bg-[#050c16]/55 p-4 text-sm leading-6 text-slate-300">
-              <li>1. Enciende el ESP32 y conectate a su red temporal AFCR-ESP32-XXXX.</li>
-              <li>2. Abre <span className="text-white">{pairingInfo.esp32_portal_url}</span>.</li>
-              <li>3. Ingresa SSID y contrasena WiFi solo en ese portal local.</li>
-              <li>4. Copia la API URL y el pairing token mostrados abajo.</li>
-              <li>5. Espera el estado Online en el inventario conectado.</li>
+            <div className="mt-4 rounded-lg border border-[#f6c563]/30 bg-[#f6c563]/10 p-4 text-sm leading-6 text-[#ffe0a3]">
+              Tu WiFi debe ser preferiblemente de 2.4 GHz. Tu contrasena se
+              escribe en Arduino IDE dentro del sketch y no se envia a AFCR
+              Seguridad. Si el token vence, crea otro enlace y reemplazalo en
+              el codigo.
+            </div>
+            {isLocalLabPairing ? (
+              <p className="mt-4 rounded-lg border border-[#44c7f4]/25 bg-[#44c7f4]/10 px-4 py-3 text-sm leading-6 text-[#b7ebff]">
+                Modo de prueba local: el codigo copiado ya incluye la API{" "}
+                <span className="break-all text-white">{pairingInfo.api_url}</span>.
+                Mantiene encendido tu backend local mientras pruebas el ESP32.
+                Antes de subir el sketch, abre{" "}
+                <span className="break-all text-white">
+                  {pairingInfo.api_url}/ping
+                </span>{" "}
+                desde un celular conectado al mismo WiFi; debe responder{" "}
+                <span className="text-white">pong: true</span>.
+              </p>
+            ) : (
+              <p className="mt-4 rounded-lg border border-[#44c7f4]/25 bg-[#44c7f4]/10 px-4 py-3 text-sm leading-6 text-[#b7ebff]">
+                El codigo copiado incluye la API segura{" "}
+                <span className="break-all text-white">{pairingInfo.api_url}</span>.
+              </p>
+            )}
+
+            <ol className="mt-4 grid gap-3 rounded-lg border border-white/10 bg-[#050c16]/55 p-4 text-sm leading-6 text-slate-300">
+              <li>
+                1. Instala{" "}
+                <a
+                  className="text-[#b7ebff] underline underline-offset-2"
+                  href="https://www.arduino.cc/en/software"
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  Arduino IDE
+                </a>{" "}
+                en tu laptop.
+              </li>
+              <li>
+                2. En el gestor de placas instala <span className="text-white">esp32 by Espressif Systems</span>{" "}
+                y selecciona <span className="text-white">ESP32 Dev Module</span>.
+              </li>
+              <li>
+                3. En el gestor de librerias instala <span className="text-white">ArduinoJson</span>.
+              </li>
+              <li>
+                4. Copia el codigo C++ de abajo, pegalo en un sketch nuevo y
+                reemplaza solamente las tres lineas marcadas.
+              </li>
+              <li>
+                5. Conecta tu ESP32 por cable USB, selecciona su puerto y pulsa
+                <span className="text-white"> Subir</span>.
+              </li>
+              <li>
+                6. Espera que el inventario muestre <span className="text-white">Online</span>{" "}
+                y luego prueba el LED desde el dashboard.
+              </li>
             </ol>
+
             <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
               <PairingValue label="API URL" value={pairingInfo.api_url} />
-              <PairingValue label="Token" value={pairingInfo.pairing_token} />
+              <CopyableValue
+                label="Token para pegar en PAIRING_TOKEN"
+                value={pairingInfo.pairing_token}
+                onCopy={() => void copyValue(pairingInfo.pairing_token, "Token")}
+              />
               <PairingValue label="Device ID" value={pairingInfo.device_id} />
               <PairingValue label="Nombre" value={pairingInfo.deviceName} />
               <PairingValue label="Tipo" value={pairingInfo.deviceType} />
@@ -332,6 +445,70 @@ export function SyncLab() {
               ) : (
                 <PairingValue label="Topic MQTT" value={pairingInfo.mqtt_topic} />
               )}
+            </div>
+
+            <div className="mt-5 rounded-lg border border-white/10 bg-[#050c16]/80 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-[#9edfff]">
+                    codigo C++ para Arduino IDE
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-slate-300">
+                    Copia el sketch completo y edita estas tres lineas:
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void copyValue(sketchForPairing, "Codigo C++")}
+                  className="shrink-0 rounded-lg border border-[#44c7f4]/30 bg-[#44c7f4]/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#b7ebff] transition hover:bg-[#44c7f4]/15"
+                >
+                  Copiar codigo C++
+                </button>
+              </div>
+              <pre className="mt-4 overflow-x-auto rounded-lg border border-[#f6c563]/30 bg-[#f6c563]/10 p-3 text-xs leading-6 text-[#ffe0a3]">
+                {`const char* WIFI_SSID = "TU_WIFI";\nconst char* WIFI_PASSWORD = "TU_PASSWORD";\nconst char* PAIRING_TOKEN = "PEGA_AQUI_TU_TOKEN";`}
+              </pre>
+              <pre className="mt-4 max-h-[32rem] overflow-auto rounded-lg border border-white/10 bg-[#030912] p-4 text-xs leading-5 text-slate-300">
+                {sketchForPairing}
+              </pre>
+            </div>
+
+            <div className="mt-5 rounded-lg border border-white/10 bg-[#050c16]/55 p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                si algo no funciona
+              </p>
+              <ul className="mt-3 grid gap-2 text-sm leading-6 text-slate-300">
+                <li>El ESP32 no aparece: prueba un cable USB de datos u otro puerto.</li>
+                <li>No compila: instala el soporte ESP32 y la libreria ArduinoJson.</li>
+                <li>No sube: revisa placa y puerto; algunas placas requieren mantener BOOT al cargar.</li>
+                <li>No queda Online: revisa WiFi de 2.4 GHz, contrasena y vigencia del token.</li>
+                <li>La API local no abre desde tu celular: habilita el puerto 8000 de tu laptop hacia el backend.</li>
+                <li>Cambiaste de WiFi: modifica las dos lineas WiFi y vuelve a subir el sketch.</li>
+                <li>Quieres otro enlace: genera un token nuevo, pegalo en PAIRING_TOKEN y vuelve a subir.</li>
+                <li>El LED no responde: esta guia usa el LED integrado en GPIO 2.</li>
+              </ul>
+            </div>
+          </section>
+        ) : pairingInfo ? (
+          <section
+            ref={pairingGuideRef}
+            className="scroll-mt-4 rounded-lg border border-[#44c7f4]/25 bg-[#44c7f4]/10 p-4 sm:p-5"
+          >
+            <p className="text-xs uppercase tracking-[0.2em] text-[#9edfff]">
+              enlace legacy
+            </p>
+            <h3 className="mt-2 font-display text-xl font-semibold text-white">
+              Configura {pairingInfo.deviceName}
+            </h3>
+            <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
+              <PairingValue label="API URL" value={pairingInfo.api_url} />
+              <PairingValue label="Token" value={pairingInfo.pairing_token} />
+              <PairingValue label="Device ID" value={pairingInfo.device_id} />
+              <PairingValue label="Topic MQTT" value={pairingInfo.mqtt_topic} />
+              <PairingValue
+                label="Token valido hasta"
+                value={formatDateTime(pairingInfo.pairing_expires_at)}
+              />
             </div>
           </section>
         ) : null}
@@ -421,6 +598,32 @@ function PairingValue({
   );
 }
 
+function CopyableValue({
+  label,
+  value,
+  onCopy,
+}: {
+  label: string;
+  value: string;
+  onCopy: () => void;
+}) {
+  return (
+    <div className="rounded-lg border border-[#44c7f4]/25 bg-[#050c16]/70 px-3 py-2">
+      <p className="text-xs uppercase tracking-[0.14em] text-slate-500">
+        {label}
+      </p>
+      <p className="mt-1 break-all text-slate-100">{value}</p>
+      <button
+        type="button"
+        onClick={onCopy}
+        className="mt-2 rounded border border-[#44c7f4]/30 px-3 py-1 text-xs uppercase tracking-[0.12em] text-[#b7ebff] transition hover:bg-[#44c7f4]/10"
+      >
+        Copiar token
+      </button>
+    </div>
+  );
+}
+
 function getDeviceStatusTone(status: string) {
   if (status === "online") {
     return "border-[#8ee89d]/30 bg-[#8ee89d]/10 text-[#b9f3c2]";
@@ -442,6 +645,30 @@ function formatDateTime(value: string) {
     dateStyle: "medium",
     timeStyle: "short",
   });
+}
+
+function withActiveApiUrl(sketch: string, apiUrl: string) {
+  return sketch.replace(
+    'const char* API_URL = "https://api.afcrseguridad.com";',
+    `const char* API_URL = "${apiUrl}";`,
+  );
+}
+
+function isLocalLabApiUrl(apiUrl: string) {
+  try {
+    const url = new URL(apiUrl);
+
+    return (
+      url.protocol === "http:" &&
+      (url.hostname === "localhost" ||
+        url.hostname === "127.0.0.1" ||
+        url.hostname.startsWith("192.168.") ||
+        url.hostname.startsWith("10.") ||
+        /^172\.(1[6-9]|2\d|3[0-1])\./.test(url.hostname))
+    );
+  } catch {
+    return false;
+  }
 }
 
 function getErrorMessage(error: unknown) {

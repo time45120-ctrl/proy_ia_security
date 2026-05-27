@@ -6,11 +6,13 @@ import {
   API_BASE_URL,
   confirmVoiceIntentPlan,
   getDeviceCommandStatus,
+  listRecentVoiceIntents,
   pingBackend,
   sendVoiceIntentPreview,
   type BackendConnectionState,
   type DeviceCommandDelivery,
   type MqttLightPayload,
+  type VoiceIntentAuditRecord,
   type VoiceIntentConfirmResponse,
   type VoiceIntentResponse,
 } from "@/lib/backend-api";
@@ -210,9 +212,11 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
   const [errorText, setErrorText] = useState<string | null>(null);
   const [activeDetail, setActiveDetail] = useState<ActiveDetail>("ia");
   const [isConfirming, setIsConfirming] = useState(false);
+  const [recentIntents, setRecentIntents] = useState<VoiceIntentAuditRecord[]>([]);
 
   useEffect(() => {
     void handlePing();
+    void refreshRecentIntents();
 
     return () => {
       stopMicrophoneStream();
@@ -303,6 +307,15 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
       setErrorText(getErrorMessage(error));
     } finally {
       setIsChecking(false);
+    }
+  }
+
+  async function refreshRecentIntents() {
+    try {
+      const payload = await listRecentVoiceIntents();
+      setRecentIntents(payload.items ?? []);
+    } catch {
+      setRecentIntents([]);
     }
   }
 
@@ -410,6 +423,7 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
       const transcript = payload.fase_2_transcripcion?.texto_transcrito;
 
       setResponse(payload);
+      void refreshRecentIntents();
       setConnection("online");
       setStatusText(
         transcript
@@ -441,6 +455,7 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
       const payload = await confirmVoiceIntentPlan(requestId);
 
       setConfirmation(payload);
+      void refreshRecentIntents();
       setConnection(payload.ok ? "online" : "error");
       setStatusText(
         payload.delivery
@@ -550,9 +565,65 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
             />
           ))}
         </section>
+
+        <section className="rounded-lg border border-white/10 bg-[#08111f]/90 p-4 sm:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-[0.2em] text-[#9edfff]">
+                Auditoria Supabase
+              </p>
+              <h2 className="mt-2 font-display text-lg font-semibold text-white">
+                Comandos de voz recientes
+              </h2>
+              <p className="mt-2 text-sm text-slate-400">
+                El audio se mantiene privado y expira automaticamente a los 30 dias.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void refreshRecentIntents()}
+              className="min-h-10 rounded-lg border border-white/15 bg-white/5 px-4 py-2 text-sm text-white transition hover:bg-white/10"
+            >
+              Actualizar
+            </button>
+          </div>
+
+          {recentIntents.length === 0 ? (
+            <p className="mt-4 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-400">
+              Aun no hay solicitudes de voz registradas para esta empresa.
+            </p>
+          ) : (
+            <div className="mt-4 grid gap-3">
+              {recentIntents.map((intent) => (
+                <article
+                  key={intent.request_id}
+                  className="rounded-lg border border-white/10 bg-white/[0.03] p-3 sm:p-4"
+                >
+                  <div className="flex flex-wrap justify-between gap-2 text-xs uppercase tracking-[0.12em] text-slate-500">
+                    <span>{formatAuditDate(intent.created_at)}</span>
+                    <span className="text-[#9edfff]">{intent.status}</span>
+                  </div>
+                  <p className="mt-2 text-sm text-slate-200">
+                    {intent.transcription || "Sin transcripcion disponible"}
+                  </p>
+                  <p className="mt-2 text-xs leading-5 text-slate-400">
+                    {intent.response_for_user || "Sin respuesta registrada"}
+                  </p>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </main>
   );
+}
+
+function formatAuditDate(value: string) {
+  return new Intl.DateTimeFormat("es", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(new Date(value));
 }
 
 function AiCommandCard({

@@ -2,35 +2,10 @@
 
 import Image from "next/image";
 import { useRouter } from "next/navigation";
+import type { Session } from "@supabase/supabase-js";
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
-import { API_BASE_URL } from "@/lib/backend-api";
-import {
-  closeLandingSession,
-  getLandingRegistration,
-  getLandingSession,
-  saveLandingRegistration,
-  startLandingSession,
-  type CompanyOperationSize,
-  type LandingRegistration,
-  type LandingSession,
-  type SecurityNeed,
-} from "@/lib/landing-session";
-
-const operationSizes: Array<{ value: CompanyOperationSize; label: string }> = [
-  { value: "1-25", label: "1 a 25 puestos o accesos" },
-  { value: "26-100", label: "26 a 100 puntos operativos" },
-  { value: "101-500", label: "101 a 500 puntos operativos" },
-  { value: "500+", label: "Mas de 500 puntos operativos" },
-];
-
-const securityNeeds: Array<{ value: SecurityNeed; label: string }> = [
-  { value: "integral", label: "Sistema integral con IA" },
-  { value: "camaras", label: "Camaras y monitoreo" },
-  { value: "accesos", label: "Puertas y control de accesos" },
-  { value: "luces", label: "Luces y automatizacion" },
-  { value: "drones", label: "Drones de vigilancia" },
-];
+import { createClient } from "@/lib/supabase/client";
 
 const modules = [
   {
@@ -60,21 +35,16 @@ const processSteps = [
 
 const initialForm = {
   companyName: "",
-  contactName: "",
-  role: "",
   email: "",
+  password: "",
   phone: "",
-  operationSize: "26-100" as CompanyOperationSize,
-  primaryNeed: "integral" as SecurityNeed,
 };
 
 export default function WelcomePage() {
   const router = useRouter();
-  const [registration, setRegistration] = useState<LandingRegistration | null>(
-    null,
-  );
-  const [session, setSession] = useState<LandingSession | null>(null);
-  const [isRegisterOpen, setIsRegisterOpen] = useState(false);
+  const [session, setSession] = useState<Session | null>(null);
+  const [authMode, setAuthMode] = useState<"register" | "login" | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [form, setForm] = useState(initialForm);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -85,18 +55,34 @@ export default function WelcomePage() {
     : "Laboratorio";
 
   useEffect(() => {
-    setRegistration(getLandingRegistration());
-    setSession(getLandingSession());
+    const supabase = createClient();
+    if (new URLSearchParams(window.location.search).get("auth_error") === "confirmation") {
+      setNotice("No se pudo confirmar el correo. Solicita un nuevo enlace e intenta otra vez.");
+    }
+
+    void supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   const formIsReady = useMemo(
     () =>
-      form.companyName.trim().length > 1 &&
-      form.contactName.trim().length > 1 &&
-      form.role.trim().length > 1 &&
+      (authMode === "login" ||
+        (form.companyName.trim().length > 1 &&
+          form.phone.trim().length > 5)) &&
       form.email.includes("@") &&
-      form.phone.trim().length > 5,
-    [form],
+      form.password.length >= 8,
+    [authMode, form],
   );
 
   function updateForm<Key extends keyof typeof form>(
@@ -107,26 +93,22 @@ export default function WelcomePage() {
     setErrors((current) => ({ ...current, [key]: "" }));
   }
 
-  function validateForm() {
+  function validateForm(requireCompany: boolean) {
     const nextErrors: Record<string, string> = {};
 
-    if (form.companyName.trim().length < 2) {
+    if (requireCompany && form.companyName.trim().length < 2) {
       nextErrors.companyName = "Ingresa el nombre de la empresa.";
     }
 
-    if (form.contactName.trim().length < 2) {
-      nextErrors.contactName = "Ingresa el nombre del contacto.";
-    }
-
-    if (form.role.trim().length < 2) {
-      nextErrors.role = "Indica el cargo o area responsable.";
-    }
-
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
-      nextErrors.email = "Ingresa un email corporativo valido.";
+      nextErrors.email = "Ingresa un email valido.";
     }
 
-    if (form.phone.trim().length < 6) {
+    if (form.password.length < 8) {
+      nextErrors.password = "Usa una contrasena de al menos 8 caracteres.";
+    }
+
+    if (requireCompany && form.phone.trim().length < 6) {
       nextErrors.phone = "Ingresa un telefono de contacto.";
     }
 
@@ -134,55 +116,75 @@ export default function WelcomePage() {
     return Object.keys(nextErrors).length === 0;
   }
 
-  function handleRegisterSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!validateForm()) {
+    const isRegistration = authMode === "register";
+
+    if (!validateForm(isRegistration)) {
       return;
     }
 
-    const nextRegistration: LandingRegistration = {
-      companyName: form.companyName.trim(),
-      contactName: form.contactName.trim(),
-      role: form.role.trim(),
-      email: form.email.trim().toLowerCase(),
-      phone: form.phone.trim(),
-      operationSize: form.operationSize,
-      primaryNeed: form.primaryNeed,
-      source: "afcr-welcome-mvp",
-      apiBaseUrl: API_BASE_URL,
-      futureAwsReady: true,
-      createdAt: new Date().toISOString(),
-    };
+    setIsSubmitting(true);
+    setNotice(null);
 
-    saveLandingRegistration(nextRegistration);
-    const nextSession = startLandingSession(nextRegistration);
+    try {
+      const supabase = createClient();
+      const email = form.email.trim().toLowerCase();
 
-    setRegistration(nextRegistration);
-    setSession(nextSession);
-    setIsRegisterOpen(false);
-    setNotice(
-      "Registro completado. Sesion iniciada y Laboratorio habilitado para tu empresa.",
-    );
+      if (!isRegistration) {
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
+          password: form.password,
+        });
+
+        if (error) {
+          setNotice(error.message);
+          return;
+        }
+
+        setAuthMode(null);
+        setNotice("Sesion iniciada. Ya puedes entrar al Laboratorio.");
+        return;
+      }
+
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password: form.password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/confirm?next=/desarrollo/sync`,
+          data: {
+            company_name: form.companyName.trim(),
+            phone: form.phone.trim(),
+            source: "afcr-welcome-supabase",
+          },
+        },
+      });
+
+      if (error) {
+        setNotice(error.message);
+        return;
+      }
+
+      setAuthMode(null);
+      setNotice(
+        data.session
+          ? "Registro completado. Sesion iniciada y Laboratorio habilitado."
+          : "Registro recibido. Confirma tu correo para iniciar sesion.",
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   function handleLogin() {
-    const storedRegistration = getLandingRegistration();
-
-    if (!storedRegistration) {
-      setNotice("Primero registra tu empresa para habilitar el Laboratorio.");
-      setIsRegisterOpen(true);
-      return;
-    }
-
-    const nextSession = startLandingSession(storedRegistration);
-    setRegistration(storedRegistration);
-    setSession(nextSession);
-    setNotice("Sesion iniciada. Ya puedes entrar al Laboratorio.");
+    setErrors({});
+    setNotice(null);
+    setAuthMode("login");
   }
 
-  function handleLogout() {
-    closeLandingSession();
+  async function handleLogout() {
+    await createClient().auth.signOut();
     setSession(null);
     setNotice("Sesion cerrada. Laboratorio vuelve a quedar protegido.");
   }
@@ -213,7 +215,7 @@ export default function WelcomePage() {
               type="button"
               onClick={() => {
                 setNotice(null);
-                setIsRegisterOpen(true);
+                setAuthMode("register");
               }}
               className={`min-h-10 rounded-lg px-3 py-2 text-xs font-bold uppercase tracking-[0.08em] transition sm:px-4 ${
                 isAuthenticated
@@ -227,7 +229,7 @@ export default function WelcomePage() {
             {isAuthenticated ? (
               <button
                 type="button"
-                onClick={handleLogout}
+                onClick={() => void handleLogout()}
                 className="min-h-10 rounded-lg border border-white/15 px-3 py-2 text-xs font-semibold uppercase tracking-[0.08em] text-slate-200 transition hover:bg-white/[0.07] sm:px-4"
               >
                 Cerrar sesion
@@ -291,7 +293,7 @@ export default function WelcomePage() {
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <button
                 type="button"
-                onClick={() => setIsRegisterOpen(true)}
+                onClick={() => setAuthMode("register")}
                 className="inline-flex min-h-12 items-center justify-center rounded-lg bg-[#6ee7b7] px-6 py-3 text-sm font-bold uppercase tracking-[0.1em] text-[#052018] transition hover:bg-[#8af0c9]"
               >
                 Registrate
@@ -440,13 +442,12 @@ export default function WelcomePage() {
             </h2>
             <p className="mt-4 text-sm leading-7 text-slate-300">
               El backend real vive en AWS y el frontend queda preparado para
-              conectar registro y autenticacion a una base de datos cuando se
-              habilite esa etapa.
+              operar registro, sesiones y datos protegidos con Supabase.
             </p>
           </div>
           <button
             type="button"
-            onClick={() => setIsRegisterOpen(true)}
+            onClick={() => setAuthMode("register")}
             className="mt-6 inline-flex min-h-12 w-full items-center justify-center rounded-lg bg-[#6ee7b7] px-6 py-3 text-sm font-bold uppercase tracking-[0.1em] text-[#052018] transition hover:bg-[#8af0c9] sm:w-auto lg:mt-0"
           >
             Registrate
@@ -454,24 +455,26 @@ export default function WelcomePage() {
         </div>
       </section>
 
-      {isRegisterOpen ? (
+      {authMode ? (
         <div className="fixed inset-0 z-50 grid place-items-center bg-[#02070d]/82 px-4 py-6 backdrop-blur-sm">
           <form
-            onSubmit={handleRegisterSubmit}
+            onSubmit={(event) => void handleAuthSubmit(event)}
             className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-lg border border-white/12 bg-[#0a1522] p-5 shadow-[0_30px_120px_rgba(0,0,0,0.55)] sm:p-6"
           >
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#6ee7b7]">
-                  Registro empresarial
+                  {authMode === "register" ? "Registro empresarial" : "Acceso seguro"}
                 </p>
                 <h2 className="mt-2 font-display text-2xl font-semibold text-white">
-                  Habilita el Laboratorio AFCR
+                  {authMode === "register"
+                    ? "Habilita el Laboratorio AFCR"
+                    : "Inicia sesion en AFCR"}
                 </h2>
               </div>
               <button
                 type="button"
-                onClick={() => setIsRegisterOpen(false)}
+                onClick={() => setAuthMode(null)}
                 className="rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-300 transition hover:bg-white/[0.06]"
               >
                 Cerrar
@@ -479,58 +482,52 @@ export default function WelcomePage() {
             </div>
 
             <div className="mt-6 grid gap-4 sm:grid-cols-2">
+              {authMode === "register" ? (
+                <>
+                  <TextField
+                    label="Empresa"
+                    value={form.companyName}
+                    error={errors.companyName}
+                    onChange={(value) => updateForm("companyName", value)}
+                  />
+                </>
+              ) : null}
               <TextField
-                label="Empresa"
-                value={form.companyName}
-                error={errors.companyName}
-                onChange={(value) => updateForm("companyName", value)}
-              />
-              <TextField
-                label="Contacto"
-                value={form.contactName}
-                error={errors.contactName}
-                onChange={(value) => updateForm("contactName", value)}
-              />
-              <TextField
-                label="Cargo"
-                value={form.role}
-                error={errors.role}
-                onChange={(value) => updateForm("role", value)}
-              />
-              <TextField
-                label="Email corporativo"
+                label="Email"
                 type="email"
                 value={form.email}
                 error={errors.email}
                 onChange={(value) => updateForm("email", value)}
               />
               <TextField
-                label="Telefono"
-                value={form.phone}
-                error={errors.phone}
-                onChange={(value) => updateForm("phone", value)}
+                label="Contrasena"
+                type="password"
+                value={form.password}
+                error={errors.password}
+                onChange={(value) => updateForm("password", value)}
               />
-              <SelectField
-                label="Tamano de operacion"
-                value={form.operationSize}
-                options={operationSizes}
-                onChange={(value) => updateForm("operationSize", value)}
-              />
-              <SelectField
-                label="Necesidad principal"
-                value={form.primaryNeed}
-                options={securityNeeds}
-                onChange={(value) => updateForm("primaryNeed", value)}
-                className="sm:col-span-2"
-              />
+              {authMode === "register" ? (
+                <>
+                  <TextField
+                    label="Telefono"
+                    value={form.phone}
+                    error={errors.phone}
+                    onChange={(value) => updateForm("phone", value)}
+                  />
+                </>
+              ) : null}
             </div>
 
             <button
               type="submit"
-              disabled={!formIsReady}
+              disabled={!formIsReady || isSubmitting}
               className="mt-5 inline-flex min-h-12 w-full items-center justify-center rounded-lg bg-[#6ee7b7] px-5 py-3 text-sm font-bold uppercase tracking-[0.1em] text-[#052018] transition hover:bg-[#8af0c9] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Registrate y entrar en sesion
+              {isSubmitting
+                ? "Procesando..."
+                : authMode === "register"
+                  ? "Registrate y entrar en sesion"
+                  : "Iniciar sesion"}
             </button>
           </form>
         </div>
@@ -575,39 +572,6 @@ function TextField({
         className="min-h-12 rounded-lg border border-white/10 bg-[#06101b] px-3 text-white outline-none transition placeholder:text-slate-600 focus:border-[#44c7f4]/60 focus:ring-2 focus:ring-[#44c7f4]/20"
       />
       {error ? <span className="text-xs text-[#ffc1cb]">{error}</span> : null}
-    </label>
-  );
-}
-
-function SelectField<Value extends string>({
-  label,
-  value,
-  options,
-  onChange,
-  className = "",
-}: {
-  label: string;
-  value: Value;
-  options: Array<{ value: Value; label: string }>;
-  onChange: (value: Value) => void;
-  className?: string;
-}) {
-  return (
-    <label className={`grid gap-2 text-sm text-slate-300 ${className}`}>
-      <span className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">
-        {label}
-      </span>
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value as Value)}
-        className="min-h-12 rounded-lg border border-white/10 bg-[#06101b] px-3 text-white outline-none transition focus:border-[#44c7f4]/60 focus:ring-2 focus:ring-[#44c7f4]/20"
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
     </label>
   );
 }

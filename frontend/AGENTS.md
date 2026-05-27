@@ -1,6 +1,6 @@
 # AGENTS.md - Frontend
 
-Ultima revision: 2026-05-12.
+Ultima revision: 2026-05-25.
 
 ## Contexto
 
@@ -19,6 +19,16 @@ https://github.com/time45120-ctrl/proy_ia_frontend.git
 Rama activa: `main`.
 
 Ultimo commit operativo conocido: `f1.19`.
+
+## Estado De Trabajo Actual
+
+- Se esta probando localmente antes de cualquier despliegue. No hacer commit,
+  push ni publicar en Hostinger hasta autorizacion explicita del usuario.
+- URL local observada para el frontend: `http://localhost:3001`.
+- `frontend/.env.local` apunta a `http://localhost:8000` para la API local; no
+  modificar ese archivo sin solicitud explicita.
+- La API publica aun no refleja necesariamente el flujo ESP32 directo que esta
+  en el worktree local.
 
 ## Despliegue Hostinger
 
@@ -42,8 +52,12 @@ La configuracion final que funciono localmente y se dejo para Hostinger:
 
 - `package.json`
   - `prebuild`: `node scripts/print-deploy-info.js`
-  - `build`: `NEXT_PUBLIC_API_BASE_URL=https://api.afcrseguridad.com next build`
+  - `build`: `next build`
   - `start`: `node server.js`
+- Variables publicas de produccion configuradas en Hostinger:
+  - `NEXT_PUBLIC_API_BASE_URL=https://api.afcrseguridad.com`
+  - `NEXT_PUBLIC_SUPABASE_URL=https://omkbowrspgbuwpifksfk.supabase.co`
+  - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<clave_publishable>`
 - `next.config.js`
   - CommonJS.
   - `reactStrictMode: true`.
@@ -66,6 +80,10 @@ Lecciones aprendidas:
 - No usar Python `http.server` para produccion Hostinger.
 - Si falla Hostinger, mirar el log completo despues del build, no solo el log de
   compilacion. `npm audit` no fue la causa de los fallos.
+- No ejecutar dos instancias `next dev` sobre este repo ni ejecutar
+  `npm run build` mientras `next dev` escribe `.next`; eso provoco el error
+  local `Cannot find module './820.js'`. Para recuperar, detener instancias,
+  limpiar `.next` y arrancar un solo servidor.
 
 ## Backend publico
 
@@ -79,6 +97,8 @@ El frontend compila con:
 
 ```bash
 NEXT_PUBLIC_API_BASE_URL=https://api.afcrseguridad.com
+NEXT_PUBLIC_SUPABASE_URL=https://omkbowrspgbuwpifksfk.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<clave_publishable>
 ```
 
 En `lib/backend-api.ts` el default tambien es:
@@ -94,13 +114,21 @@ El cliente normaliza URLs para evitar:
 
 ## Archivos importantes
 
-- `app/page.tsx`: renderiza `WelcomeGate`.
+- `app/page.tsx`: redirige a `/welcome`.
+- `app/welcome/page.tsx`: pantalla de ingreso al laboratorio.
+- `app/auth/confirm/route.ts`: confirmacion de correo Supabase y creacion de
+  sesion SSR antes de ingresar al laboratorio.
+- `app/desarrollo/layout.tsx`: shell y control de acceso al laboratorio.
+- `app/desarrollo/workspace-context.tsx`: inventario, demo y navegacion.
+- `app/desarrollo/sync/sync-lab.tsx`: pairing y guia Arduino IDE.
+- `app/desarrollo/sync/esp32-direct-sketch.ts`: sketch C++ copiable.
 - `app/layout.tsx`: metadata e idioma.
 - `app/globals.css`: tema oscuro y estilos responsive.
-- `components/welcome-gate.tsx`: welcome, sync y navegacion principal.
 - `components/voice-dashboard.tsx`: grabacion de voz, tarjeta IA, tarjetas de
-  modulos y confirmacion.
+  modulos, confirmacion e historial auditado de voz.
 - `lib/backend-api.ts`: cliente HTTP al backend.
+- `lib/supabase/`: cliente/browser/server de Supabase Auth.
+- `middleware.ts`: protege `/desarrollo` mediante sesion Supabase.
 - `package.json`: scripts de Hostinger.
 - `server.js`: servidor Next para produccion.
 - `next.config.js`: config Next.
@@ -135,10 +163,25 @@ Reglas:
 - Verifica backend con `GET /ping`.
 - Graba con `MediaRecorder` y `getUserMedia`.
 - Envia audio a `POST /voice-intent`.
+- El alta email/password dirige el correo de confirmacion a `/auth/confirm`;
+  registrar esa URL para local y produccion en las Redirect URLs de Supabase.
+- Todas las rutas de inventario, voz y estado incluyen el JWT de la sesion
+  Supabase; el backend aplica aislamiento por organizacion.
+- Los audios nuevos quedan en el bucket privado `voice-audio` y el dashboard
+  solo presenta metadatos del historial, no reproduccion publica.
 - Muestra preview/plan.
 - Ejecuta hardware solo tras `POST /voice-intent/confirm`.
-- Los ESP32 enlazados reciben comandos por polling HTTPS y el dashboard sigue
+- Los ESP32 enlazados reciben comandos por polling HTTP(S) y el dashboard sigue
   su ACK mediante `GET /device/commands/{command_id}/status`.
+- La vista de Sincronizacion guia Arduino IDE, muestra un sketch copiable y
+  pide editar `WIFI_SSID`, `WIFI_PASSWORD` y `PAIRING_TOKEN` antes de subirlo
+  por USB; no usa portal WiFi local.
+- Al crear enlace ESP32, la vista desplaza automaticamente a la guia y
+  sustituye `API_URL` en el sketch copiado con `api_url` devuelta por backend.
+- En laboratorio esa URL debe ser LAN y accesible desde el ESP32, por ejemplo
+  `http://192.168.0.5:8000`; se muestra una prueba `<api_url>/ping` para hacer
+  desde un celular en la misma WiFi. En produccion debe ser
+  `https://api.afcrseguridad.com`.
 - Luces legacy pueden ejecutar MQTT real.
 - Camaras, puertas y drones son visuales/plan hasta conectar hardware real.
 
@@ -160,6 +203,13 @@ cd /home/abraham/proy_ia_security/frontend
 npm run build
 ```
 
+No ejecutar este build mientras el servidor `next dev` local siga activo sobre
+el mismo `.next`; detenerlo primero o validar solo tipos con:
+
+```bash
+npx tsc --noEmit --pretty false
+```
+
 Start local compatible con Hostinger:
 
 ```bash
@@ -178,7 +228,8 @@ git commit -m "f1.N"
 git push
 ```
 
-No commitear `.env.local`.
+No commitear `.env` ni variantes `.env.*`; solo `.env.example` puede quedar
+versionado.
 
 ## Diagnostico rapido
 

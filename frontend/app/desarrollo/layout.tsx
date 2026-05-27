@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { closeLandingSession } from "@/lib/landing-session";
+import { createClient } from "@/lib/supabase/client";
 import {
   DevelopmentWorkspaceProvider,
   type DevelopmentView,
@@ -30,8 +30,8 @@ function DevelopmentShell({ children }: { children: ReactNode }) {
     ? "dashboard"
     : "sync";
 
-  function handleLogout() {
-    closeLandingSession();
+  async function handleLogout() {
+    await createClient().auth.signOut();
     router.replace("/welcome");
   }
 
@@ -75,7 +75,7 @@ function DevelopmentShell({ children }: { children: ReactNode }) {
 
         <button
           type="button"
-          onClick={handleLogout}
+          onClick={() => void handleLogout()}
           className="mt-4 flex min-h-12 w-full items-center justify-center rounded-lg border border-rose-300/20 bg-rose-400/10 px-4 py-3 text-xs font-semibold uppercase tracking-[0.12em] text-rose-100 transition hover:bg-rose-400/15 lg:mt-6"
         >
           Cerrar sesion
