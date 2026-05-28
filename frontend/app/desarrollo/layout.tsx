@@ -31,7 +31,12 @@ function DevelopmentShell({ children }: { children: ReactNode }) {
     : "sync";
 
   async function handleLogout() {
-    await createClient().auth.signOut();
+    try {
+      await createClient().auth.signOut();
+    } catch {
+      // The session may already be invalid; still send the user back to access.
+    }
+
     router.replace("/welcome");
   }
 

@@ -51,7 +51,7 @@ export default function WelcomePage() {
 
   const isAuthenticated = Boolean(session);
   const laboratoryButtonLabel = isAuthenticated
-    ? "SESION INICIADA PUEDES ENTRAR AL LABORATORIO"
+    ? "Entrar al laboratorio"
     : "Laboratorio";
 
   useEffect(() => {
@@ -60,9 +60,14 @@ export default function WelcomePage() {
       setNotice("No se pudo confirmar el correo. Solicita un nuevo enlace e intenta otra vez.");
     }
 
-    void supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-    });
+    void supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        setSession(data.session);
+      })
+      .catch((error) => {
+        setNotice(getErrorMessage(error));
+      });
 
     const {
       data: { subscription },
@@ -172,6 +177,8 @@ export default function WelcomePage() {
           ? "Registro completado. Sesion iniciada y Laboratorio habilitado."
           : "Registro recibido. Confirma tu correo para iniciar sesion.",
       );
+    } catch (error) {
+      setNotice(getErrorMessage(error));
     } finally {
       setIsSubmitting(false);
     }
@@ -184,7 +191,12 @@ export default function WelcomePage() {
   }
 
   async function handleLogout() {
-    await createClient().auth.signOut();
+    try {
+      await createClient().auth.signOut();
+    } catch (error) {
+      setNotice(getErrorMessage(error));
+    }
+
     setSession(null);
     setNotice("Sesion cerrada. Laboratorio vuelve a quedar protegido.");
   }
@@ -214,6 +226,7 @@ export default function WelcomePage() {
             <button
               type="button"
               onClick={() => {
+                setErrors({});
                 setNotice(null);
                 setAuthMode("register");
               }}
@@ -481,6 +494,12 @@ export default function WelcomePage() {
               </button>
             </div>
 
+            {notice ? (
+              <p className="mt-5 rounded-lg border border-[#6ee7b7]/25 bg-[#6ee7b7]/10 px-4 py-3 text-sm leading-6 text-[#c6ffe8]">
+                {notice}
+              </p>
+            ) : null}
+
             <div className="mt-6 grid gap-4 sm:grid-cols-2">
               {authMode === "register" ? (
                 <>
@@ -545,6 +564,22 @@ function Metric({ value, label }: { value: string; label: string }) {
       </p>
     </div>
   );
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof Event !== "undefined" && error instanceof Event) {
+    return "No se pudo completar la operacion del navegador. Intentalo nuevamente.";
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return "Error desconocido";
 }
 
 function TextField({
