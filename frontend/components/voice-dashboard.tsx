@@ -31,6 +31,14 @@ type DeviceCard = {
 
 type DeviceDetailId = "lights" | "doors" | "cameras" | "drones";
 type ActiveDetail = "ia" | DeviceDetailId;
+type DebugLogLevel = "info" | "success" | "warning" | "error";
+type DebugLogEntry = {
+  id: string;
+  timestamp: string;
+  level: DebugLogLevel;
+  message: string;
+  details?: string;
+};
 
 type DetailDashboardConfig = {
   id: DeviceDetailId;
@@ -196,6 +204,9 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const audioStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioLevelFrameRef = useRef<number | null>(null);
+  const audioLevelStatsRef = useRef({ samples: 0, sum: 0, peak: 0 });
   const [isUploading, setIsUploading] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -213,6 +224,7 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
   const [activeDetail, setActiveDetail] = useState<ActiveDetail>("ia");
   const [isConfirming, setIsConfirming] = useState(false);
   const [recentIntents, setRecentIntents] = useState<VoiceIntentAuditRecord[]>([]);
+  const [debugLogs, setDebugLogs] = useState<DebugLogEntry[]>([]);
 
   useEffect(() => {
     void handlePing();
@@ -292,19 +304,44 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
     confirmation?.delivery?.transport,
   ]);
 
+  function appendDebugLog(
+    level: DebugLogLevel,
+    message: string,
+    details?: Record<string, unknown> | string,
+  ) {
+    const entry: DebugLogEntry = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      timestamp: new Date().toISOString(),
+      level,
+      message,
+      details:
+        typeof details === "string"
+          ? details
+          : details
+            ? JSON.stringify(details, null, 2)
+            : undefined,
+    };
+
+    setDebugLogs((current) => [entry, ...current].slice(0, 14));
+  }
+
   async function handlePing() {
     setIsChecking(true);
     setConnection("checking");
     setErrorText(null);
+    appendDebugLog("info", "Probando API publica", { api_base_url: API_BASE_URL });
 
     try {
       await pingBackend();
       setConnection("online");
       setStatusText("Backend conectado. El dashboard esta listo para recibir voz.");
+      appendDebugLog("success", "Backend respondio /ping", { status: "online" });
     } catch (error) {
+      const message = getErrorMessage(error);
       setConnection("offline");
       setStatusText("No se logro conectar con la API publica. Revisa dominio, HTTPS y CORS.");
-      setErrorText(getErrorMessage(error));
+      setErrorText(message);
+      appendDebugLog("error", "Fallo /ping del backend", message);
     } finally {
       setIsChecking(false);
     }
@@ -343,8 +380,20 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      appendDebugLog("info", "Solicitando permiso de microfono");
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      startAudioLevelMonitor(stream);
       const mimeType = getSupportedAudioMimeType();
+      appendDebugLog("info", "Microfono activo", {
+        selected_mime_type: mimeType || "default del navegador",
+        audio_tracks: stream.getAudioTracks().length,
+      });
       const recorder = new MediaRecorder(
         stream,
         mimeType ? { mimeType } : undefined,
@@ -368,9 +417,29 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
           type: blob.type || "audio/webm",
         });
 
+        const levelStats = getAudioLevelStats();
+
         stopMicrophoneStream();
         setIsRecording(false);
         setRecordingSeconds(0);
+
+        appendDebugLog(blob.size > 0 ? "info" : "warning", "Grabacion detenida", {
+          blob_size: formatBytes(blob.size),
+          blob_size_bytes: blob.size,
+          blob_type: blob.type || "sin tipo",
+          chunks: audioChunksRef.current.length,
+          recorder_mime_type: recorder.mimeType || "sin tipo",
+          peak_level: levelStats.peakLabel,
+          average_level: levelStats.averageLabel,
+          audio_samples: levelStats.samples,
+        });
+
+        if (levelStats.samples > 0 && levelStats.peak < 0.03) {
+          appendDebugLog("warning", "El microfono parece estar capturando muy bajo", {
+            peak_level: levelStats.peakLabel,
+            average_level: levelStats.averageLabel,
+          });
+        }
 
         if (blob.size === 0) {
           setConnection("error");
@@ -388,19 +457,89 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
       setErrorText(null);
       setConfirmation(null);
       setStatusText("Grabando audio. Pulsa de nuevo para detener y enviar.");
+      appendDebugLog("success", "Grabacion iniciada", {
+        recorder_mime_type: recorder.mimeType || "sin tipo",
+      });
     } catch (error) {
+      const message = getMicrophoneErrorMessage(error);
       stopMicrophoneStream();
       setIsRecording(false);
       setRecordingSeconds(0);
       setConnection("error");
-      setErrorText(getMicrophoneErrorMessage(error));
+      setErrorText(message);
+      appendDebugLog("error", "No se pudo iniciar microfono", message);
       setStatusText(
         "No fue posible iniciar la grabacion. Revisa el permiso de microfono y vuelve a pulsar Enviar voz.",
       );
     }
   }
 
+  function startAudioLevelMonitor(stream: MediaStream) {
+    stopAudioLevelMonitor();
+    audioLevelStatsRef.current = { samples: 0, sum: 0, peak: 0 };
+
+    const AudioContextCtor =
+      window.AudioContext ??
+      (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+
+    if (!AudioContextCtor) {
+      appendDebugLog("warning", "Este navegador no permite medir nivel de microfono");
+      return;
+    }
+
+    const audioContext = new AudioContextCtor();
+    const source = audioContext.createMediaStreamSource(stream);
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 1024;
+    source.connect(analyser);
+    audioContextRef.current = audioContext;
+
+    const samples = new Uint8Array(analyser.fftSize);
+    const tick = () => {
+      analyser.getByteTimeDomainData(samples);
+      let sumSquares = 0;
+
+      for (const sample of samples) {
+        const normalized = (sample - 128) / 128;
+        sumSquares += normalized * normalized;
+      }
+
+      const rms = Math.sqrt(sumSquares / samples.length);
+      const stats = audioLevelStatsRef.current;
+      stats.samples += 1;
+      stats.sum += rms;
+      stats.peak = Math.max(stats.peak, rms);
+      audioLevelFrameRef.current = window.requestAnimationFrame(tick);
+    };
+
+    tick();
+  }
+
+  function stopAudioLevelMonitor() {
+    if (audioLevelFrameRef.current !== null) {
+      window.cancelAnimationFrame(audioLevelFrameRef.current);
+      audioLevelFrameRef.current = null;
+    }
+
+    void audioContextRef.current?.close().catch(() => undefined);
+    audioContextRef.current = null;
+  }
+
+  function getAudioLevelStats() {
+    const stats = audioLevelStatsRef.current;
+    const average = stats.samples > 0 ? stats.sum / stats.samples : 0;
+
+    return {
+      samples: stats.samples,
+      peak: stats.peak,
+      average,
+      peakLabel: formatPercent(stats.peak),
+      averageLabel: formatPercent(average),
+    };
+  }
+
   function stopMicrophoneStream() {
+    stopAudioLevelMonitor();
     audioStreamRef.current?.getTracks().forEach((track) => track.stop());
     audioStreamRef.current = null;
     mediaRecorderRef.current = null;
@@ -417,10 +556,17 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
     setConfirmation(null);
     setLastFileName(file.name);
     setStatusText("Subiendo audio al backend y esperando el plan de la IA...");
+    appendDebugLog("info", "Enviando audio al backend", {
+      file_name: file.name,
+      file_type: file.type || "sin tipo",
+      file_size: formatBytes(file.size),
+      file_size_bytes: file.size,
+    });
 
     try {
       const payload = await sendVoiceIntentPreview(file);
       const transcript = payload.fase_2_transcripcion?.texto_transcrito;
+      const audioInfo = payload.fase_1_audio_guardado;
 
       setResponse(payload);
       void refreshRecentIntents();
@@ -430,9 +576,22 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
           ? `Plan listo para confirmar: "${transcript}".`
           : "Audio enviado correctamente. La IA devolvio un plan.",
       );
+      appendDebugLog(transcript ? "success" : "warning", "Respuesta de voz recibida", {
+        transcript: transcript || "vacio",
+        transcript_length: transcript?.length ?? 0,
+        backend_filename: audioInfo?.filename ?? "sin archivo",
+        backend_content_type: audioInfo?.content_type ?? "sin tipo",
+        backend_content_type_normalized: audioInfo?.content_type_normalized ?? "no informado",
+        backend_size: formatBytes(audioInfo?.content_size_bytes ?? 0),
+        backend_size_bytes: audioInfo?.content_size_bytes ?? 0,
+        stored: audioInfo?.stored ?? false,
+        can_execute: payload.plan?.can_execute ?? false,
+      });
     } catch (error) {
+      const message = getErrorMessage(error);
       setConnection("error");
-      setErrorText(getErrorMessage(error));
+      setErrorText(message);
+      appendDebugLog("error", "Fallo al procesar audio", message);
       setStatusText("No fue posible procesar el audio. Intenta nuevamente.");
     } finally {
       setIsUploading(false);
@@ -465,9 +624,18 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
             ? "Plan confirmado y ejecutado."
             : "Plan confirmado sin ejecucion real."),
       );
+      appendDebugLog(payload.ok ? "success" : "warning", "Confirmacion recibida", {
+        ok: payload.ok ?? false,
+        executed: payload.executed ?? false,
+        queued: payload.queued ?? false,
+        delivery_status: payload.delivery?.status ?? "sin delivery",
+        command_id: payload.delivery?.command_id ?? "sin comando",
+      });
     } catch (error) {
+      const message = getErrorMessage(error);
       setConnection("error");
-      setErrorText(getErrorMessage(error));
+      setErrorText(message);
+      appendDebugLog("error", "Fallo al confirmar plan", message);
       setStatusText("No fue posible confirmar el plan. Intenta nuevamente.");
     } finally {
       setIsConfirming(false);
@@ -541,6 +709,7 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
               recordingSeconds={recordingSeconds}
               response={response}
               statusText={statusText}
+              debugLogs={debugLogs}
             />
 
             {activeDetail !== "ia" ? (
@@ -640,6 +809,7 @@ function AiCommandCard({
   recordingSeconds,
   response,
   statusText,
+  debugLogs,
 }: {
   activeContext: string;
   confirmation: VoiceIntentConfirmResponse | null;
@@ -654,6 +824,7 @@ function AiCommandCard({
   recordingSeconds: number;
   response: VoiceIntentResponse | null;
   statusText: string;
+  debugLogs: DebugLogEntry[];
 }) {
   const intentJson =
     response?.respuesta_json_dispositivo ??
@@ -826,6 +997,8 @@ function AiCommandCard({
           </div>
         </div>
       </div>
+
+      <DebugLogCard logs={debugLogs} />
 
       <details className="mt-4 border-t border-white/10 pt-4 text-sm text-slate-300">
         <summary className="cursor-pointer text-slate-200">
@@ -1065,6 +1238,103 @@ function SignalPill({ state }: { state: BackendConnectionState }) {
       {getSignalLabel(state)}
     </div>
   );
+}
+
+function DebugLogCard({ logs }: { logs: DebugLogEntry[] }) {
+  return (
+    <section className="mt-4 rounded-lg border border-[#44c7f4]/20 bg-[#050c16]/80 p-3 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-xs uppercase tracking-[0.18em] text-[#9edfff]">
+            Logs de prueba
+          </p>
+          <h3 className="mt-1 font-display text-base font-semibold text-white">
+            Voz, backend y OpenAI
+          </h3>
+        </div>
+        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300">
+          {logs.length} eventos
+        </span>
+      </div>
+
+      <div className="mt-3 max-h-64 overflow-auto rounded-lg border border-white/10 bg-black/20">
+        {logs.length === 0 ? (
+          <p className="px-3 py-3 text-xs text-slate-500">
+            Sin eventos todavia.
+          </p>
+        ) : (
+          <ol className="divide-y divide-white/10">
+            {logs.map((log) => (
+              <li key={log.id} className="grid gap-1 px-3 py-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`h-2 w-2 rounded-full ${getDebugLogTone(log.level)}`} />
+                  <time className="font-mono text-[11px] text-slate-500">
+                    {formatLogTime(log.timestamp)}
+                  </time>
+                  <span className="text-xs font-semibold text-slate-200">
+                    {log.message}
+                  </span>
+                </div>
+                {log.details ? (
+                  <pre className="overflow-auto whitespace-pre-wrap break-words rounded-md bg-[#020712] px-2 py-2 font-mono text-[11px] leading-4 text-slate-400">
+                    {log.details}
+                  </pre>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function formatLogTime(value: string) {
+  return new Intl.DateTimeFormat("es", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(new Date(value));
+}
+
+function getDebugLogTone(level: DebugLogLevel) {
+  if (level === "success") {
+    return "bg-[#8ee89d]";
+  }
+
+  if (level === "warning") {
+    return "bg-[#f6c563]";
+  }
+
+  if (level === "error") {
+    return "bg-[#ff8a9f]";
+  }
+
+  return "bg-[#44c7f4]";
+}
+
+function formatPercent(value: number) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0%";
+  }
+
+  return `${Math.min(100, Math.round(value * 100))}%`;
+}
+
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "0 B";
+  }
+
+  if (value < 1024) {
+    return `${value} B`;
+  }
+
+  if (value < 1024 * 1024) {
+    return `${(value / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(value / (1024 * 1024)).toFixed(2)} MB`;
 }
 
 function InfoRow({
