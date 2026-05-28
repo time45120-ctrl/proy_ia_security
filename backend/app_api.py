@@ -103,6 +103,7 @@ SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
 SUPABASE_SERVER_KEY = SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY
 SUPABASE_AUDIO_BUCKET = os.getenv("SUPABASE_AUDIO_BUCKET", "voice-audio").strip()
 VOICE_AUDIO_RETENTION_DAYS = int(os.getenv("VOICE_AUDIO_RETENTION_DAYS", "30"))
+VOICE_AUDIO_MIN_BYTES = int(os.getenv("VOICE_AUDIO_MIN_BYTES", "4000"))
 SUPABASE_DEVICE_SAFE_COLUMNS = (
     "device_id,organization_id,created_by,name,type,model,assigned_space,status,"
     "mqtt_topic,last_seen,created_at,pairing_expires_at,claimed_at"
@@ -1422,6 +1423,15 @@ async def fase_1_recibir_y_guardar_audio(audio: UploadFile):
     """
     content = await audio.read()
     content_type = audio.content_type or ""
+
+    if len(content) < VOICE_AUDIO_MIN_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "El audio recibido es demasiado pequeno para transcribir. "
+                "Revisa que el microfono no este silenciado y vuelve a grabar."
+            ),
+        )
 
     if using_supabase():
         inferred_suffix = audio_suffix_for_content_type(content_type)
