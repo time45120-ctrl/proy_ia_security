@@ -195,5 +195,49 @@ class HttpPollingDeviceTests(unittest.TestCase):
 
 
 
+    def test_openai_transcription_uses_fallback_when_primary_is_empty(self):
+        class DummyResult:
+            def __init__(self, text):
+                self.text = text
+
+        class DummyTranscriptions:
+            def __init__(self):
+                self.models = []
+
+            def create(self, model, file, language):
+                self.models.append(model)
+                return DummyResult("enciende la luz" if model == "whisper-1" else "")
+
+        class DummyClient:
+            def __init__(self):
+                self.audio = type("Audio", (), {"transcriptions": DummyTranscriptions()})()
+
+        previous = (
+            api.openai_client,
+            api.OPENAI_TRANSCRIBE_MODEL,
+            api.OPENAI_TRANSCRIBE_FALLBACK_MODEL,
+        )
+        try:
+            client = DummyClient()
+            api.openai_client = client
+            api.OPENAI_TRANSCRIBE_MODEL = "gpt-4o-mini-transcribe"
+            api.OPENAI_TRANSCRIBE_FALLBACK_MODEL = "whisper-1"
+
+            text = api.transcribe_audio_with_openai(__file__)
+
+            self.assertEqual(text, "enciende la luz")
+            self.assertEqual(
+                client.audio.transcriptions.models,
+                ["gpt-4o-mini-transcribe", "whisper-1"],
+            )
+        finally:
+            (
+                api.openai_client,
+                api.OPENAI_TRANSCRIBE_MODEL,
+                api.OPENAI_TRANSCRIBE_FALLBACK_MODEL,
+            ) = previous
+
+
+
 if __name__ == "__main__":
     unittest.main()

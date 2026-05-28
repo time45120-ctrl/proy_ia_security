@@ -109,7 +109,8 @@ SUPABASE_DEVICE_SAFE_COLUMNS = (
 )
 
 # --- Transcripcion ---
-OPENAI_TRANSCRIBE_MODEL = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
+OPENAI_TRANSCRIBE_MODEL = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe").strip()
+OPENAI_TRANSCRIBE_FALLBACK_MODEL = os.getenv("OPENAI_TRANSCRIBE_FALLBACK_MODEL", "whisper-1").strip()
 WHISPER_MODEL_NAME = "tiny"
 
 # --- CORS ---
@@ -907,6 +908,7 @@ def root():
         "ai_config": {
             "openai_model": OPENAI_MODEL,
             "openai_transcribe_model": OPENAI_TRANSCRIBE_MODEL,
+            "openai_transcribe_fallback_model": OPENAI_TRANSCRIBE_FALLBACK_MODEL,
             "max_output_tokens": OPENAI_MAX_OUTPUT_TOKENS,
             "temperature": AI_TEMPERATURE,
             "response_style": AI_RESPONSE_STYLE,
@@ -1438,6 +1440,8 @@ async def fase_1_recibir_y_guardar_audio(audio: UploadFile):
         "filename": filename,
         "file_path": file_path,
         "content_type": content_type,
+        "content_type_normalized": normalize_audio_content_type(content_type),
+        "content_size_bytes": len(content),
         "content": content,
         "temporary": using_supabase(),
     }
@@ -1471,32 +1475,55 @@ def is_audio_file(content_type: str, filename: str = "") -> bool:
     return filename.endswith(extensiones_audio)
 
 
-def transcribe_audio_with_openai(file_path: str) -> str:
-    """
-    Transcribe un archivo de audio usando OpenAI.
-    """
+def transcribe_audio_with_openai_model(file_path: str, model: str) -> str:
     if openai_client is None:
         raise HTTPException(
             status_code=503,
             detail="OpenAI no esta inicializado. Revisa OPENAI_API_KEY en el backend.",
         )
 
-    try:
-        with open(file_path, "rb") as audio_file:
-            result = openai_client.audio.transcriptions.create(
-                model=OPENAI_TRANSCRIBE_MODEL,
-                file=audio_file,
-                language="es",
-            )
+    with open(file_path, "rb") as audio_file:
+        result = openai_client.audio.transcriptions.create(
+            model=model,
+            file=audio_file,
+            language="es",
+        )
 
-        return getattr(result, "text", "").strip()
+    return getattr(result, "text", "").strip()
 
-    except Exception as e:
-        print("Error OpenAI transcripcion:", repr(e))
+
+def transcribe_audio_with_openai(file_path: str) -> str:
+    """
+    Transcribe un archivo de audio usando OpenAI.
+    Si el modelo principal devuelve texto vacio, reintenta con whisper-1.
+    """
+    models = [OPENAI_TRANSCRIBE_MODEL]
+    if OPENAI_TRANSCRIBE_FALLBACK_MODEL and OPENAI_TRANSCRIBE_FALLBACK_MODEL not in models:
+        models.append(OPENAI_TRANSCRIBE_FALLBACK_MODEL)
+
+    errors = []
+    for model in models:
+        try:
+            text = transcribe_audio_with_openai_model(file_path, model)
+        except Exception as e:
+            print(f"Error OpenAI transcripcion con {model}:", repr(e))
+            errors.append(f"{model}: {e}")
+            continue
+
+        if text:
+            if model != OPENAI_TRANSCRIBE_MODEL:
+                print(f"Transcripcion recuperada con fallback {model}.")
+            return text
+
+        print(f"OpenAI devolvio transcripcion vacia con {model}.")
+
+    if errors:
         raise HTTPException(
             status_code=502,
-            detail=f"OpenAI no pudo transcribir el audio: {e}",
-        ) from e
+            detail="OpenAI no pudo transcribir el audio: " + " | ".join(errors),
+        )
+
+    return ""
 
 
 def transcribe_audio_with_local_whisper(file_path: str) -> str:
@@ -2488,6 +2515,8 @@ async def voice_intent(
         "fase_1_audio_guardado": {
             "filename": fase_1["filename"],
             "content_type": fase_1["content_type"],
+            "content_type_normalized": fase_1["content_type_normalized"],
+            "content_size_bytes": fase_1["content_size_bytes"],
             "stored": bool(audio_path) if context else True,
             "audio_expires_at": audio_expires_at,
         },
