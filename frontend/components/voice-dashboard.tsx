@@ -40,7 +40,7 @@ type DebugLogEntry = {
   details?: string;
 };
 
-const SILENT_AUDIO_MIN_BYTES = 4000;
+const SILENT_AUDIO_MIN_BYTES = 1500;
 const SILENT_AUDIO_PEAK_THRESHOLD = 0.03;
 
 type DetailDashboardConfig = {
