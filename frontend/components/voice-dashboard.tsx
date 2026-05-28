@@ -40,6 +40,9 @@ type DebugLogEntry = {
   details?: string;
 };
 
+const SILENT_AUDIO_MIN_BYTES = 4000;
+const SILENT_AUDIO_PEAK_THRESHOLD = 0.03;
+
 type DetailDashboardConfig = {
   id: DeviceDetailId;
   eyebrow: string;
@@ -434,17 +437,24 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
           audio_samples: levelStats.samples,
         });
 
-        if (levelStats.samples > 0 && levelStats.peak < 0.03) {
-          appendDebugLog("warning", "El microfono parece estar capturando muy bajo", {
+        const looksSilent =
+          blob.size < SILENT_AUDIO_MIN_BYTES ||
+          (levelStats.samples > 0 && levelStats.peak < SILENT_AUDIO_PEAK_THRESHOLD);
+
+        if (looksSilent) {
+          const message =
+            "El navegador no capto voz util. Revisa que el microfono correcto este seleccionado, que no este silenciado y habla cerca del equipo.";
+
+          setConnection("error");
+          setErrorText(message);
+          setStatusText("No se envio el audio porque parece silencio o volumen demasiado bajo.");
+          appendDebugLog("warning", "Audio bloqueado antes de enviar", {
+            reason: "silencio_o_volumen_bajo",
+            min_size_required: formatBytes(SILENT_AUDIO_MIN_BYTES),
+            actual_size: formatBytes(blob.size),
             peak_level: levelStats.peakLabel,
             average_level: levelStats.averageLabel,
           });
-        }
-
-        if (blob.size === 0) {
-          setConnection("error");
-          setErrorText("La grabacion no produjo audio. Intenta nuevamente.");
-          setStatusText("No se detecto audio para enviar.");
           return;
         }
 
