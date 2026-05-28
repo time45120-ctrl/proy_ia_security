@@ -239,5 +239,31 @@ class HttpPollingDeviceTests(unittest.TestCase):
 
 
 
+    def test_led_command_without_space_targets_latest_esp32(self):
+        pairing, claimed = self.pair_esp32("ESP32 cocina")
+        plan = api.build_voice_intent_plan(
+            "prende el led",
+            {
+                "intencion": "control_luces",
+                "espacio": "desconocido",
+                "accion": "ON",
+            },
+        )
+
+        self.assertTrue(plan["can_execute"])
+        self.assertEqual(plan["module"], "lights")
+        self.assertEqual(plan["espacio"], "cocina")
+        self.assertEqual(plan["delivery_preview"]["device_id"], pairing["device_id"])
+        self.assertEqual(plan["delivery_preview"]["action"], "turn_on")
+
+    def test_rule_parser_treats_led_as_light_control(self):
+        parsed = api.fallback_rule_parser("prende el led")
+
+        self.assertEqual(parsed["intencion"], "control_luces")
+        self.assertEqual(parsed["accion"], "ON")
+        self.assertEqual(parsed["espacio"], "desconocido")
+
+
+
 if __name__ == "__main__":
     unittest.main()

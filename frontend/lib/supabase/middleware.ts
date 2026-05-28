@@ -20,13 +20,21 @@ export async function updateSession(request: NextRequest) {
     },
   });
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-  if (!user && request.nextUrl.pathname.startsWith("/desarrollo")) {
-    const url = createPublicRedirectUrl(request, "/welcome");
-    return NextResponse.redirect(url);
+    if (!user && request.nextUrl.pathname.startsWith("/desarrollo")) {
+      const url = createPublicRedirectUrl(request, "/welcome");
+      return NextResponse.redirect(url);
+    }
+  } catch {
+    if (request.nextUrl.pathname.startsWith("/desarrollo")) {
+      const url = createPublicRedirectUrl(request, "/welcome");
+      url.searchParams.set("auth_error", "session");
+      return NextResponse.redirect(url);
+    }
   }
 
   return response;

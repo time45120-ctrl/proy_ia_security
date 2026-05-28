@@ -1,6 +1,6 @@
 # AGENTS.md - Memoria compacta de Codex
 
-Ultima revision: 2026-05-25.
+Ultima revision: 2026-05-28.
 
 ## Contexto rapido
 
@@ -16,14 +16,20 @@ No recrear la copia legacy anidada `proy_ia_security/`.
 
 ## Estado operativo actual
 
-- El usuario esta validando primero en entorno local. No desplegar, hacer
-  commits ni `git push` hacia produccion hasta que lo autorice expresamente.
+- El usuario esta validando en produccion y local segun el caso. No desplegar,
+  hacer commits ni `git push` sin autorizacion explicita del usuario.
 - Frontend local de prueba observado: `http://localhost:3001`.
 - Backend local de prueba debe correr en `http://localhost:8000`; para el
   ESP32 fisico debe anunciar una URL LAN accesible, no `localhost`.
-- El flujo ESP32 nuevo esta implementado localmente, pero el backend publico
-  consultado el 2026-05-25 todavia respondia el contrato anterior con
-  `esp32_portal_url`; no asumir que produccion ya incluye estos cambios.
+- El flujo ESP32 por HTTP(S) polling ya esta publicado en backend AWS. El
+  backend operativo conocido es `b.17`.
+- El frontend operativo conocido es `f.37`; Hostinger debe mostrar
+  `AFCR_FRONTEND_BUILD=f.37` y `AFCR_FRONTEND_MODE=next-server`.
+- OpenAI esta funcionando: se probo transcripcion con audio sintetico
+  "prende el LED". El modelo principal es `gpt-4o-mini-transcribe` y el
+  fallback remoto es `whisper-1`.
+- El problema de transcripcion falsa observado el 2026-05-28 fue microfono
+  desactivado o capturando silencio, no fallo de la API de OpenAI.
 - Supabase MCP esta enlazado al proyecto `proy_ia_security`, referencia
   `omkbowrspgbuwpifksfk`. El 2026-05-25 se aplico la migracion
   `initial_platform` con Auth multiempresa, RLS, dispositivos, comandos,
@@ -39,13 +45,13 @@ Hay repos Git separados. Usar el repo correcto para commits y push:
 - Frontend: `/home/abraham/proy_ia_security/frontend`
   - Remoto: `time45120-ctrl/proy_ia_frontend`
   - Rama: `main`
-  - Ultimo cambio operativo conocido: `f1.19`
+  - Ultimo cambio operativo conocido: `f.37`
 - Backend: `/home/abraham/proy_ia_security/backend`
   - Remoto: `time45120-ctrl/proy_ia_backend`
   - Rama: `main`
-  - Ultimo cambio operativo conocido: `b1.6`
-  - Automatizacion AWS GitHub Actions + SSM preparada localmente; pendiente
-    configurar EC2/IAM y autorizacion explicita antes del primer `git push`.
+  - Ultimo cambio operativo conocido: `b.17`
+  - Automatizacion AWS GitHub Actions + SSM activa para despliegue autorizado
+    desde `main`.
 
 Para cambios reales de frontend:
 
@@ -53,7 +59,7 @@ Para cambios reales de frontend:
 cd /home/abraham/proy_ia_security/frontend
 npm run build
 git add .
-git commit -m "f1.N"
+git commit -m "f.N"
 git push
 ```
 
@@ -63,7 +69,7 @@ Para cambios reales de backend:
 cd /home/abraham/proy_ia_security/backend
 python3 -c "import ast, pathlib; ast.parse(pathlib.Path('app_api.py').read_text()); print('app_api.py syntax OK')"
 git add app_api.py
-git commit -m "b1.N"
+git commit -m "b.N"
 git push
 ```
 
@@ -152,7 +158,7 @@ para evitar contenido mixto.
 - En los logs correctos debe verse:
 
 ```text
-AFCR_FRONTEND_BUILD=f1.19
+AFCR_FRONTEND_BUILD=f.37
 AFCR_FRONTEND_MODE=next-server
 ```
 
@@ -227,8 +233,16 @@ El dashboard de voz en `frontend/components/voice-dashboard.tsx`:
   visibles son de prueba.
 - El campo JSON toma primero `respuesta_json_dispositivo`, luego
   `intencion_json`.
+- Incluye una tarjeta `Logs de prueba` con eventos de `/ping`, permisos de
+  microfono, MIME, tamano de audio, nivel de volumen (`peak_level` y
+  `average_level`), respuesta del backend y estado de transcripcion.
+- El frontend bloquea audio silencioso o demasiado pequeno antes de enviarlo:
+  `SILENT_AUDIO_MIN_BYTES = 1500` y umbral de pico `0.03`.
 - Al pulsar `Confirmar ejecucion`, un ESP32 real recibe una orden en cola HTTP;
   el dashboard sigue su ACK hasta mostrar ejecucion, fallo o expiracion.
+- Comandos cortos como "prende el LED" deben habilitar confirmacion si existe
+  un ESP32 enlazado. Si no se dijo ambiente, el backend usa el ESP32 reclamado
+  mas reciente y su `assigned_space`.
 - Luces legacy conservan MQTT; camaras, puertas y drones son planes o acciones
   simuladas en UI.
 
@@ -298,10 +312,12 @@ PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "https://api.afcrseguridad.com")
 AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").strip().lower()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 OPENAI_TRANSCRIBE_MODEL = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
+OPENAI_TRANSCRIBE_FALLBACK_MODEL = os.getenv("OPENAI_TRANSCRIBE_FALLBACK_MODEL", "whisper-1")
 OPENAI_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "700"))
 AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.45"))
 AI_RESPONSE_STYLE = os.getenv("AI_RESPONSE_STYLE", "natural, claro, cercano y con criterio tecnico")
 VOICE_PLAN_TTL_SECONDS = int(os.getenv("VOICE_PLAN_TTL_SECONDS", "300"))
+VOICE_AUDIO_MIN_BYTES = int(os.getenv("VOICE_AUDIO_MIN_BYTES", "1500"))
 DEVICE_COMMAND_TTL_SECONDS = int(os.getenv("DEVICE_COMMAND_TTL_SECONDS", "300"))
 ```
 
@@ -534,6 +550,9 @@ curl http://localhost:8000/ping
 
 ## Reglas para futuras sesiones
 
+- Skill de mantenimiento: `.agents/skills/actualizador-agents-md/` contiene
+  instrucciones y un script de inventario no destructivo para actualizar estos
+  tres `AGENTS.md` cuando el usuario lo pida.
 - No tocar `.env.local`, claves, tokens ni secretos.
 - No tocar `backend/.env` salvo peticion explicita del usuario.
 - Mantener `api.afcrseguridad.com` como API publica salvo cambio explicito.

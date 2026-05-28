@@ -1,6 +1,6 @@
 # AGENTS.md - Frontend
 
-Ultima revision: 2026-05-25.
+Ultima revision: 2026-05-28.
 
 ## Contexto
 
@@ -18,17 +18,17 @@ https://github.com/time45120-ctrl/proy_ia_frontend.git
 
 Rama activa: `main`.
 
-Ultimo commit operativo conocido: `f1.19`.
+Ultimo commit operativo conocido: `f.37`.
 
 ## Estado De Trabajo Actual
 
-- Se esta probando localmente antes de cualquier despliegue. No hacer commit,
-  push ni publicar en Hostinger hasta autorizacion explicita del usuario.
+- Se prueba en produccion y local segun el caso. No hacer commit, push ni
+  publicar en Hostinger sin autorizacion explicita del usuario.
 - URL local observada para el frontend: `http://localhost:3001`.
 - `frontend/.env.local` apunta a `http://localhost:8000` para la API local; no
   modificar ese archivo sin solicitud explicita.
-- La API publica aun no refleja necesariamente el flujo ESP32 directo que esta
-  en el worktree local.
+- La API publica ya refleja el flujo ESP32 directo y el backend operativo
+  conocido es `b.17`.
 
 ## Despliegue Hostinger
 
@@ -69,7 +69,7 @@ La configuracion final que funciono localmente y se dejo para Hostinger:
   - Usa `process.env.PORT || 3000`.
   - Log esperado al arrancar: `AFCR_FRONTEND_READY=http://0.0.0.0:<port>`.
 - `scripts/print-deploy-info.js`
-  - Imprime `AFCR_FRONTEND_BUILD=f.32`.
+  - Imprime `AFCR_FRONTEND_BUILD=f.37`.
   - Imprime `AFCR_FRONTEND_MODE=next-server`.
 
 Lecciones aprendidas:
@@ -137,6 +137,11 @@ El cliente normaliza URLs para evitar:
 
 ## Tarjeta de IA
 
+En `components/voice-dashboard.tsx`, la tarjeta de IA incluye tambien una card
+`Logs de prueba` para diagnosticar voz, backend y OpenAI: `/ping`, permiso de
+microfono, MIME, tamano del audio, `peak_level`, `average_level`, transcripcion
+y respuesta del backend.
+
 En `components/voice-dashboard.tsx`, la tarjeta de IA debe mostrar:
 
 1. `Respuesta IA para el usuario`
@@ -163,6 +168,8 @@ Reglas:
 
 - Verifica backend con `GET /ping`.
 - Graba con `MediaRecorder` y `getUserMedia`.
+- Usa `echoCancellation`, `noiseSuppression` y `autoGainControl`; mide volumen
+  con Web Audio y bloquea audio silencioso o menor a `SILENT_AUDIO_MIN_BYTES = 1500`.
 - Envia audio a `POST /voice-intent`.
 - El alta email/password dirige el correo de confirmacion a `/auth/confirm`;
   registrar esa URL para local y produccion en las Redirect URLs de Supabase.
@@ -171,6 +178,8 @@ Reglas:
 - Los audios nuevos quedan en el bucket privado `voice-audio` y el dashboard
   solo presenta metadatos del historial, no reproduccion publica.
 - Muestra preview/plan.
+- Si el usuario dice `prende el LED`, el backend `b.17` puede devolver un plan
+  ejecutable usando el ESP32 enlazado mas reciente cuando no hay ambiente explicito.
 - Ejecuta hardware solo tras `POST /voice-intent/confirm`.
 - Los ESP32 enlazados reciben comandos por polling HTTP(S) y el dashboard sigue
   su ACK mediante `GET /device/commands/{command_id}/status`.
@@ -185,6 +194,8 @@ Reglas:
   `https://api.afcrseguridad.com`.
 - Luces legacy pueden ejecutar MQTT real.
 - Camaras, puertas y drones son visuales/plan hasta conectar hardware real.
+- El problema de transcripcion falsa del 2026-05-28 fue microfono desactivado;
+  si vuelve a pasar revisar primero la card de logs antes de cambiar OpenAI.
 
 ## Dispositivos demo
 
@@ -225,7 +236,7 @@ cd /home/abraham/proy_ia_security/frontend
 git status --short
 npm run build
 git add .
-git commit -m "f1.N"
+git commit -m "f.N"
 git push
 ```
 
@@ -248,7 +259,7 @@ curl -I https://afcrseguridad.com
 
 Si Hostinger falla:
 
-- Confirmar commit en log: `AFCR_FRONTEND_BUILD=f1.N`.
+- Confirmar commit en log: `AFCR_FRONTEND_BUILD=f.N`.
 - Confirmar modo: `AFCR_FRONTEND_MODE=next-server`.
 - Confirmar que no aparece `AFCR_FRONTEND_EXPORT_MISSING`.
 - Confirmar que el start usa `node server.js`.

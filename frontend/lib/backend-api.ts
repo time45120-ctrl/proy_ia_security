@@ -74,6 +74,8 @@ export type VoiceIntentResponse = {
   fase_1_audio_guardado?: {
     filename?: string;
     content_type?: string;
+    content_type_normalized?: string;
+    content_size_bytes?: number;
     stored?: boolean;
     audio_expires_at?: string | null;
   };
