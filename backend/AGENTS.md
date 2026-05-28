@@ -1,6 +1,6 @@
 # AGENTS.md - Backend
 
-Ultima revision: 2026-05-25.
+Ultima revision: 2026-05-28.
 
 ## Contexto
 
@@ -18,7 +18,7 @@ https://github.com/time45120-ctrl/proy_ia_backend.git
 
 Rama activa: `main`.
 
-Ultimo commit operativo conocido: `b1.6`.
+Ultimo commit operativo conocido: `b.17`.
 
 Backend publico:
 
@@ -34,16 +34,16 @@ IP AWS:
 
 ## Estado De Trabajo Actual
 
-- El usuario esta validando en local antes de desplegar. No hacer commit, push
-  ni actualizar AWS hasta autorizacion explicita.
+- El usuario valida en produccion y local segun el caso. No hacer commit, push
+  ni actualizar AWS sin autorizacion explicita.
 - Produccion objetivo: frontend Hostinger `https://afcrseguridad.com`,
   backend AWS `https://api.afcrseguridad.com` (`3.132.192.3`) y Supabase
   `omkbowrspgbuwpifksfk`.
 - El 2026-05-25 se aplico por MCP la migracion `initial_platform`: RLS
   multiempresa, dispositivos, comandos, voz, bucket privado y purga diaria.
   SQLite permanece solo como fallback cuando Supabase no esta configurado.
-- La API publica observada el 2026-05-25 aun devolvia `esp32_portal_url`; el
-  flujo directo por Arduino IDE permanece local hasta un despliegue posterior.
+- La API publica ya expone el flujo ESP32 directo por Arduino IDE, claim,
+  polling HTTP(S), ACK y confirmacion. No reintroducir `esp32_portal_url`.
 
 ## Archivo principal
 
@@ -57,12 +57,16 @@ Responsabilidades:
 - Carga `backend/.env` si `python-dotenv` esta disponible.
 - Configura CORS para frontend publico y desarrollo local.
 - Inicializa OpenAI si `AI_PROVIDER=openai`.
+- Transcribe con `gpt-4o-mini-transcribe` y reintenta con `whisper-1` si
+  el modelo principal devuelve texto vacio.
 - Inicializa Whisper local solo como respaldo cuando no se usa OpenAI.
 - Inicializa MQTT con `paho-mqtt`.
 - Gestiona dispositivos y comandos en Supabase bajo RLS; mantiene SQLite como
   fallback para pruebas locales sin variables Supabase.
 - Recibe audio, lo guarda en Storage privado si Supabase esta activo, transcribe
   e interpreta; el audio vence a los 30 dias.
+- Rechaza audios demasiado pequenos con `VOICE_AUDIO_MIN_BYTES = 1500` para
+  evitar transcripciones falsas por silencio o microfono desactivado.
 - Genera plan pendiente de confirmacion.
 - Encola comandos HTTP(S) para ESP32 reales solo despues de confirmacion.
 - Conserva MQTT para luces legacy.
@@ -156,6 +160,10 @@ dispositivo tipo `ESP32`, `/voice-intent/confirm` encola el comando y la
 ejecucion real se confirma cuando el firmware envia ACK. Los dispositivos
 legacy de luces mantienen MQTT al confirmar.
 
+Comandos cortos como `prende el LED` son ejecutables aunque no incluyan
+ambiente explicito si hay un ESP32 reclamado; el backend usa el ESP32 mas
+reciente y su `assigned_space`.
+
 ## Variables relevantes
 
 ```python
@@ -168,6 +176,8 @@ PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "https://api.afcrseguridad.com")
 AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").strip().lower()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 OPENAI_TRANSCRIBE_MODEL = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
+OPENAI_TRANSCRIBE_FALLBACK_MODEL = os.getenv("OPENAI_TRANSCRIBE_FALLBACK_MODEL", "whisper-1")
+VOICE_AUDIO_MIN_BYTES = int(os.getenv("VOICE_AUDIO_MIN_BYTES", "1500"))
 OPENAI_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "700"))
 AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.45"))
 AI_RESPONSE_STYLE = os.getenv("AI_RESPONSE_STYLE", "natural, claro, cercano y con criterio tecnico")
@@ -252,8 +262,8 @@ Acciones validas:
 - `scripts/deploy-ec2.sh` exige `.env` privado ya instalado en EC2, instala las
   dependencias de `requirements.txt` como `ubuntu`, valida, reinicia el
   servicio y prueba `/ping`.
-- No hacer el primer `git push` hasta que el usuario autorice el despliegue y
-  la instancia AWS este preparada.
+- Los push a `main` despliegan el backend cuando la automatizacion AWS esta
+  disponible; hacerlos solo con autorizacion explicita del usuario.
 
 ## Comandos
 
@@ -299,7 +309,7 @@ cd /home/abraham/proy_ia_security/backend
 python3 -c "import ast, pathlib; ast.parse(pathlib.Path('app_api.py').read_text()); print('app_api.py syntax OK')"
 git status --short
 git add app_api.py
-git commit -m "b1.N"
+git commit -m "b.N"
 git push
 ```
 
