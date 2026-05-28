@@ -687,6 +687,37 @@ def find_light_device_for_space(
     return device_row_to_dict(rows[0])
 
 
+def find_latest_http_esp32(
+    organization_id: str | None = None,
+    access_token: str | None = None,
+) -> dict | None:
+    if using_supabase():
+        if not organization_id or not access_token:
+            return None
+        query = (
+            f"devices?select={SUPABASE_DEVICE_SAFE_COLUMNS}&claimed_at=not.is.null&type=eq.ESP32"
+            f"&organization_id=eq.{urllib.parse.quote(organization_id)}"
+            "&order=claimed_at.desc&limit=1"
+        )
+        rows = supabase_rest("GET", query, access_token=access_token)
+        if isinstance(rows, list) and rows:
+            return device_row_to_dict(rows[0])
+        return None
+
+    with get_db_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT * FROM devices
+            WHERE claimed_at IS NOT NULL
+              AND lower(type) = 'esp32'
+            ORDER BY claimed_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+
+    return device_row_to_dict(row) if row else None
+
+
 def find_http_esp32_for_space(
     espacio: str,
     organization_id: str | None = None,
@@ -1705,7 +1736,8 @@ def fallback_rule_parser(texto_transcrito: str) -> dict:
     ):
         espacio = "cuarto_principal"
 
-    intencion = "control_luces" if accion in {"ON", "OFF"} and espacio != "desconocido" else "otra"
+    mentions_light = any(x in t for x in ["luz", "luces", "led", "foco", "lampara", "lámpara"])
+    intencion = "control_luces" if accion in {"ON", "OFF"} and (espacio != "desconocido" or mentions_light) else "otra"
     if intencion == "control_luces":
         accion_texto = "encender" if accion == "ON" else "apagar"
         respuesta_usuario = (
@@ -2156,6 +2188,8 @@ def infer_command_module(texto_transcrito: str, ia_json: dict) -> str:
         return "lights"
 
     text = normalize_text(texto_transcrito)
+    if any(word in text for word in ["luz", "luces", "led", "foco", "lampara", "lámpara"]):
+        return "lights"
 
     if any(word in text for word in ["camara", "camaras", "cámara", "cámaras", "video"]):
         return "cameras"
@@ -2233,10 +2267,21 @@ def build_http_delivery_preview(
 ) -> dict | None:
     espacio = normalize_espacio(espacio)
     accion = accion.upper().strip()
-    device = find_http_esp32_for_space(espacio, organization_id, access_token)
 
-    if device is None or accion not in {"ON", "OFF"}:
+    if accion not in {"ON", "OFF"}:
         return None
+
+    device = find_http_esp32_for_space(espacio, organization_id, access_token)
+    if device is None and espacio == "desconocido":
+        device = find_latest_http_esp32(organization_id, access_token)
+        if device is not None:
+            espacio = normalize_espacio(str(device.get("assigned_space") or infer_device_space(device)))
+
+    if device is None:
+        return None
+
+    if espacio not in ESPACIOS_VALIDOS:
+        espacio = normalize_espacio(str(device.get("assigned_space") or infer_device_space(device)))
 
     return {
         "transport": "http_polling",
@@ -2264,7 +2309,7 @@ def build_voice_intent_plan(
     request_id = secrets.token_urlsafe(16)
     module = infer_command_module(texto_transcrito, ia_json)
     action = infer_module_action(module, texto_transcrito, ia_json)
-    espacio = ia_json.get("espacio", "desconocido")
+    espacio = normalize_espacio(str(ia_json.get("espacio", "desconocido")))
     mqtt_preview = None
     delivery_preview = None
     can_execute = False
@@ -2274,6 +2319,7 @@ def build_voice_intent_plan(
             espacio, action, organization_id, access_token
         )
         if delivery_preview is not None:
+            espacio = delivery_preview.get("espacio", espacio)
             can_execute = True
         else:
             payload, topic = build_light_mqtt_preview(
