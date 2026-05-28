@@ -26,7 +26,7 @@ function DevelopmentShell({ children }: { children: ReactNode }) {
     hasLaboratoryAccess,
     navigateToView,
   } = useDevelopmentWorkspace();
-  const activeView: DevelopmentView = pathname.includes("/dashboard")
+  const activeView: DevelopmentView = pathname?.includes("/dashboard")
     ? "dashboard"
     : "sync";
 
