@@ -445,6 +445,25 @@ def authenticated_context(authorization: str | None) -> dict:
     }
 
 
+def normalize_audio_content_type(content_type: str) -> str:
+    return (content_type or "").split(";", 1)[0].strip().lower()
+
+
+def audio_suffix_for_content_type(content_type: str) -> str | None:
+    normalized = normalize_audio_content_type(content_type)
+    return {
+        "audio/webm": ".webm",
+        "audio/mp4": ".mp4",
+        "audio/mpeg": ".mp3",
+        "audio/mp3": ".mp3",
+        "audio/wav": ".wav",
+        "audio/x-wav": ".wav",
+        "audio/ogg": ".ogg",
+        "audio/aac": ".aac",
+        "audio/flac": ".flac",
+    }.get(normalized)
+
+
 def upload_private_audio(
     context: dict,
     request_id: str,
@@ -454,7 +473,7 @@ def upload_private_audio(
 ) -> tuple[str, str]:
     object_path = f"{context['user_id']}/{request_id}/{filename}"
     quoted_path = urllib.parse.quote(object_path, safe="/")
-    storage_content_type = (content_type or "application/octet-stream").split(";", 1)[0].strip()
+    storage_content_type = normalize_audio_content_type(content_type) or "application/octet-stream"
     supabase_http_request(
         "POST",
         f"/storage/v1/object/{SUPABASE_AUDIO_BUCKET}/{quoted_path}",
@@ -1403,9 +1422,11 @@ async def fase_1_recibir_y_guardar_audio(audio: UploadFile):
     content_type = audio.content_type or ""
 
     if using_supabase():
-        suffix = Path(audio.filename or "audio.webm").suffix or ".webm"
+        inferred_suffix = audio_suffix_for_content_type(content_type)
+        original_path = Path(audio.filename or f"audio{inferred_suffix or '.webm'}")
+        suffix = inferred_suffix or original_path.suffix or ".webm"
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        filename = f"{timestamp}_{Path(audio.filename or 'audio.webm').name}"
+        filename = f"{timestamp}_{original_path.stem}{suffix}"
         temporary = tempfile.NamedTemporaryFile(prefix="afcr_voice_", suffix=suffix, delete=False)
         temporary.write(content)
         temporary.close()
@@ -1432,7 +1453,7 @@ def is_audio_file(content_type: str, filename: str = "") -> bool:
     Algunos celulares pueden enviar content_type vacío o application/octet-stream.
     Por eso también validamos por extensión.
     """
-    if content_type.startswith("audio/"):
+    if normalize_audio_content_type(content_type).startswith("audio/"):
         return True
 
     filename = filename.lower()
@@ -1455,7 +1476,10 @@ def transcribe_audio_with_openai(file_path: str) -> str:
     Transcribe un archivo de audio usando OpenAI.
     """
     if openai_client is None:
-        raise RuntimeError("OpenAI no está inicializado. Revisa OPENAI_API_KEY.")
+        raise HTTPException(
+            status_code=503,
+            detail="OpenAI no esta inicializado. Revisa OPENAI_API_KEY en el backend.",
+        )
 
     try:
         with open(file_path, "rb") as audio_file:
@@ -1468,8 +1492,11 @@ def transcribe_audio_with_openai(file_path: str) -> str:
         return getattr(result, "text", "").strip()
 
     except Exception as e:
-        print("Error OpenAI transcripcion:", e)
-        return ""
+        print("Error OpenAI transcripcion:", repr(e))
+        raise HTTPException(
+            status_code=502,
+            detail=f"OpenAI no pudo transcribir el audio: {e}",
+        ) from e
 
 
 def transcribe_audio_with_local_whisper(file_path: str) -> str:
