@@ -1,3 +1,4 @@
+import json
 import os
 from datetime import timedelta
 from pathlib import Path
@@ -119,7 +120,7 @@ class HttpPollingDeviceTests(unittest.TestCase):
         pairing, claimed = self.pair_esp32()
         delivery = api.send_device_command(
             pairing["device_id"],
-            api.DeviceCommandRequest(accion="ON"),
+            api.DeviceCommandRequest(accion="ON", espacio="cocina"),
         )["delivery"]
 
         with api.get_db_connection() as conn:
@@ -136,10 +137,23 @@ class HttpPollingDeviceTests(unittest.TestCase):
         status = api.get_device_command_status(delivery["command_id"])
         self.assertEqual(status["delivery"]["status"], "expired")
 
-    def test_dormitorio_alias_targets_cuarto_principal_esp32(self):
-        self.pair_esp32("Luz dormitorio principal")
+    def test_dormitorio_alias_targets_multiroom_esp32(self):
+        self.pair_esp32("ESP32 multiambiente")
         plan = self.light_plan("cuarto_principal")
+        self.assertEqual(plan["espacio"], "dormitorio")
         self.assertEqual(plan["delivery_preview"]["transport"], "http_polling")
+
+    def test_single_esp32_controls_all_configured_rooms(self):
+        pairing, _claimed = self.pair_esp32("ESP32 multiambiente")
+
+        for room in ["sala", "cocina", "comedor", "dormitorio"]:
+            with self.subTest(room=room):
+                plan = self.light_plan(room)
+
+                self.assertTrue(plan["can_execute"])
+                self.assertEqual(plan["espacio"], room)
+                self.assertEqual(plan["delivery_preview"]["device_id"], pairing["device_id"])
+                self.assertEqual(plan["delivery_preview"]["espacio"], room)
 
     def test_legacy_light_keeps_mqtt_delivery(self):
         pairing = api.create_pairing_token(
@@ -153,6 +167,24 @@ class HttpPollingDeviceTests(unittest.TestCase):
         )
         self.assertTrue(confirmed["executed"])
         self.assertEqual(len(api.mqtt_client.published), 1)
+
+    def test_legacy_cuarto_principal_light_matches_dormitorio_alias(self):
+        pairing = api.create_pairing_token(
+            api.PairingTokenRequest(name="Luz cuarto principal", type="Luces", model="ESP32")
+        )
+        api.claim_device(api.ClaimDeviceRequest(token=pairing["pairing_token"]))
+
+        plan = self.light_plan("dormitorio")
+        confirmed = api.confirm_voice_intent(
+            api.VoiceIntentConfirmRequest(request_id=plan["request_id"])
+        )
+
+        self.assertTrue(confirmed["executed"])
+        topic, payload_raw = api.mqtt_client.published[0]
+        payload = json.loads(payload_raw)
+        self.assertIn(pairing["device_id"], topic)
+        self.assertEqual(payload["device_id"], pairing["device_id"])
+        self.assertEqual(payload["espacio"], "dormitorio")
 
     def test_modern_supabase_secret_key_is_not_sent_as_bearer_token(self):
         previous = (
@@ -239,8 +271,8 @@ class HttpPollingDeviceTests(unittest.TestCase):
 
 
 
-    def test_led_command_without_space_targets_latest_esp32(self):
-        pairing, claimed = self.pair_esp32("ESP32 cocina")
+    def test_led_command_without_space_asks_for_room(self):
+        self.pair_esp32("ESP32 multiambiente")
         plan = api.build_voice_intent_plan(
             "prende el led",
             {
@@ -250,11 +282,12 @@ class HttpPollingDeviceTests(unittest.TestCase):
             },
         )
 
-        self.assertTrue(plan["can_execute"])
+        self.assertFalse(plan["can_execute"])
         self.assertEqual(plan["module"], "lights")
-        self.assertEqual(plan["espacio"], "cocina")
-        self.assertEqual(plan["delivery_preview"]["device_id"], pairing["device_id"])
-        self.assertEqual(plan["delivery_preview"]["action"], "turn_on")
+        self.assertEqual(plan["espacio"], "desconocido")
+        self.assertIsNone(plan["delivery_preview"])
+        self.assertIn("sala", plan["respuesta"])
+        self.assertIn("dormitorio", plan["respuesta"])
 
     def test_rule_parser_treats_led_as_light_control(self):
         parsed = api.fallback_rule_parser("prende el led")
