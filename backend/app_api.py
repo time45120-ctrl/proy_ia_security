@@ -454,12 +454,16 @@ def upload_private_audio(
 ) -> tuple[str, str]:
     object_path = f"{context['user_id']}/{request_id}/{filename}"
     quoted_path = urllib.parse.quote(object_path, safe="/")
+    storage_content_type = (content_type or "application/octet-stream").split(";", 1)[0].strip()
     supabase_http_request(
         "POST",
         f"/storage/v1/object/{SUPABASE_AUDIO_BUCKET}/{quoted_path}",
         access_token=context["token"],
         payload=content,
-        headers={"Content-Type": content_type or "application/octet-stream", "x-upsert": "false"},
+        headers={
+            "Content-Type": storage_content_type or "application/octet-stream",
+            "x-upsert": "false",
+        },
     )
     expires_at = to_iso(utc_now() + timedelta(days=VOICE_AUDIO_RETENTION_DAYS))
     return object_path, expires_at
