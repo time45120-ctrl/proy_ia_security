@@ -109,7 +109,8 @@ SUPABASE_DEVICE_SAFE_COLUMNS = (
 )
 
 # --- Transcripcion ---
-OPENAI_TRANSCRIBE_MODEL = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
+OPENAI_TRANSCRIBE_MODEL = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe").strip()
+OPENAI_TRANSCRIBE_FALLBACK_MODEL = os.getenv("OPENAI_TRANSCRIBE_FALLBACK_MODEL", "whisper-1").strip()
 WHISPER_MODEL_NAME = "tiny"
 
 # --- CORS ---
@@ -445,6 +446,25 @@ def authenticated_context(authorization: str | None) -> dict:
     }
 
 
+def normalize_audio_content_type(content_type: str) -> str:
+    return (content_type or "").split(";", 1)[0].strip().lower()
+
+
+def audio_suffix_for_content_type(content_type: str) -> str | None:
+    normalized = normalize_audio_content_type(content_type)
+    return {
+        "audio/webm": ".webm",
+        "audio/mp4": ".mp4",
+        "audio/mpeg": ".mp3",
+        "audio/mp3": ".mp3",
+        "audio/wav": ".wav",
+        "audio/x-wav": ".wav",
+        "audio/ogg": ".ogg",
+        "audio/aac": ".aac",
+        "audio/flac": ".flac",
+    }.get(normalized)
+
+
 def upload_private_audio(
     context: dict,
     request_id: str,
@@ -454,12 +474,16 @@ def upload_private_audio(
 ) -> tuple[str, str]:
     object_path = f"{context['user_id']}/{request_id}/{filename}"
     quoted_path = urllib.parse.quote(object_path, safe="/")
+    storage_content_type = normalize_audio_content_type(content_type) or "application/octet-stream"
     supabase_http_request(
         "POST",
         f"/storage/v1/object/{SUPABASE_AUDIO_BUCKET}/{quoted_path}",
         access_token=context["token"],
         payload=content,
-        headers={"Content-Type": content_type or "application/octet-stream", "x-upsert": "false"},
+        headers={
+            "Content-Type": storage_content_type or "application/octet-stream",
+            "x-upsert": "false",
+        },
     )
     expires_at = to_iso(utc_now() + timedelta(days=VOICE_AUDIO_RETENTION_DAYS))
     return object_path, expires_at
@@ -884,6 +908,7 @@ def root():
         "ai_config": {
             "openai_model": OPENAI_MODEL,
             "openai_transcribe_model": OPENAI_TRANSCRIBE_MODEL,
+            "openai_transcribe_fallback_model": OPENAI_TRANSCRIBE_FALLBACK_MODEL,
             "max_output_tokens": OPENAI_MAX_OUTPUT_TOKENS,
             "temperature": AI_TEMPERATURE,
             "response_style": AI_RESPONSE_STYLE,
@@ -1399,9 +1424,11 @@ async def fase_1_recibir_y_guardar_audio(audio: UploadFile):
     content_type = audio.content_type or ""
 
     if using_supabase():
-        suffix = Path(audio.filename or "audio.webm").suffix or ".webm"
+        inferred_suffix = audio_suffix_for_content_type(content_type)
+        original_path = Path(audio.filename or f"audio{inferred_suffix or '.webm'}")
+        suffix = inferred_suffix or original_path.suffix or ".webm"
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        filename = f"{timestamp}_{Path(audio.filename or 'audio.webm').name}"
+        filename = f"{timestamp}_{original_path.stem}{suffix}"
         temporary = tempfile.NamedTemporaryFile(prefix="afcr_voice_", suffix=suffix, delete=False)
         temporary.write(content)
         temporary.close()
@@ -1413,6 +1440,8 @@ async def fase_1_recibir_y_guardar_audio(audio: UploadFile):
         "filename": filename,
         "file_path": file_path,
         "content_type": content_type,
+        "content_type_normalized": normalize_audio_content_type(content_type),
+        "content_size_bytes": len(content),
         "content": content,
         "temporary": using_supabase(),
     }
@@ -1428,7 +1457,7 @@ def is_audio_file(content_type: str, filename: str = "") -> bool:
     Algunos celulares pueden enviar content_type vacío o application/octet-stream.
     Por eso también validamos por extensión.
     """
-    if content_type.startswith("audio/"):
+    if normalize_audio_content_type(content_type).startswith("audio/"):
         return True
 
     filename = filename.lower()
@@ -1446,26 +1475,55 @@ def is_audio_file(content_type: str, filename: str = "") -> bool:
     return filename.endswith(extensiones_audio)
 
 
+def transcribe_audio_with_openai_model(file_path: str, model: str) -> str:
+    if openai_client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="OpenAI no esta inicializado. Revisa OPENAI_API_KEY en el backend.",
+        )
+
+    with open(file_path, "rb") as audio_file:
+        result = openai_client.audio.transcriptions.create(
+            model=model,
+            file=audio_file,
+            language="es",
+        )
+
+    return getattr(result, "text", "").strip()
+
+
 def transcribe_audio_with_openai(file_path: str) -> str:
     """
     Transcribe un archivo de audio usando OpenAI.
+    Si el modelo principal devuelve texto vacio, reintenta con whisper-1.
     """
-    if openai_client is None:
-        raise RuntimeError("OpenAI no está inicializado. Revisa OPENAI_API_KEY.")
+    models = [OPENAI_TRANSCRIBE_MODEL]
+    if OPENAI_TRANSCRIBE_FALLBACK_MODEL and OPENAI_TRANSCRIBE_FALLBACK_MODEL not in models:
+        models.append(OPENAI_TRANSCRIBE_FALLBACK_MODEL)
 
-    try:
-        with open(file_path, "rb") as audio_file:
-            result = openai_client.audio.transcriptions.create(
-                model=OPENAI_TRANSCRIBE_MODEL,
-                file=audio_file,
-                language="es",
-            )
+    errors = []
+    for model in models:
+        try:
+            text = transcribe_audio_with_openai_model(file_path, model)
+        except Exception as e:
+            print(f"Error OpenAI transcripcion con {model}:", repr(e))
+            errors.append(f"{model}: {e}")
+            continue
 
-        return getattr(result, "text", "").strip()
+        if text:
+            if model != OPENAI_TRANSCRIBE_MODEL:
+                print(f"Transcripcion recuperada con fallback {model}.")
+            return text
 
-    except Exception as e:
-        print("Error OpenAI transcripcion:", e)
-        return ""
+        print(f"OpenAI devolvio transcripcion vacia con {model}.")
+
+    if errors:
+        raise HTTPException(
+            status_code=502,
+            detail="OpenAI no pudo transcribir el audio: " + " | ".join(errors),
+        )
+
+    return ""
 
 
 def transcribe_audio_with_local_whisper(file_path: str) -> str:
@@ -2457,6 +2515,8 @@ async def voice_intent(
         "fase_1_audio_guardado": {
             "filename": fase_1["filename"],
             "content_type": fase_1["content_type"],
+            "content_type_normalized": fase_1["content_type_normalized"],
+            "content_size_bytes": fase_1["content_size_bytes"],
             "stored": bool(audio_path) if context else True,
             "audio_expires_at": audio_expires_at,
         },

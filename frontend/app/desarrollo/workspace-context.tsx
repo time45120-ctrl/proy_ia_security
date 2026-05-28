@@ -26,32 +26,8 @@ const developmentRoutes: Record<DevelopmentView, string> = {
   dashboard: "/desarrollo/dashboard",
 };
 
-const demoLinkedDevice: LinkedDeviceRecord = {
-  device_id: "demo-luz-cocina",
-  name: "Luz cocina (demostracion)",
-  type: "Demo",
-  model: "Vista de prueba",
-  status: "demo",
-  status_label: "Demo visual",
-  mqtt_topic: "",
-  transport: "demo",
-  is_demo: true,
-  last_seen: "2026-05-12T00:00:00.000Z",
-  created_at: "2026-05-12T00:00:00.000Z",
-  pairing_expires_at: null,
-  claimed_at: null,
-};
-
 const DevelopmentWorkspaceContext =
   createContext<DevelopmentWorkspaceContextValue | null>(null);
-
-function withDemoLinkedDevice(devices: LinkedDeviceRecord[]) {
-  const withoutDemo = devices.filter(
-    (device) => device.device_id !== demoLinkedDevice.device_id,
-  );
-
-  return [demoLinkedDevice, ...withoutDemo];
-}
 
 export function useDevelopmentWorkspace() {
   const value = useContext(DevelopmentWorkspaceContext);
@@ -71,9 +47,7 @@ export function DevelopmentWorkspaceProvider({
   children: ReactNode;
 }) {
   const router = useRouter();
-  const [linkedDevices, setLinkedDevices] = useState<LinkedDeviceRecord[]>([
-    demoLinkedDevice,
-  ]);
+  const [linkedDevices, setLinkedDevices] = useState<LinkedDeviceRecord[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [dashboardResetSignal, setDashboardResetSignal] = useState(0);
   const [isCheckingAccess, setIsCheckingAccess] = useState(true);
@@ -87,10 +61,10 @@ export function DevelopmentWorkspaceProvider({
   async function refreshDevices() {
     try {
       const payload = await listDevices();
-      setLinkedDevices(withDemoLinkedDevice(payload.devices ?? []));
+      setLinkedDevices(payload.devices ?? []);
     } catch (error) {
       setNotice(getErrorMessage(error));
-      setLinkedDevices((current) => withDemoLinkedDevice(current));
+      setLinkedDevices((current) => current);
     }
   }
 
@@ -98,25 +72,45 @@ export function DevelopmentWorkspaceProvider({
     let isMounted = true;
 
     async function verifyAccess() {
-      const {
-        data: { user },
-      } = await createClient().auth.getUser();
+      try {
+        const {
+          data: { user },
+        } = await createClient().auth.getUser();
 
+        if (!isMounted) {
+          return;
+        }
+        if (!user) {
+          router.replace("/welcome");
+          setIsCheckingAccess(false);
+          return;
+        }
+
+        setHasLaboratoryAccess(true);
+        setIsCheckingAccess(false);
+        void refreshDevices();
+      } catch (error) {
+        if (!isMounted) {
+          return;
+        }
+
+        setNotice(getErrorMessage(error));
+        setHasLaboratoryAccess(false);
+        setIsCheckingAccess(false);
+        router.replace("/welcome");
+      }
+    }
+
+    void verifyAccess().catch((error) => {
       if (!isMounted) {
         return;
       }
-      if (!user) {
-        router.replace("/welcome");
-        setIsCheckingAccess(false);
-        return;
-      }
 
-      setHasLaboratoryAccess(true);
+      setNotice(getErrorMessage(error));
+      setHasLaboratoryAccess(false);
       setIsCheckingAccess(false);
-      void refreshDevices();
-    }
-
-    void verifyAccess();
+      router.replace("/welcome");
+    });
     return () => {
       isMounted = false;
     };
@@ -172,6 +166,14 @@ export function DevelopmentWorkspaceProvider({
 function getErrorMessage(error: unknown) {
   if (error instanceof Error) {
     return error.message;
+  }
+
+  if (typeof Event !== "undefined" && error instanceof Event) {
+    return "No se pudo completar la operacion del navegador. Intentalo nuevamente.";
+  }
+
+  if (typeof error === "string") {
+    return error;
   }
 
   return "Error desconocido";

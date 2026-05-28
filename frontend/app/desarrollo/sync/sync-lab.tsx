@@ -14,7 +14,7 @@ type DeviceType = "Luces" | "Camaras" | "Puertas" | "Drones" | "ESP32";
 type Esp32Space = "cocina" | "sala" | "comedor" | "cuarto_principal";
 
 const deviceTypes: DeviceType[] = ["Luces", "Camaras", "Puertas", "Drones", "ESP32"];
-const deviceModelOptions = ["ESP32"];
+const deviceModelOptions = [{ value: "ESP32", label: "ESP32 GENERICO" }];
 const legacyDeviceNameOptions = [
   "Luz cocina",
   "Luz sala",
@@ -38,7 +38,7 @@ export function SyncLab() {
     openDashboard,
   } = useDevelopmentWorkspace();
   const [deviceType, setDeviceType] = useState<DeviceType>("ESP32");
-  const [deviceModel, setDeviceModel] = useState(deviceModelOptions[0]);
+  const [deviceModel, setDeviceModel] = useState(deviceModelOptions[0].value);
   const [deviceName, setDeviceName] = useState(legacyDeviceNameOptions[0]);
   const [esp32Space, setEsp32Space] = useState<Esp32Space>("cocina");
   const [isCreatingPairing, setIsCreatingPairing] = useState(false);
@@ -55,11 +55,10 @@ export function SyncLab() {
   const noticeRef = useRef<HTMLParagraphElement>(null);
   const pairingGuideRef = useRef<HTMLElement>(null);
   const isEsp32 = deviceType === "ESP32";
-  const selectedDeviceName = isEsp32
-    ? `Luz ${esp32Spaces.find((space) => space.value === esp32Space)?.label.toLowerCase()}`
-    : deviceName;
+  const nextEsp32DeviceName = getNextEsp32DeviceName(linkedDevices);
+  const selectedDeviceName = isEsp32 ? nextEsp32DeviceName : deviceName;
   const pendingCount = linkedDevices.filter(
-    (device) => !device.is_demo && device.status === "pending",
+    (device) => device.status === "pending",
   ).length;
   const canSubmit =
     deviceModel.trim().length > 0 &&
@@ -141,15 +140,15 @@ export function SyncLab() {
     }
   }
 
-  async function copyValue(value: string, label: string) {
-    try {
-      await navigator.clipboard.writeText(value);
+  function copyValue(value: string, label: string) {
+    if (copyTextWithTemporarySelection(value)) {
       setCopyNotice(`${label} copiado. Ya puedes pegarlo en Arduino IDE.`);
-    } catch {
-      setCopyNotice(
-        `No se pudo copiar ${label.toLowerCase()} automaticamente. Seleccionalo y copialo manualmente.`,
-      );
+      return;
     }
+
+    setCopyNotice(
+      `No se pudo copiar ${label.toLowerCase()} automaticamente. Seleccionalo y copialo manualmente.`,
+    );
   }
 
   return (
@@ -173,12 +172,12 @@ export function SyncLab() {
               </p>
             </div>
 
-            <div className="rounded-lg border border-[#44c7f4]/20 bg-[#44c7f4]/10 px-3 py-2 text-left sm:text-right">
+            <div className="rounded-lg border border-[#44c7f4]/20 bg-[#44c7f4]/10 px-3 py-2 text-left sm:min-w-[8.75rem] sm:text-center">
               <p className="font-display text-2xl font-semibold text-white">
                 {linkedCount}
               </p>
               <p className="text-xs uppercase tracking-[0.16em] text-[#9edfff]">
-                enlazados
+                dispositivos enlazados
               </p>
             </div>
           </div>
@@ -193,7 +192,7 @@ export function SyncLab() {
           </p>
         ) : null}
 
-        <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]">
+        <section className="grid gap-4">
           <form
             onSubmit={handleSubmit}
             className="rounded-lg border border-white/10 bg-[#08111f]/90 p-4 shadow-glow sm:p-5 lg:p-6"
@@ -228,8 +227,8 @@ export function SyncLab() {
                   className="min-h-12 rounded-lg border border-white/10 bg-[#050c16] px-3 text-white outline-none transition focus:border-[#44c7f4]/60 focus:ring-2 focus:ring-[#44c7f4]/20"
                 >
                   {deviceModelOptions.map((model) => (
-                    <option key={model} value={model}>
-                      {model}
+                    <option key={model.value} value={model.value}>
+                      {model.label}
                     </option>
                   ))}
                 </select>
@@ -237,6 +236,15 @@ export function SyncLab() {
 
               {isEsp32 ? (
                 <>
+                  <div className="grid gap-2 text-sm text-slate-300">
+                    <span className="text-xs uppercase tracking-[0.18em] text-slate-400">
+                      nombre del equipo
+                    </span>
+                    <p className="flex min-h-12 items-center rounded-lg border border-white/10 bg-[#050c16] px-3 text-white">
+                      {selectedDeviceName}
+                    </p>
+                  </div>
+
                   <div className="grid gap-2 text-sm text-slate-300">
                     <span className="text-xs uppercase tracking-[0.18em] text-slate-400">
                       funcion inicial
@@ -248,7 +256,7 @@ export function SyncLab() {
 
                   <label className="grid gap-2 text-sm text-slate-300">
                     <span className="text-xs uppercase tracking-[0.18em] text-slate-400">
-                      ambiente asignado
+                      ambiente que le quieres asignar a tu ESP32
                     </span>
                     <select
                       value={esp32Space}
@@ -264,15 +272,6 @@ export function SyncLab() {
                       ))}
                     </select>
                   </label>
-
-                  <div className="grid gap-2 text-sm text-slate-300">
-                    <span className="text-xs uppercase tracking-[0.18em] text-slate-400">
-                      nombre del equipo
-                    </span>
-                    <p className="flex min-h-12 items-center rounded-lg border border-white/10 bg-[#050c16] px-3 text-white">
-                      {selectedDeviceName}
-                    </p>
-                  </div>
                 </>
               ) : (
                 <label className="grid gap-2 text-sm text-slate-300">
@@ -314,30 +313,6 @@ export function SyncLab() {
               </button>
             </div>
           </form>
-
-          <aside className="rounded-lg border border-white/10 bg-white/[0.04] p-4 sm:p-5">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-              progreso
-            </p>
-            <p className="mt-3 font-display text-5xl font-semibold text-white">
-              {linkedCount}
-            </p>
-            <p className="mt-2 text-sm leading-6 text-slate-300">
-              {linkedCount > 0
-                ? "La aplicacion ya tiene dispositivos reclamados por ESP32 reales."
-                : pendingCount > 0
-                  ? "Hay enlaces pendientes. Carga el sketch con el token en tu ESP32."
-                  : "Crea un enlace y carga el sketch al ESP32 para continuar."}
-            </p>
-            <button
-              type="button"
-              onClick={openDashboard}
-              disabled={linkedCount === 0}
-              className="mt-6 w-full rounded-lg border border-[#44c7f4]/30 bg-[#44c7f4]/10 px-4 py-3 text-sm font-semibold text-[#b7ebff] transition hover:bg-[#44c7f4]/15 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.04] disabled:text-slate-500"
-            >
-              Ir al dashboard
-            </button>
-          </aside>
         </section>
 
         {pairingInfo?.deviceType === "ESP32" ? (
@@ -419,7 +394,7 @@ export function SyncLab() {
               <CopyableValue
                 label="Token para pegar en PAIRING_TOKEN"
                 value={pairingInfo.pairing_token}
-                onCopy={() => void copyValue(pairingInfo.pairing_token, "Token")}
+                onCopy={() => copyValue(pairingInfo.pairing_token, "Token")}
               />
               <PairingValue label="Device ID" value={pairingInfo.device_id} />
               <PairingValue label="Nombre" value={pairingInfo.deviceName} />
@@ -459,7 +434,7 @@ export function SyncLab() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => void copyValue(sketchForPairing, "Codigo C++")}
+                  onClick={() => copyValue(sketchForPairing, "Codigo C++")}
                   className="shrink-0 rounded-lg border border-[#44c7f4]/30 bg-[#44c7f4]/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#b7ebff] transition hover:bg-[#44c7f4]/15"
                 >
                   Copiar codigo C++
@@ -514,7 +489,7 @@ export function SyncLab() {
         ) : null}
 
         <section className="rounded-lg border border-white/10 bg-white/[0.04] p-4 sm:p-5">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
             <div>
               <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
                 dispositivos enlazados
@@ -522,20 +497,48 @@ export function SyncLab() {
               <h3 className="mt-2 font-display text-xl font-semibold text-white">
                 Inventario conectado
               </h3>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+                {linkedCount > 0
+                  ? "La aplicacion ya tiene dispositivos reclamados por ESP32 reales."
+                  : pendingCount > 0
+                    ? "Hay enlaces pendientes. Carga el sketch con el token en tu ESP32."
+                    : "Crea un enlace y carga el sketch al ESP32 para continuar."}
+              </p>
             </div>
-            <button
-              type="button"
-              onClick={() => void refreshDevices()}
-              className="rounded-lg border border-white/10 px-3 py-2 text-xs uppercase tracking-[0.14em] text-slate-300 transition hover:bg-white/[0.06]"
-            >
-              Actualizar dispositivos
-            </button>
+
+            <div className="grid gap-3 sm:grid-cols-[auto_1fr] sm:items-center lg:min-w-[25rem]">
+              <div className="rounded-lg border border-[#44c7f4]/20 bg-[#44c7f4]/10 px-4 py-3">
+                <p className="font-display text-3xl font-semibold leading-none text-white">
+                  {linkedCount}
+                </p>
+                <p className="mt-1 text-xs uppercase tracking-[0.16em] text-[#9edfff]">
+                  enlazados
+                </p>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={openDashboard}
+                  disabled={linkedCount === 0}
+                  className="rounded-lg border border-[#44c7f4]/30 bg-[#44c7f4]/10 px-3 py-3 text-sm font-semibold text-[#b7ebff] transition hover:bg-[#44c7f4]/15 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.04] disabled:text-slate-500"
+                >
+                  Ir al dashboard
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void refreshDevices()}
+                  className="rounded-lg border border-white/10 px-3 py-3 text-xs uppercase tracking-[0.14em] text-slate-300 transition hover:bg-white/[0.06]"
+                >
+                  Actualizar dispositivos
+                </button>
+              </div>
+            </div>
           </div>
 
           <div className="mt-5 grid gap-3">
             {linkedDevices.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-white/15 px-4 py-6 text-center text-sm text-slate-400">
-                Aun no hay dispositivos creados en el backend.
+              <p className="rounded-lg border border-dashed border-white/15 px-4 py-6 text-center text-sm leading-6 text-slate-400">
+                Aun no hay dispositivos reales enlazados. Crea un enlace ESP32 y carga el sketch para que aparezca aqui.
               </p>
             ) : (
               linkedDevices.map((device) => (
@@ -545,7 +548,7 @@ export function SyncLab() {
                 >
                   <div>
                     <p className="text-xs uppercase tracking-[0.16em] text-[#9edfff]">
-                      {device.type}{device.is_demo ? " / muestra visual" : ""}
+                      {device.type}
                     </p>
                     <h4 className="mt-1 font-display text-lg font-semibold text-white">
                       {device.name}
@@ -558,8 +561,6 @@ export function SyncLab() {
                       <>
                         Comandos: <span className="text-white">HTTPS polling</span>
                       </>
-                    ) : device.is_demo ? (
-                      <span className="text-white">No ejecuta hardware</span>
                     ) : (
                       <>
                         Topic: <span className="text-white">{device.mqtt_topic}</span>
@@ -579,6 +580,50 @@ export function SyncLab() {
       </div>
     </div>
   );
+}
+
+function getNextEsp32DeviceName(
+  devices: Array<{ is_demo?: boolean; model?: string; name?: string; type?: string }>,
+) {
+  const esp32Numbers = devices
+    .filter((device) =>
+      !device.is_demo &&
+      (device.type === "ESP32" ||
+        device.model === "ESP32" ||
+        /^ESP32-\d+$/.test(device.name ?? "")),
+    )
+    .map((device) => {
+      const match = /^ESP32-(\d+)$/.exec(device.name ?? "");
+      return match ? Number(match[1]) : 0;
+    });
+  const nextNumber = Math.max(0, ...esp32Numbers) + 1;
+
+  return `ESP32-${nextNumber}`;
+}
+
+function copyTextWithTemporarySelection(value: string) {
+  if (typeof document === "undefined") {
+    return false;
+  }
+
+  const textArea = document.createElement("textarea");
+  textArea.value = value;
+  textArea.setAttribute("readonly", "");
+  textArea.style.position = "fixed";
+  textArea.style.left = "-9999px";
+  textArea.style.top = "0";
+
+  document.body.appendChild(textArea);
+  textArea.focus();
+  textArea.select();
+
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    document.body.removeChild(textArea);
+  }
 }
 
 function PairingValue({
