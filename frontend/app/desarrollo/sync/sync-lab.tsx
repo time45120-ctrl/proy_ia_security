@@ -11,7 +11,6 @@ import { useDevelopmentWorkspace } from "../workspace-context";
 import { ESP32_DIRECT_SKETCH } from "./esp32-direct-sketch";
 
 type DeviceType = "Luces" | "Camaras" | "Puertas" | "Drones" | "ESP32";
-type Esp32Space = "cocina" | "sala" | "comedor" | "cuarto_principal";
 
 const deviceTypes: DeviceType[] = ["Luces", "Camaras", "Puertas", "Drones", "ESP32"];
 const deviceModelOptions = [{ value: "ESP32", label: "ESP32 GENERICO" }];
@@ -22,12 +21,12 @@ const legacyDeviceNameOptions = [
   "Luz cuarto principal",
   "Luz cochera",
 ];
-const esp32Spaces: Array<{ value: Esp32Space; label: string }> = [
-  { value: "cocina", label: "Cocina" },
-  { value: "sala", label: "Sala" },
-  { value: "comedor", label: "Comedor" },
-  { value: "cuarto_principal", label: "Cuarto principal" },
-];
+const esp32RoomPins = [
+  { space: "sala", label: "Sala", gpio: "GPIO 16" },
+  { space: "cocina", label: "Cocina", gpio: "GPIO 17" },
+  { space: "comedor", label: "Comedor", gpio: "GPIO 18" },
+  { space: "dormitorio", label: "Dormitorio", gpio: "GPIO 19" },
+] as const;
 
 export function SyncLab() {
   const {
@@ -40,14 +39,12 @@ export function SyncLab() {
   const [deviceType, setDeviceType] = useState<DeviceType>("ESP32");
   const [deviceModel, setDeviceModel] = useState(deviceModelOptions[0].value);
   const [deviceName, setDeviceName] = useState(legacyDeviceNameOptions[0]);
-  const [esp32Space, setEsp32Space] = useState<Esp32Space>("cocina");
   const [isCreatingPairing, setIsCreatingPairing] = useState(false);
   const [pairingInfo, setPairingInfo] = useState<
     (PairingTokenResponse & {
       deviceName: string;
       deviceType: string;
       model: string;
-      space?: Esp32Space;
     }) | null
   >(null);
   const [localNotice, setLocalNotice] = useState<string | null>(null);
@@ -111,7 +108,6 @@ export function SyncLab() {
         type: deviceType,
         model: deviceModel.trim(),
         name: selectedDeviceName.trim(),
-        assigned_space: isEsp32 ? esp32Space : undefined,
       });
 
       setPairingInfo({
@@ -119,7 +115,6 @@ export function SyncLab() {
         deviceName: selectedDeviceName.trim(),
         deviceType,
         model: deviceModel.trim(),
-        space: isEsp32 ? esp32Space : undefined,
       });
       setLocalNotice(
         isEsp32
@@ -247,31 +242,14 @@ export function SyncLab() {
 
                   <div className="grid gap-2 text-sm text-slate-300">
                     <span className="text-xs uppercase tracking-[0.18em] text-slate-400">
-                      funcion inicial
+                      mundo ESP32
                     </span>
                     <p className="flex min-h-12 items-center rounded-lg border border-[#44c7f4]/25 bg-[#44c7f4]/10 px-3 text-white">
-                      LED / Luz
+                      Controlador multiambiente / 4 LEDs
                     </p>
                   </div>
 
-                  <label className="grid gap-2 text-sm text-slate-300">
-                    <span className="text-xs uppercase tracking-[0.18em] text-slate-400">
-                      ambiente que le quieres asignar a tu ESP32
-                    </span>
-                    <select
-                      value={esp32Space}
-                      onChange={(event) =>
-                        setEsp32Space(event.target.value as Esp32Space)
-                      }
-                      className="min-h-12 rounded-lg border border-white/10 bg-[#050c16] px-3 text-white outline-none transition focus:border-[#44c7f4]/60 focus:ring-2 focus:ring-[#44c7f4]/20"
-                    >
-                      {esp32Spaces.map((space) => (
-                        <option key={space.value} value={space.value}>
-                          {space.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  <MultiroomPinMap />
                 </>
               ) : (
                 <label className="grid gap-2 text-sm text-slate-300">
@@ -295,8 +273,8 @@ export function SyncLab() {
               {isEsp32 ? (
                 <p className="rounded-lg border border-[#44c7f4]/20 bg-[#44c7f4]/10 px-3 py-3 text-sm leading-6 text-[#b7ebff]">
                   Despues de crear el enlace, copia el sketch en Arduino IDE y
-                  escribe alli el SSID, la contrasena de tu WiFi y el token. La
-                  plataforma nunca recibe tu contrasena.
+                  escribe alli el SSID, la contrasena de tu WiFi y el token. Un
+                  solo ESP32 controlara los cuatro LEDs por ambiente.
                 </p>
               ) : null}
 
@@ -376,8 +354,8 @@ export function SyncLab() {
                 3. En el gestor de librerias instala <span className="text-white">ArduinoJson</span>.
               </li>
               <li>
-                4. Copia el codigo C++ de abajo, pegalo en un sketch nuevo y
-                reemplaza solamente las tres lineas marcadas.
+                4. Conecta los LEDs externos segun el mapa de pines y copia el
+                codigo C++ de abajo en un sketch nuevo.
               </li>
               <li>
                 5. Conecta tu ESP32 por cable USB, selecciona su puerto y pulsa
@@ -385,9 +363,13 @@ export function SyncLab() {
               </li>
               <li>
                 6. Espera que el inventario muestre <span className="text-white">Online</span>{" "}
-                y luego prueba el LED desde el dashboard.
+                y luego prueba cada ambiente desde el dashboard.
               </li>
             </ol>
+
+            <div className="mt-4">
+              <MultiroomPinMap />
+            </div>
 
             <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
               <PairingValue label="API URL" value={pairingInfo.api_url} />
@@ -460,7 +442,7 @@ export function SyncLab() {
                 <li>La API local no abre desde tu celular: habilita el puerto 8000 de tu laptop hacia el backend.</li>
                 <li>Cambiaste de WiFi: modifica las dos lineas WiFi y vuelve a subir el sketch.</li>
                 <li>Quieres otro enlace: genera un token nuevo, pegalo en PAIRING_TOKEN y vuelve a subir.</li>
-                <li>El LED no responde: esta guia usa el LED integrado en GPIO 2.</li>
+                <li>Un LED no responde: revisa el GPIO de ese ambiente, resistencia, polaridad y GND comun.</li>
               </ul>
             </div>
           </section>
@@ -578,6 +560,35 @@ export function SyncLab() {
           </div>
         </section>
       </div>
+    </div>
+  );
+}
+
+function MultiroomPinMap() {
+  return (
+    <div className="rounded-lg border border-[#44c7f4]/20 bg-[#44c7f4]/10 p-3 text-sm text-slate-300">
+      <p className="text-xs uppercase tracking-[0.18em] text-[#9edfff]">
+        controlador multiambiente
+      </p>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        {esp32RoomPins.map((room) => (
+          <div
+            key={room.space}
+            className="rounded-lg border border-white/10 bg-[#050c16]/70 px-3 py-2"
+          >
+            <p className="text-xs uppercase tracking-[0.14em] text-slate-500">
+              {room.label}
+            </p>
+            <p className="mt-1 font-display text-lg font-semibold text-white">
+              {room.gpio}
+            </p>
+          </div>
+        ))}
+      </div>
+      <p className="mt-3 text-xs leading-5 text-slate-400">
+        Usa LEDs externos con resistencia y GND comun. El dashboard enviara el
+        ambiente por voz y el ESP32 activara el pin correspondiente.
+      </p>
     </div>
   );
 }

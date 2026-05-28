@@ -60,9 +60,9 @@ const devices: DeviceCard[] = [
     title: "Luces por ambiente",
     buttonLabel: "Entrar a Luces por ambiente",
     count: 4,
-    description: "Ambientes listos para recibir comandos ON/OFF por ESP32 o MQTT legacy.",
+    description: "Un ESP32 multiambiente puede controlar sala, cocina, comedor y dormitorio; MQTT legacy sigue disponible para Luces.",
     status: "4 ambientes mapeados",
-    items: ["Sala", "Comedor", "Cocina", "Cuarto principal"],
+    items: ["Sala", "Cocina", "Comedor", "Dormitorio"],
     tone: "text-[#9edfff] bg-[#44c7f4]/10 border-[#44c7f4]/20",
     Icon: LightIcon,
   },
@@ -151,18 +151,18 @@ const detailDashboards: Record<DeviceDetailId, DetailDashboardConfig> = {
     id: "lights",
     eyebrow: "control de iluminacion",
     title: "Dashboard de luces",
-    description: "Gestiona luces por ambiente y valida estados ON/OFF.",
-    aiMessage: "La IA coordina la iluminacion y traduce comandos de voz a acciones.",
+    description: "Gestiona cuatro LEDs por ambiente desde un ESP32 multiambiente.",
+    aiMessage: "La IA traduce la voz a sala, cocina, comedor o dormitorio antes de confirmar la ejecucion.",
     metrics: [
       { label: "Ambientes", value: "4" },
       { label: "Encendidas", value: "1" },
       { label: "Apagadas", value: "3" },
     ],
     items: [
-      { name: "Sala", status: "OFF", meta: "Lista para comando" },
-      { name: "Comedor", status: "OFF", meta: "Lista para comando" },
-      { name: "Cocina", status: "ON", meta: "Dispositivo de prueba ABRAM" },
-      { name: "Cuarto principal", status: "OFF", meta: "Lista para comando" },
+      { name: "Sala", status: "OFF", meta: "GPIO 16" },
+      { name: "Cocina", status: "ON", meta: "GPIO 17" },
+      { name: "Comedor", status: "OFF", meta: "GPIO 18" },
+      { name: "Dormitorio", status: "OFF", meta: "GPIO 19" },
     ],
     actions: ["Encender", "Apagar"],
   },
@@ -1462,11 +1462,11 @@ function formatDeliveryStatus(delivery?: DeviceCommandDelivery | null) {
   }
 
   if (delivery.status === "delivered") {
-    return "Comando recibido por el ESP32. Esperando ACK del LED.";
+    return "Comando recibido por el ESP32. Esperando ACK del LED del ambiente.";
   }
 
   if (delivery.status === "executed") {
-    return "LED ejecutado y confirmado por el ESP32.";
+    return "LED del ambiente ejecutado y confirmado por el ESP32.";
   }
 
   if (delivery.status === "failed") {

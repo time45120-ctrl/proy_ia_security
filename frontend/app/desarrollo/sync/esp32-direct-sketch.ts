@@ -2,11 +2,16 @@ export const ESP32_DIRECT_SKETCH = String.raw`/*
   AFCR ESP32 laboratory client
 
   Flujo:
-  1. Edita WIFI_SSID, WIFI_PASSWORD y PAIRING_TOKEN en Arduino IDE.
-  2. Carga este sketch al ESP32 mediante USB.
-  3. El ESP32 se conecta al WiFi y reclama el token con POST /devices/claim.
-  4. Consulta GET /device/commands cada 5 segundos mediante HTTPS autenticado.
-  5. Ejecuta el LED integrado y confirma con POST /device/commands/{id}/ack.
+  1. Conecta 4 LEDs externos con resistencia y GND comun:
+     - Sala: GPIO 16
+     - Cocina: GPIO 17
+     - Comedor: GPIO 18
+     - Dormitorio: GPIO 19
+  2. Edita WIFI_SSID, WIFI_PASSWORD y PAIRING_TOKEN en Arduino IDE.
+  3. Carga este sketch al ESP32 mediante USB.
+  4. El ESP32 reclama el token con POST /devices/claim.
+  5. Consulta GET /device/commands cada 5 segundos mediante HTTPS autenticado.
+  6. Ejecuta el LED del ambiente solicitado y confirma con POST /device/commands/{id}/ack.
 
   Librerias Arduino:
   - ArduinoJson
@@ -35,7 +40,19 @@ const char* PAIRING_TOKEN = "PEGA_AQUI_TU_TOKEN";
 // La web reemplaza esta URL por la API activa al copiar el sketch.
 const char* API_URL = "https://api.afcrseguridad.com";
 
-const int LED_PIN = 2;
+struct RoomLed {
+  const char* espacio;
+  const char* label;
+  int pin;
+};
+
+const RoomLed ROOM_LEDS[] = {
+  {"sala", "Sala", 16},
+  {"cocina", "Cocina", 17},
+  {"comedor", "Comedor", 18},
+  {"dormitorio", "Dormitorio", 19},
+};
+const int ROOM_LED_COUNT = sizeof(ROOM_LEDS) / sizeof(ROOM_LEDS[0]);
 const unsigned long POLL_INTERVAL_MS = 5000;
 const unsigned long LINK_RETRY_INTERVAL_MS = 10000;
 unsigned long lastPollAt = 0;
@@ -86,6 +103,33 @@ bool beginApiRequest(HTTPClient& http, WiFiClientSecure& secureClient, const Str
 
   // HTTP se admite solo para pruebas en la red local del laboratorio.
   return http.begin(url);
+}
+
+int findRoomLedPin(const String& espacio) {
+  for (int i = 0; i < ROOM_LED_COUNT; i++) {
+    if (espacio == ROOM_LEDS[i].espacio) {
+      return ROOM_LEDS[i].pin;
+    }
+  }
+
+  return -1;
+}
+
+String roomLedLabel(const String& espacio) {
+  for (int i = 0; i < ROOM_LED_COUNT; i++) {
+    if (espacio == ROOM_LEDS[i].espacio) {
+      return String(ROOM_LEDS[i].label);
+    }
+  }
+
+  return espacio;
+}
+
+void initializeRoomLeds() {
+  for (int i = 0; i < ROOM_LED_COUNT; i++) {
+    pinMode(ROOM_LEDS[i].pin, OUTPUT);
+    digitalWrite(ROOM_LEDS[i].pin, LOW);
+  }
 }
 
 String tokenFingerprint() {
@@ -259,24 +303,30 @@ void pollCommands() {
   String commandId = response["command_id"] | "";
   String target = response["target"] | "";
   String action = response["action"] | "";
+  String espacio = response["espacio"] | "";
 
   if (commandId == "" || action == "none") {
     return;
   }
 
+  int ledPin = findRoomLedPin(espacio);
+  String roomLabel = roomLedLabel(espacio);
   String status = "failed";
   String detail = "Comando no soportado";
 
-  if (target == "led" && action == "turn_on") {
-    digitalWrite(LED_PIN, HIGH);
+  if (target == "led" && ledPin < 0) {
+    detail = "Ambiente no soportado: " + espacio;
+    Serial.println(detail);
+  } else if (target == "led" && action == "turn_on") {
+    digitalWrite(ledPin, HIGH);
     status = "executed";
-    detail = "LED encendido";
-    Serial.println("LED ENCENDIDO");
+    detail = "LED " + roomLabel + " encendido";
+    Serial.println(detail);
   } else if (target == "led" && action == "turn_off") {
-    digitalWrite(LED_PIN, LOW);
+    digitalWrite(ledPin, LOW);
     status = "executed";
-    detail = "LED apagado";
-    Serial.println("LED APAGADO");
+    detail = "LED " + roomLabel + " apagado";
+    Serial.println(detail);
   }
 
   if (!acknowledgeCommand(commandId, status, detail)) {
@@ -286,8 +336,7 @@ void pollCommands() {
 
 void setup() {
   Serial.begin(115200);
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW);
+  initializeRoomLeds();
 
   if (!configurationReady()) {
     Serial.println("Edita WIFI_SSID, WIFI_PASSWORD y PAIRING_TOKEN en Arduino IDE.");
