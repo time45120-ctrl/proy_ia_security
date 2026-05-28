@@ -15,7 +15,7 @@
 # - sala
 # - comedor
 # - cocina
-# - cuarto_principal
+# - dormitorio
 # =========================================================
 
 
@@ -167,13 +167,13 @@ ESPACIOS_VALIDOS = {
     "sala",
     "comedor",
     "cocina",
-    "cuarto_principal"
+    "dormitorio"
 }
 ESPACIOS_DESCRIPCION = {
     "sala": "sala",
     "comedor": "comedor",
     "cocina": "cocina",
-    "cuarto_principal": "cuarto principal",
+    "dormitorio": "dormitorio",
 }
 
 # --- Planes de voz pendientes de confirmacion ---
@@ -678,10 +678,25 @@ def find_light_device_for_space(
     if not rows:
         return None
 
+    space_aliases = {
+        "sala": ("sala",),
+        "comedor": ("comedor",),
+        "cocina": ("cocina",),
+        "dormitorio": (
+            "dormitorio",
+            "cuarto principal",
+            "habitacion principal",
+            "habitación principal",
+            "dormitorio principal",
+            "recamara principal",
+        ),
+    }
+    aliases = space_aliases.get(normalized_space, (normalized_space, space_text))
+
     for row in rows:
         device = device_row_to_dict(row)
         name = device["name"].lower().replace("_", " ")
-        if normalized_space in name or space_text in name:
+        if any(alias in name for alias in aliases):
             return device
 
     return device_row_to_dict(rows[0])
@@ -727,49 +742,13 @@ def find_http_esp32_for_space(
     if normalized_space not in ESPACIOS_VALIDOS:
         return None
 
-    if using_supabase():
-        if not organization_id or not access_token:
-            return None
-        query = (
-            f"devices?select={SUPABASE_DEVICE_SAFE_COLUMNS}&claimed_at=not.is.null&type=eq.ESP32"
-            f"&organization_id=eq.{urllib.parse.quote(organization_id)}"
-            f"&assigned_space=eq.{urllib.parse.quote(normalized_space)}"
-            "&order=claimed_at.desc&limit=1"
-        )
-        rows = supabase_rest("GET", query, access_token=access_token)
-        if isinstance(rows, list) and rows:
-            return device_row_to_dict(rows[0])
-        return None
-
-    space_aliases = {
-        "sala": ("sala",),
-        "comedor": ("comedor",),
-        "cocina": ("cocina",),
-        "cuarto_principal": ("cuarto principal", "dormitorio principal", "habitacion principal"),
-    }
-    with get_db_connection() as conn:
-        rows = conn.execute(
-            """
-            SELECT * FROM devices
-            WHERE claimed_at IS NOT NULL
-              AND lower(type) = 'esp32'
-            ORDER BY claimed_at DESC
-            """
-        ).fetchall()
-
-    for row in rows:
-        device = device_row_to_dict(row)
-        name = normalize_text(device["name"]).replace("_", " ")
-        if any(alias in name for alias in space_aliases[normalized_space]):
-            return device
-
-    return None
+    return find_latest_http_esp32(organization_id, access_token)
 
 
 def infer_device_space(device: dict) -> str:
     name = normalize_text(str(device.get("name", ""))).replace("_", " ")
     aliases = (
-        ("cuarto_principal", ("cuarto principal", "dormitorio principal", "habitacion principal")),
+        ("dormitorio", ("dormitorio", "cuarto principal", "dormitorio principal", "habitacion principal")),
         ("sala", ("sala",)),
         ("comedor", ("comedor",)),
         ("cocina", ("cocina",)),
@@ -1393,7 +1372,7 @@ def send_device_command(
         delivery = enqueue_http_led_command(
             device,
             accion,
-            payload.espacio or infer_device_space(device),
+            payload.espacio or "desconocido",
             context=context,
         )
         return {
@@ -1648,13 +1627,17 @@ def normalize_espacio(espacio: str) -> str:
         "cocina": "cocina",
         "la cocina": "cocina",
 
-        "cuarto principal": "cuarto_principal",
-        "el cuarto principal": "cuarto_principal",
-        "mi cuarto principal": "cuarto_principal",
-        "habitacion principal": "cuarto_principal",
-        "habitación principal": "cuarto_principal",
-        "dormitorio principal": "cuarto_principal",
-        "cuarto_principal": "cuarto_principal",
+        "dormitorio": "dormitorio",
+        "el dormitorio": "dormitorio",
+        "mi dormitorio": "dormitorio",
+        "cuarto principal": "dormitorio",
+        "el cuarto principal": "dormitorio",
+        "mi cuarto principal": "dormitorio",
+        "habitacion principal": "dormitorio",
+        "habitación principal": "dormitorio",
+        "dormitorio principal": "dormitorio",
+        "recamara principal": "dormitorio",
+        "cuarto_principal": "dormitorio",
     }
 
     if e in equivalencias:
@@ -1669,7 +1652,10 @@ def normalize_espacio(espacio: str) -> str:
     )
 
     equivalencias_sin_tilde = {
-        "habitacion principal": "cuarto_principal"
+        "dormitorio": "dormitorio",
+        "habitacion principal": "dormitorio",
+        "recamara principal": "dormitorio",
+        "cuarto_principal": "dormitorio",
     }
 
     if e in equivalencias_sin_tilde:
@@ -1729,12 +1715,14 @@ def fallback_rule_parser(texto_transcrito: str) -> dict:
         espacio = "cocina"
 
     elif (
-        "cuarto principal" in t
+        "dormitorio" in t
+        or "cuarto principal" in t
         or "habitacion principal" in t
         or "habitación principal" in t
         or "dormitorio principal" in t
+        or "recamara principal" in t
     ):
-        espacio = "cuarto_principal"
+        espacio = "dormitorio"
 
     mentions_light = any(x in t for x in ["luz", "luces", "led", "foco", "lampara", "lámpara"])
     intencion = "control_luces" if accion in {"ON", "OFF"} and (espacio != "desconocido" or mentions_light) else "otra"
@@ -1860,12 +1848,17 @@ def build_default_ai_reply(texto_transcrito: str, ia_json: dict) -> str:
     espacio = ia_json.get("espacio", "desconocido")
     accion = ia_json.get("accion", "NONE")
 
-    if intencion == "control_luces" and espacio != "desconocido" and accion in {"ON", "OFF"}:
+    if intencion == "control_luces" and accion in {"ON", "OFF"}:
         accion_texto = "encender" if accion == "ON" else "apagar"
+        if espacio != "desconocido":
+            return (
+                f"Listo, entendi que quieres {accion_texto} la luz de "
+                f"{ESPACIOS_DESCRIPCION.get(espacio, espacio)}. Te preparo el plan "
+                "y espero tu confirmacion antes de tocar el hardware."
+            )
         return (
-            f"Listo, entendi que quieres {accion_texto} la luz de "
-            f"{ESPACIOS_DESCRIPCION.get(espacio, espacio)}. Te preparo el plan "
-            "y espero tu confirmacion antes de tocar el hardware."
+            f"Entendi que quieres {accion_texto} un LED. Dime si es sala, "
+            "cocina, comedor o dormitorio para preparar el comando correcto."
         )
 
     if texto_transcrito:
@@ -1899,7 +1892,7 @@ INTENT_JSON_SCHEMA = {
         },
         "espacio": {
             "type": "string",
-            "enum": ["sala", "comedor", "cocina", "cuarto_principal", "desconocido"],
+            "enum": ["sala", "comedor", "cocina", "dormitorio", "desconocido"],
             "description": "Ambiente mencionado por el usuario."
         },
         "accion": {
@@ -1980,7 +1973,7 @@ def call_openai_intent(texto_transcrito: str) -> str:
     - Si menciona sala, espacio = sala.
     - Si menciona comedor, espacio = comedor.
     - Si menciona cocina, espacio = cocina.
-    - Si menciona cuarto principal, habitacion principal, dormitorio principal o recamara principal, espacio = cuarto_principal.
+    - Si menciona dormitorio, cuarto principal, habitacion principal, dormitorio principal o recamara principal, espacio = dormitorio.
     - Si no detectas ambiente, espacio = desconocido.
     - Si quiere controlar luces, intencion = control_luces.
     - Si habla de camaras, puertas, drones, seguridad general, preguntas o conversacion normal, intencion = otra.
@@ -2052,7 +2045,7 @@ def build_local_ai_prompt(texto_transcrito: str) -> str:
             "texto": "texto transcrito del usuario",
             "intencion": "control_luces o otra",
             "detalle": "detalle tecnico breve",
-            "espacio": "sala, comedor, cocina, cuarto_principal o desconocido",
+            "espacio": "sala, comedor, cocina, dormitorio o desconocido",
             "accion": "ON, OFF o NONE"
           }},
           "respuesta_usuario": "respuesta IA natural, clara e inteligente para el usuario"
@@ -2084,14 +2077,14 @@ def build_local_ai_prompt(texto_transcrito: str) -> str:
         - Si menciona sala, usa "sala".
         - Si menciona comedor, usa "comedor".
         - Si menciona cocina, usa "cocina".
-        - Si menciona cuarto principal, habitación principal o dormitorio principal, usa "cuarto_principal".
+        - Si menciona dormitorio, cuarto principal, habitación principal o dormitorio principal, usa "dormitorio".
         - Si no está claro, usa "desconocido".
 
         Ejemplos:
         - "prende luz cocina" -> {{"intencion_json":{{"texto":"prende luz cocina","intencion":"control_luces","detalle":"encender luz de cocina","espacio":"cocina","accion":"ON"}},"respuesta_usuario":"Entendi: quieres encender la luz de cocina. Lo dejo listo y espero tu confirmacion para ejecutarlo."}}
         - "apaga la luz de la sala" -> {{"intencion_json":{{"texto":"apaga la luz de la sala","intencion":"control_luces","detalle":"apagar luz de sala","espacio":"sala","accion":"OFF"}},"respuesta_usuario":"Perfecto, preparo el apagado de la luz de sala y no lo ejecuto hasta que confirmes."}}
         - "enciende la luz del comedor" -> {{"intencion_json":{{"texto":"enciende la luz del comedor","intencion":"control_luces","detalle":"encender luz de comedor","espacio":"comedor","accion":"ON"}},"respuesta_usuario":"Claro, puedo encender la luz del comedor; primero te muestro el plan para confirmarlo."}}
-        - "apaga cuarto principal" -> {{"intencion_json":{{"texto":"apaga cuarto principal","intencion":"control_luces","detalle":"apagar luz del cuarto principal","espacio":"cuarto_principal","accion":"OFF"}},"respuesta_usuario":"Entendido, preparo apagar la luz del cuarto principal y quedo esperando tu confirmacion."}}
+        - "apaga dormitorio" -> {{"intencion_json":{{"texto":"apaga dormitorio","intencion":"control_luces","detalle":"apagar luz de dormitorio","espacio":"dormitorio","accion":"OFF"}},"respuesta_usuario":"Entendido, preparo apagar la luz del dormitorio y quedo esperando tu confirmacion."}}
     """)
 
 
@@ -2271,17 +2264,12 @@ def build_http_delivery_preview(
     if accion not in {"ON", "OFF"}:
         return None
 
-    device = find_http_esp32_for_space(espacio, organization_id, access_token)
-    if device is None and espacio == "desconocido":
-        device = find_latest_http_esp32(organization_id, access_token)
-        if device is not None:
-            espacio = normalize_espacio(str(device.get("assigned_space") or infer_device_space(device)))
-
-    if device is None:
+    if espacio not in ESPACIOS_VALIDOS:
         return None
 
-    if espacio not in ESPACIOS_VALIDOS:
-        espacio = normalize_espacio(str(device.get("assigned_space") or infer_device_space(device)))
+    device = find_http_esp32_for_space(espacio, organization_id, access_token)
+    if device is None:
+        return None
 
     return {
         "transport": "http_polling",
@@ -2356,6 +2344,16 @@ def build_voice_intent_plan(
                 if delivery_preview
                 else f"Esperar confirmacion y publicar el payload MQTT en {mqtt_preview['mqtt_topic']}."
             ),
+        ]
+    elif module == "lights" and action in {"ON", "OFF"} and espacio == "desconocido":
+        accion_texto = "encender" if action == "ON" else "apagar"
+        respuesta = (
+            f"Entendi que quieres {accion_texto} un LED. Dime si es sala, "
+            "cocina, comedor o dormitorio para preparar el comando correcto."
+        )
+        steps = [
+            "Validar lo que se transcribio del comando de voz.",
+            "Pedir el ambiente exacto: sala, cocina, comedor o dormitorio.",
         ]
     elif module in {"cameras", "doors", "drones"}:
         respuesta = ai_reply or (
