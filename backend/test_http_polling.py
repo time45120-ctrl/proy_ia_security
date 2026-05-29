@@ -298,5 +298,102 @@ class HttpPollingDeviceTests(unittest.TestCase):
 
 
 
+    def compound_light_plan(self, phrase):
+        parsed = api.fallback_rule_parser(phrase)
+        return api.build_voice_intent_plan(phrase, parsed)
+
+    def test_rule_parser_understands_multiroom_same_action(self):
+        parsed = api.fallback_rule_parser("prende cocina y comedor")
+
+        self.assertEqual(parsed["intencion"], "control_luces")
+        self.assertEqual(parsed["comandos_luces"], [
+            {"espacio": "cocina", "accion": "ON"},
+            {"espacio": "comedor", "accion": "ON"},
+        ])
+
+    def test_rule_parser_understands_all_lights(self):
+        parsed_on = api.fallback_rule_parser("prende todas las luces")
+        parsed_off = api.fallback_rule_parser("apaga todas las luces")
+
+        self.assertEqual(len(parsed_on["comandos_luces"]), 4)
+        self.assertEqual({command["accion"] for command in parsed_on["comandos_luces"]}, {"ON"})
+        self.assertEqual(len(parsed_off["comandos_luces"]), 4)
+        self.assertEqual({command["accion"] for command in parsed_off["comandos_luces"]}, {"OFF"})
+
+    def test_rule_parser_understands_mixed_actions(self):
+        parsed = api.fallback_rule_parser("prende cocina y apaga comedor")
+
+        self.assertEqual(parsed["comandos_luces"], [
+            {"espacio": "cocina", "accion": "ON"},
+            {"espacio": "comedor", "accion": "OFF"},
+        ])
+
+    def test_rule_parser_rejects_contradictory_same_room(self):
+        parsed = api.fallback_rule_parser("prende cocina y apaga cocina")
+        plan = api.build_voice_intent_plan("prende cocina y apaga cocina", parsed)
+
+        self.assertTrue(parsed["conflicto_comandos"])
+        self.assertFalse(plan["can_execute"])
+        self.assertEqual(plan["action"], "NONE")
+        self.assertIn("contradictorias", plan["respuesta"])
+
+    def test_confirm_delivers_multiple_http_commands_until_ack(self):
+        pairing, claimed = self.pair_esp32("ESP32 multiambiente")
+        plan = self.compound_light_plan("prende cocina y comedor")
+
+        self.assertTrue(plan["can_execute"])
+        self.assertEqual(len(plan["comandos_luces"]), 2)
+        self.assertEqual(len(plan["delivery_previews"]), 2)
+
+        confirmed = api.confirm_voice_intent(
+            api.VoiceIntentConfirmRequest(request_id=plan["request_id"])
+        )
+        self.assertTrue(confirmed["queued"])
+        self.assertEqual(confirmed["queued_count"], 2)
+        self.assertEqual(len(confirmed["deliveries"]), 2)
+        self.assertEqual(api.mqtt_client.published, [])
+
+        authorization = f"Bearer {claimed['device_api_key']}"
+        first = api.poll_device_commands(pairing["device_id"], authorization)
+        self.assertEqual(first["status"], "delivered")
+        self.assertIn(first["espacio"], {"cocina", "comedor"})
+        api.acknowledge_device_command(
+            first["command_id"],
+            api.DeviceCommandAckRequest(
+                device_id=pairing["device_id"],
+                status="executed",
+                detail="primer LED listo",
+            ),
+            authorization,
+        )
+
+        second = api.poll_device_commands(pairing["device_id"], authorization)
+        self.assertEqual(second["status"], "delivered")
+        self.assertIn(second["espacio"], {"cocina", "comedor"})
+        self.assertNotEqual(second["command_id"], first["command_id"])
+        api.acknowledge_device_command(
+            second["command_id"],
+            api.DeviceCommandAckRequest(
+                device_id=pairing["device_id"],
+                status="executed",
+                detail="segundo LED listo",
+            ),
+            authorization,
+        )
+
+        idle = api.poll_device_commands(pairing["device_id"], authorization)
+        self.assertEqual(idle["status"], "idle")
+
+    def test_all_lights_plan_prepares_four_http_commands(self):
+        self.pair_esp32("ESP32 multiambiente")
+        plan = self.compound_light_plan("apaga todas las luces")
+
+        self.assertTrue(plan["can_execute"])
+        self.assertEqual(len(plan["comandos_luces"]), 4)
+        self.assertEqual(len(plan["delivery_previews"]), 4)
+        self.assertEqual({command["accion"] for command in plan["comandos_luces"]}, {"OFF"})
+
+
+
 if __name__ == "__main__":
     unittest.main()
