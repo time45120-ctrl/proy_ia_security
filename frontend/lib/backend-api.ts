@@ -7,12 +7,18 @@ export type BackendConnectionState =
   | "uploading"
   | "error";
 
+export type LightCommand = {
+  espacio?: "sala" | "comedor" | "cocina" | "dormitorio" | "cuarto_principal" | string;
+  accion?: "ON" | "OFF" | string;
+};
+
 export type VoiceIntentJson = {
   texto?: string;
   intencion?: "control_luces" | "otra" | string;
   detalle?: string;
-  espacio?: "sala" | "comedor" | "cocina" | "cuarto_principal" | "desconocido" | string;
+  espacio?: "sala" | "comedor" | "cocina" | "dormitorio" | "cuarto_principal" | "desconocido" | string;
   accion?: "ON" | "OFF" | "NONE" | string;
+  comandos_luces?: LightCommand[];
 };
 
 export type MqttLightPayload = {
@@ -61,6 +67,8 @@ export type VoiceIntentPlan = {
   espacio: string;
   mqtt_preview?: MqttPreview | null;
   delivery_preview?: DeviceCommandDelivery | null;
+  delivery_previews?: DeviceCommandDelivery[] | null;
+  comandos_luces?: LightCommand[];
   expires_at?: string;
 };
 
@@ -97,6 +105,7 @@ export type VoiceIntentResponse = {
     mqtt_payload?: MqttLightPayload | null;
   };
   delivery?: DeviceCommandDelivery | null;
+  delivery_previews?: DeviceCommandDelivery[] | null;
   plan?: VoiceIntentPlan;
 };
 
@@ -118,6 +127,8 @@ export type VoiceIntentConfirmResponse = {
   executed?: boolean;
   message?: string;
   delivery?: DeviceCommandDelivery | null;
+  deliveries?: DeviceCommandDelivery[] | null;
+  queued_count?: number;
   plan?: VoiceIntentPlan;
   fase_4_mqtt?: {
     accion_mqtt?: string;

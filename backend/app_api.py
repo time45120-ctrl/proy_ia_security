@@ -28,6 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
 import os
+import re
 import subprocess
 import json
 import textwrap
@@ -175,6 +176,35 @@ ESPACIOS_DESCRIPCION = {
     "cocina": "cocina",
     "dormitorio": "dormitorio",
 }
+ESP32_MULTIROOM_ESPACIOS = ("sala", "cocina", "comedor", "dormitorio")
+LIGHT_ACTION_ALIASES = {
+    "ON": ("prende", "prender", "enciende", "encender", "activar", "activa", "ilumina", "iluminar", "sube", "subir", "pon", "poner"),
+    "OFF": ("apaga", "apagar", "desactiva", "desactivar", "quita", "quitar", "baja", "bajar"),
+}
+LIGHT_ACTION_WORDS = {
+    alias: action
+    for action, aliases in LIGHT_ACTION_ALIASES.items()
+    for alias in aliases
+}
+LIGHT_ACTION_PATTERN = re.compile(
+    r"\b(" + "|".join(re.escape(word) for word in sorted(LIGHT_ACTION_WORDS, key=len, reverse=True)) + r")\b"
+)
+LIGHT_SPACE_ALIASES = {
+    "sala": ("sala",),
+    "cocina": ("cocina",),
+    "comedor": ("comedor",),
+    "dormitorio": (
+        "dormitorio",
+        "cuarto principal",
+        "habitacion principal",
+        "dormitorio principal",
+        "recamara principal",
+        "cuarto",
+        "habitacion",
+        "recamara",
+    ),
+}
+LIGHT_WORD_ALIASES = ("luz", "luces", "led", "leds", "foco", "focos", "lampara", "lamparas")
 
 # --- Planes de voz pendientes de confirmacion ---
 VOICE_PLAN_TTL_SECONDS = int(os.getenv("VOICE_PLAN_TTL_SECONDS", "300"))
@@ -1664,6 +1694,190 @@ def normalize_espacio(espacio: str) -> str:
     return "desconocido"
 
 
+def normalize_rule_text(text: str) -> str:
+    """
+    Normaliza texto para reglas locales de voz: minusculas, sin tildes,
+    guiones bajos como espacios y puntuacion irrelevante fuera.
+    """
+    normalized = normalize_text(text).replace("_", " ")
+    replacements = {
+        "á": "a",
+        "é": "e",
+        "í": "i",
+        "ó": "o",
+        "ú": "u",
+        "ü": "u",
+        "ñ": "n",
+    }
+    for source, target in replacements.items():
+        normalized = normalized.replace(source, target)
+
+    normalized = re.sub(r"[^a-z0-9\s]", " ", normalized)
+    return " ".join(normalized.split())
+
+
+def detect_light_action(text: str) -> str:
+    plain = normalize_rule_text(text)
+    match = LIGHT_ACTION_PATTERN.search(plain)
+    if match:
+        return LIGHT_ACTION_WORDS.get(match.group(1), "NONE")
+
+    if any(phrase in plain for phrase in ("a oscuras", "sin luz", "sin luces")):
+        return "OFF"
+
+    return "NONE"
+
+
+def mentions_light_words(text: str) -> bool:
+    plain = normalize_rule_text(text)
+    return any(re.search(rf"\b{re.escape(word)}\b", plain) for word in LIGHT_WORD_ALIASES)
+
+
+def mentions_all_lights(text: str) -> bool:
+    plain = normalize_rule_text(text)
+    if not plain:
+        return False
+
+    all_patterns = (
+        "todas las luces",
+        "toda las luces",
+        "todos los leds",
+        "todos los led",
+        "todos los focos",
+        "todas las lamparas",
+    )
+    if any(pattern in plain for pattern in all_patterns):
+        return True
+
+    words = set(plain.split())
+    mentions_all = bool(words.intersection({"todas", "todos"}))
+    return mentions_all and any(word in words for word in LIGHT_WORD_ALIASES)
+
+
+def detect_spaces_in_text(text: str) -> list[str]:
+    plain = normalize_rule_text(text)
+    matches: list[tuple[int, str]] = []
+
+    for espacio, aliases in LIGHT_SPACE_ALIASES.items():
+        positions = []
+        for alias in aliases:
+            alias_plain = normalize_rule_text(alias)
+            match = re.search(rf"\b{re.escape(alias_plain)}\b", plain)
+            if match:
+                positions.append(match.start())
+        if positions:
+            matches.append((min(positions), espacio))
+
+    ordered: list[str] = []
+    for _position, espacio in sorted(matches, key=lambda item: item[0]):
+        if espacio not in ordered:
+            ordered.append(espacio)
+
+    return ordered
+
+
+def coalesce_light_commands(commands: list[dict]) -> tuple[list[dict], bool]:
+    normalized: list[dict] = []
+    seen_actions: dict[str, str] = {}
+
+    for command in commands:
+        espacio = normalize_espacio(str(command.get("espacio", "desconocido")))
+        accion = str(command.get("accion", "NONE")).strip().upper()
+        if espacio not in ESPACIOS_VALIDOS or accion not in {"ON", "OFF"}:
+            continue
+
+        previous_action = seen_actions.get(espacio)
+        if previous_action and previous_action != accion:
+            return [], True
+        if previous_action == accion:
+            continue
+
+        seen_actions[espacio] = accion
+        normalized.append({"espacio": espacio, "accion": accion})
+
+    return normalized, False
+
+
+def extract_light_commands_from_text(texto_transcrito: str) -> tuple[list[dict], bool]:
+    plain = normalize_rule_text(texto_transcrito)
+    if not plain:
+        return [], False
+
+    action_matches = list(LIGHT_ACTION_PATTERN.finditer(plain))
+    if not action_matches:
+        action = detect_light_action(plain)
+        if action == "NONE":
+            return [], False
+        spaces = list(ESP32_MULTIROOM_ESPACIOS) if mentions_all_lights(plain) else detect_spaces_in_text(plain)
+        return coalesce_light_commands([{"espacio": espacio, "accion": action} for espacio in spaces])
+
+    commands: list[dict] = []
+    for index, match in enumerate(action_matches):
+        action = LIGHT_ACTION_WORDS.get(match.group(1), "NONE")
+        next_start = action_matches[index + 1].start() if index + 1 < len(action_matches) else len(plain)
+        segment = plain[match.start():next_start]
+        spaces = list(ESP32_MULTIROOM_ESPACIOS) if mentions_all_lights(segment) else detect_spaces_in_text(segment)
+
+        # Para frases como "prende todas las luces" si la palabra "todas" quedo antes
+        # del verbo por la transcripcion, rescata el alcance global solo cuando hay una accion.
+        if not spaces and len(action_matches) == 1 and mentions_all_lights(plain):
+            spaces = list(ESP32_MULTIROOM_ESPACIOS)
+
+        commands.extend({"espacio": espacio, "accion": action} for espacio in spaces)
+
+    return coalesce_light_commands(commands)
+
+
+def normalize_light_commands(
+    raw_commands,
+    texto_transcrito: str = "",
+    fallback_action: str = "NONE",
+    fallback_space: str = "desconocido",
+) -> tuple[list[dict], bool]:
+    text_commands, text_conflict = extract_light_commands_from_text(texto_transcrito)
+    if text_conflict:
+        return [], True
+
+    model_commands: list[dict] = []
+    if isinstance(raw_commands, list):
+        model_commands, model_conflict = coalesce_light_commands(
+            [command for command in raw_commands if isinstance(command, dict)]
+        )
+        if model_conflict:
+            return [], True
+
+    if len(text_commands) > 1 or mentions_all_lights(texto_transcrito):
+        return text_commands, False
+
+    if model_commands:
+        return model_commands, False
+
+    fallback_space = normalize_espacio(str(fallback_space))
+    fallback_action = str(fallback_action).strip().upper()
+    if fallback_space in ESPACIOS_VALIDOS and fallback_action in {"ON", "OFF"}:
+        return [{"espacio": fallback_space, "accion": fallback_action}], False
+
+    if text_commands:
+        return text_commands, False
+
+    return [], False
+
+
+def describe_light_commands(commands: list[dict]) -> str:
+    labels = []
+    for command in commands:
+        accion = str(command.get("accion", "NONE")).upper()
+        espacio = ESPACIOS_DESCRIPCION.get(command.get("espacio"), command.get("espacio", "ambiente"))
+        accion_texto = "encender" if accion == "ON" else "apagar"
+        labels.append(f"{accion_texto} {espacio}")
+
+    if not labels:
+        return "sin comandos de luces"
+    if len(labels) == 1:
+        return labels[0]
+    return ", ".join(labels[:-1]) + f" y {labels[-1]}"
+
+
 def extract_json(text: str):
     """
     Intenta extraer un JSON válido desde la respuesta de la IA.
@@ -1693,59 +1907,45 @@ def fallback_rule_parser(texto_transcrito: str) -> dict:
     Esto mantiene la demo funcionando aunque OpenAI u Ollama no respondan.
     """
     t = normalize_text(texto_transcrito)
+    commands, conflict = normalize_light_commands([], texto_transcrito)
+
+    if conflict:
+        return {
+            "texto": texto_transcrito,
+            "intencion": "control_luces",
+            "detalle": "comandos contradictorios sobre el mismo ambiente",
+            "espacio": "desconocido",
+            "accion": "NONE",
+            "comandos_luces": [],
+            "conflicto_comandos": True,
+        }
 
     accion = "NONE"
     espacio = "desconocido"
 
-    # Detectar acción
-    if any(x in t for x in ["prende", "enciende", "encender", "activar", "activa"]):
-        accion = "ON"
-
-    elif any(x in t for x in ["apaga", "apagar", "desactiva", "desactivar"]):
-        accion = "OFF"
-
-    # Detectar espacio
-    if "sala" in t:
-        espacio = "sala"
-
-    elif "comedor" in t:
-        espacio = "comedor"
-
-    elif "cocina" in t:
-        espacio = "cocina"
-
-    elif (
-        "dormitorio" in t
-        or "cuarto principal" in t
-        or "habitacion principal" in t
-        or "habitación principal" in t
-        or "dormitorio principal" in t
-        or "recamara principal" in t
-    ):
-        espacio = "dormitorio"
-
-    mentions_light = any(x in t for x in ["luz", "luces", "led", "foco", "lampara", "lámpara"])
-    intencion = "control_luces" if accion in {"ON", "OFF"} and (espacio != "desconocido" or mentions_light) else "otra"
-    if intencion == "control_luces":
-        accion_texto = "encender" if accion == "ON" else "apagar"
-        respuesta_usuario = (
-            f"Entendi que quieres {accion_texto} la luz de "
-            f"{ESPACIOS_DESCRIPCION.get(espacio, espacio)}. Lo dejo preparado "
-            "para que confirmes antes de ejecutarlo."
-        )
+    if commands:
+        accion = commands[0]["accion"]
+        espacio = commands[0]["espacio"]
     else:
-        respuesta_usuario = (
-            "Te escuche, pero necesito que me digas una accion y un ambiente "
-            "concreto para poder preparar un comando."
-        )
+        accion = detect_light_action(t)
+        spaces = detect_spaces_in_text(t)
+        if spaces:
+            espacio = spaces[0]
 
-    return {
+    intencion = "control_luces" if accion in {"ON", "OFF"} and (espacio != "desconocido" or mentions_light_words(t)) else "otra"
+    result = {
         "texto": texto_transcrito,
         "intencion": intencion,
         "detalle": "resultado por reglas locales",
         "espacio": espacio,
-        "accion": accion
+        "accion": accion,
     }
+
+    if len(commands) > 1:
+        result["comandos_luces"] = commands
+        result["detalle"] = f"comandos multiples: {describe_light_commands(commands)}"
+
+    return result
 
 
 def split_ai_interpretation(ia_json: dict | None) -> tuple[dict | None, str]:
@@ -1799,12 +1999,42 @@ def sanitize_ai_json(
         "intencion": intencion,
         "detalle": detalle,
         "espacio": espacio,
-        "accion": accion
+        "accion": accion,
     }
+
+    commands, conflict = normalize_light_commands(
+        ia_json.get("comandos_luces"),
+        texto_transcrito,
+        accion,
+        espacio,
+    )
+    if conflict:
+        saneado.update({
+            "intencion": "control_luces",
+            "detalle": detalle or "comandos contradictorios sobre el mismo ambiente",
+            "espacio": "desconocido",
+            "accion": "NONE",
+            "comandos_luces": [],
+            "conflicto_comandos": True,
+        })
+        return saneado
+
+    if commands:
+        saneado["intencion"] = "control_luces"
+        saneado["espacio"] = commands[0]["espacio"]
+        saneado["accion"] = commands[0]["accion"]
+        if len(commands) > 1:
+            saneado["comandos_luces"] = commands
+            if not saneado["detalle"]:
+                saneado["detalle"] = f"comandos multiples: {describe_light_commands(commands)}"
 
     # Si quedó ambiguo, intenta rescatar con fallback
     if saneado["espacio"] == "desconocido" or saneado["accion"] == "NONE":
         fallback = fallback_rule_parser(texto_transcrito)
+
+        if fallback.get("conflicto_comandos"):
+            saneado.update(fallback)
+            return saneado
 
         if saneado["espacio"] == "desconocido" and fallback["espacio"] != "desconocido":
             saneado["espacio"] = fallback["espacio"]
@@ -1814,6 +2044,9 @@ def sanitize_ai_json(
 
         if saneado["intencion"] == "otra" and fallback["intencion"] == "control_luces":
             saneado["intencion"] = "control_luces"
+
+        if fallback.get("comandos_luces"):
+            saneado["comandos_luces"] = fallback["comandos_luces"]
 
         if not saneado["detalle"]:
             saneado["detalle"] = "ajustado con validación local"
@@ -1847,6 +2080,19 @@ def build_default_ai_reply(texto_transcrito: str, ia_json: dict) -> str:
     intencion = ia_json.get("intencion", "otra")
     espacio = ia_json.get("espacio", "desconocido")
     accion = ia_json.get("accion", "NONE")
+    comandos_luces = ia_json.get("comandos_luces") if isinstance(ia_json.get("comandos_luces"), list) else []
+
+    if ia_json.get("conflicto_comandos"):
+        return (
+            "Escuche ordenes contradictorias para el mismo ambiente. Dime de nuevo "
+            "que luz quieres encender o apagar para ejecutarlo con seguridad."
+        )
+
+    if intencion == "control_luces" and len(comandos_luces) > 1:
+        return (
+            f"Listo, entendi que quieres {describe_light_commands(comandos_luces)}. "
+            "Lo dejo preparado y espero tu confirmacion antes de tocar el hardware."
+        )
 
     if intencion == "control_luces" and accion in {"ON", "OFF"}:
         accion_texto = "encender" if accion == "ON" else "apagar"
@@ -1899,9 +2145,28 @@ INTENT_JSON_SCHEMA = {
             "type": "string",
             "enum": ["ON", "OFF", "NONE"],
             "description": "Acción solicitada."
+        },
+        "comandos_luces": {
+            "type": "array",
+            "description": "Lista de comandos de luces cuando la frase incluye varios ambientes, todas las luces o acciones mixtas. Usa [] si es comando simple o no aplica.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "espacio": {
+                        "type": "string",
+                        "enum": ["sala", "comedor", "cocina", "dormitorio"]
+                    },
+                    "accion": {
+                        "type": "string",
+                        "enum": ["ON", "OFF"]
+                    }
+                },
+                "required": ["espacio", "accion"],
+                "additionalProperties": False
+            }
         }
     },
-    "required": ["texto", "intencion", "detalle", "espacio", "accion"],
+    "required": ["texto", "intencion", "detalle", "espacio", "accion", "comandos_luces"],
     "additionalProperties": False
 }
 
@@ -1977,6 +2242,13 @@ def call_openai_intent(texto_transcrito: str) -> str:
     - Si no detectas ambiente, espacio = desconocido.
     - Si quiere controlar luces, intencion = control_luces.
     - Si habla de camaras, puertas, drones, seguridad general, preguntas o conversacion normal, intencion = otra.
+    - Para un comando simple, llena espacio/accion legacy y usa comandos_luces = [].
+    - Para varios ambientes o varias acciones en una frase, llena comandos_luces con cada orden y conserva espacio/accion con la primera orden por compatibilidad.
+    - "prende cocina y comedor" => comandos_luces con cocina ON y comedor ON.
+    - "prende todas las luces" => comandos_luces con sala, cocina, comedor y dormitorio en ON.
+    - "apaga todas las luces" => comandos_luces con sala, cocina, comedor y dormitorio en OFF.
+    - "prende cocina y apaga comedor" => comandos_luces con cocina ON y comedor OFF.
+    - Si la misma frase da ordenes contradictorias al mismo ambiente, usa accion = NONE, espacio = desconocido, comandos_luces = [] y pide aclaracion.
 
     Como escribir "respuesta_usuario":
     - Maximo dos frases.
@@ -2046,7 +2318,8 @@ def build_local_ai_prompt(texto_transcrito: str) -> str:
             "intencion": "control_luces o otra",
             "detalle": "detalle tecnico breve",
             "espacio": "sala, comedor, cocina, dormitorio o desconocido",
-            "accion": "ON, OFF o NONE"
+            "accion": "ON, OFF o NONE",
+            "comandos_luces": []
           }},
           "respuesta_usuario": "respuesta IA natural, clara e inteligente para el usuario"
         }}
@@ -2079,6 +2352,15 @@ def build_local_ai_prompt(texto_transcrito: str) -> str:
         - Si menciona cocina, usa "cocina".
         - Si menciona dormitorio, cuarto principal, habitación principal o dormitorio principal, usa "dormitorio".
         - Si no está claro, usa "desconocido".
+
+        Para el campo "comandos_luces":
+        - En un comando simple, usa [].
+        - Si hay varios ambientes, todas las luces o acciones mixtas, agrega cada orden como {"espacio":"...","accion":"ON|OFF"}.
+        - "prende cocina y comedor" significa cocina ON y comedor ON.
+        - "prende todas las luces" significa sala, cocina, comedor y dormitorio ON.
+        - "apaga todas las luces" significa sala, cocina, comedor y dormitorio OFF.
+        - "prende cocina y apaga comedor" significa cocina ON y comedor OFF.
+        - Si hay contradicción sobre el mismo ambiente, no ejecutes: accion NONE, espacio desconocido y comandos_luces [].
 
         Ejemplos:
         - "prende luz cocina" -> {{"intencion_json":{{"texto":"prende luz cocina","intencion":"control_luces","detalle":"encender luz de cocina","espacio":"cocina","accion":"ON"}},"respuesta_usuario":"Entendi: quieres encender la luz de cocina. Lo dejo listo y espero tu confirmacion para ejecutarlo."}}
@@ -2298,11 +2580,41 @@ def build_voice_intent_plan(
     module = infer_command_module(texto_transcrito, ia_json)
     action = infer_module_action(module, texto_transcrito, ia_json)
     espacio = normalize_espacio(str(ia_json.get("espacio", "desconocido")))
+    light_commands, command_conflict = normalize_light_commands(
+        ia_json.get("comandos_luces"),
+        texto_transcrito,
+        action,
+        espacio,
+    )
+    command_conflict = command_conflict or bool(ia_json.get("conflicto_comandos"))
     mqtt_preview = None
     delivery_preview = None
+    delivery_previews: list[dict] = []
     can_execute = False
 
-    if module == "lights":
+    if module == "lights" and command_conflict:
+        action = "NONE"
+        espacio = "desconocido"
+        light_commands = []
+    elif module == "lights" and len(light_commands) > 1:
+        for command in light_commands:
+            preview = build_http_delivery_preview(
+                command["espacio"], command["accion"], organization_id, access_token
+            )
+            if preview is not None:
+                delivery_previews.append(preview)
+
+        if len(delivery_previews) == len(light_commands):
+            delivery_preview = delivery_previews[0]
+            can_execute = True
+
+        action = light_commands[0]["accion"] if len({cmd["accion"] for cmd in light_commands}) == 1 else "MULTIPLE"
+        espacio = "multiple"
+    elif module == "lights":
+        if len(light_commands) == 1:
+            action = light_commands[0]["accion"]
+            espacio = light_commands[0]["espacio"]
+
         delivery_preview = build_http_delivery_preview(
             espacio, action, organization_id, access_token
         )
@@ -2330,20 +2642,47 @@ def build_voice_intent_plan(
     module_label = module_labels.get(module, "sistema")
     ai_reply = str(respuesta_usuario or "").strip()
     espacio_label = ESPACIOS_DESCRIPCION.get(espacio, espacio)
+    command_summary = describe_light_commands(light_commands)
 
-    if can_execute:
+    if command_conflict:
+        respuesta = (
+            "Escuche ordenes contradictorias para el mismo ambiente. Dime de nuevo "
+            "que luz quieres encender o apagar para prepararlo con seguridad."
+        )
+        steps = [
+            "Validar lo que se transcribio del comando de voz.",
+            "Pedir aclaracion porque un mismo ambiente recibio ordenes opuestas.",
+        ]
+    elif can_execute:
         respuesta = ai_reply or (
-            f"Entendi el comando para {module_label}: {action} en {espacio_label}. "
+            f"Entendi el comando para {module_label}: {command_summary if len(light_commands) > 1 else f'{action} en {espacio_label}'}. "
             "Lo dejo preparado y espero tu confirmacion antes de ejecutarlo."
         )
         steps = [
             "Validar lo que se transcribio del comando de voz.",
-            f"Preparar {module_label} con accion {action} para {espacio_label}.",
             (
-                "Esperar confirmacion y dejar el comando disponible para el ESP32 por HTTPS."
-                if delivery_preview
-                else f"Esperar confirmacion y publicar el payload MQTT en {mqtt_preview['mqtt_topic']}."
+                f"Preparar {module_label}: {command_summary}."
+                if len(light_commands) > 1
+                else f"Preparar {module_label} con accion {action} para {espacio_label}."
             ),
+            (
+                "Esperar confirmacion y dejar los comandos disponibles para el ESP32 por HTTPS."
+                if delivery_previews
+                else (
+                    "Esperar confirmacion y dejar el comando disponible para el ESP32 por HTTPS."
+                    if delivery_preview
+                    else f"Esperar confirmacion y publicar el payload MQTT en {mqtt_preview['mqtt_topic']}."
+                )
+            ),
+        ]
+    elif module == "lights" and light_commands:
+        respuesta = ai_reply or (
+            f"Entendi que quieres {command_summary}, pero no encuentro un ESP32 enlazado "
+            "para recibir esos comandos ahora mismo."
+        )
+        steps = [
+            "Validar lo que se transcribio del comando de voz.",
+            "Confirmar que exista un ESP32 enlazado y online para sala, cocina, comedor y dormitorio.",
         ]
     elif module == "lights" and action in {"ON", "OFF"} and espacio == "desconocido":
         accion_texto = "encender" if action == "ON" else "apagar"
@@ -2385,8 +2724,12 @@ def build_voice_intent_plan(
         "espacio": espacio,
         "mqtt_preview": mqtt_preview,
         "delivery_preview": delivery_preview,
+        "delivery_previews": delivery_previews or None,
         "expires_at": to_iso(utc_now() + timedelta(seconds=VOICE_PLAN_TTL_SECONDS)),
     }
+
+    if len(light_commands) > 1:
+        plan["comandos_luces"] = light_commands
 
     if not using_supabase():
         PENDING_VOICE_PLANS[request_id] = {
@@ -2600,6 +2943,7 @@ async def voice_intent(
             "mqtt_payload": plan["mqtt_preview"]["mqtt_payload"] if plan["mqtt_preview"] else None
         },
         "delivery": plan.get("delivery_preview"),
+        "delivery_previews": plan.get("delivery_previews"),
     }
 
 
@@ -2677,6 +3021,58 @@ def confirm_voice_intent(
 
     espacio = str(plan.get("espacio", "desconocido"))
     action = str(plan.get("action", "NONE"))
+    plan_commands, plan_conflict = normalize_light_commands(
+        plan.get("comandos_luces"),
+        "",
+        action,
+        espacio,
+    )
+    if plan_conflict:
+        raise HTTPException(status_code=400, detail="Plan con comandos contradictorios")
+
+    if len(plan_commands) > 1:
+        deliveries = []
+        for command in plan_commands:
+            http_device = find_http_esp32_for_space(
+                command["espacio"],
+                context["organization_id"] if context else None,
+                context["token"] if context else None,
+            )
+            if http_device is None:
+                raise HTTPException(status_code=400, detail="No hay ESP32 enlazado para ejecutar todos los comandos")
+            deliveries.append(
+                enqueue_http_led_command(
+                    http_device,
+                    command["accion"],
+                    command["espacio"],
+                    source_request_id=request_id,
+                    context=context,
+                )
+            )
+
+        if context:
+            supabase_rest(
+                "PATCH",
+                f"voice_intents?request_id=eq.{urllib.parse.quote(request_id)}",
+                service_role=True,
+                payload={"status": "queued", "confirmed_at": to_iso(utc_now())},
+            )
+        return {
+            "ok": True,
+            "queued": True,
+            "executed": False,
+            "message": "Comandos enviados a la cola del ESP32. Esperando confirmacion de cada LED.",
+            "plan": plan,
+            "delivery": deliveries[0] if deliveries else None,
+            "deliveries": deliveries,
+            "queued_count": len(deliveries),
+            "fase_4_mqtt": {
+                "accion_mqtt": "COLA_HTTP_ESP32_MULTI",
+                "mqtt_topic": None,
+                "mqtt_payload": None,
+            }
+        }
+
     http_device = find_http_esp32_for_space(
         espacio,
         context["organization_id"] if context else None,
