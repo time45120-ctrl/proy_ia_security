@@ -40,6 +40,11 @@ type DebugLogEntry = {
   details?: string;
 };
 
+type LightCommandView = {
+  espacio?: string;
+  accion?: string;
+};
+
 const SILENT_AUDIO_MIN_BYTES = 1500;
 const SILENT_AUDIO_PEAK_THRESHOLD = 0.03;
 
@@ -228,6 +233,7 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
   const [isConfirming, setIsConfirming] = useState(false);
   const [recentIntents, setRecentIntents] = useState<VoiceIntentAuditRecord[]>([]);
   const [debugLogs, setDebugLogs] = useState<DebugLogEntry[]>([]);
+  const confirmationDeliveryKey = buildDeliveryKey(getConfirmationDeliveries(confirmation));
 
   useEffect(() => {
     void handlePing();
@@ -259,32 +265,56 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
   }, [isRecording]);
 
   useEffect(() => {
-    const delivery = confirmation?.delivery;
-    const commandId = delivery?.command_id;
+    const deliveries = getConfirmationDeliveries(confirmation);
+    const pendingDeliveries = deliveries.filter(
+      (delivery) =>
+        delivery.transport === "http_polling" &&
+        delivery.command_id &&
+        !isTerminalDeliveryStatus(delivery.status),
+    );
 
-    if (
-      delivery?.transport !== "http_polling" ||
-      !commandId ||
-      ["executed", "failed", "expired"].includes(delivery.status)
-    ) {
+    if (pendingDeliveries.length === 0) {
       return;
     }
 
-    const activeCommandId = commandId;
     let isCancelled = false;
 
     async function refreshDeliveryStatus() {
       try {
-        const payload = await getDeviceCommandStatus(activeCommandId);
+        const updates = await Promise.all(
+          pendingDeliveries.map(async (delivery) => {
+            const payload = await getDeviceCommandStatus(delivery.command_id ?? "");
+            return payload.delivery;
+          }),
+        );
         if (isCancelled) {
           return;
         }
 
-        setConfirmation((current) =>
-          current ? { ...current, delivery: payload.delivery } : current,
+        const updatesById = new Map(
+          updates
+            .filter((delivery) => delivery.command_id)
+            .map((delivery) => [delivery.command_id, delivery]),
         );
-        setStatusText(formatDeliveryStatus(payload.delivery));
-        setConnection(payload.delivery.status === "failed" ? "error" : "online");
+        const mergedDeliveries = deliveries.map((delivery) =>
+          delivery.command_id && updatesById.has(delivery.command_id)
+            ? updatesById.get(delivery.command_id) ?? delivery
+            : delivery,
+        );
+
+        setConfirmation((current) => {
+          if (!current) {
+            return current;
+          }
+
+          return {
+            ...current,
+            delivery: mergedDeliveries[0] ?? current.delivery,
+            deliveries: mergedDeliveries,
+          };
+        });
+        setStatusText(formatDeliveryListStatus(mergedDeliveries));
+        setConnection(hasDeliveryFailure(mergedDeliveries) ? "error" : "online");
       } catch {
         if (!isCancelled) {
           setStatusText("Esperando el estado del ESP32. La API no respondio a la consulta.");
@@ -301,11 +331,7 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
       isCancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [
-    confirmation?.delivery?.command_id,
-    confirmation?.delivery?.status,
-    confirmation?.delivery?.transport,
-  ]);
+  }, [confirmationDeliveryKey]);
 
   function appendDebugLog(
     level: DebugLogLevel,
@@ -625,10 +651,11 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
 
       setConfirmation(payload);
       void refreshRecentIntents();
+      const deliveries = getConfirmationDeliveries(payload);
       setConnection(payload.ok ? "online" : "error");
       setStatusText(
-        payload.delivery
-          ? formatDeliveryStatus(payload.delivery)
+        deliveries.length > 0
+          ? formatDeliveryListStatus(deliveries)
           : payload.message ??
           (payload.executed
             ? "Plan confirmado y ejecutado."
@@ -638,8 +665,9 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
         ok: payload.ok ?? false,
         executed: payload.executed ?? false,
         queued: payload.queued ?? false,
-        delivery_status: payload.delivery?.status ?? "sin delivery",
-        command_id: payload.delivery?.command_id ?? "sin comando",
+        queued_count: payload.queued_count ?? deliveries.length,
+        delivery_statuses: deliveries.map((delivery) => delivery.status),
+        command_ids: deliveries.map((delivery) => delivery.command_id ?? "sin comando"),
       });
     } catch (error) {
       const message = getErrorMessage(error);
@@ -843,10 +871,11 @@ function AiCommandCard({
     response?.fase_3_ia_json?.intencion_json ??
     response?.fase_3_ia_json?.ia_json;
   const plan = response?.plan;
-  const delivery =
-    confirmation?.delivery ?? response?.delivery ?? plan?.delivery_preview;
-  const isHttpDelivery = delivery?.transport === "http_polling";
+  const deliveries = getVisibleDeliveries(confirmation, response, plan);
+  const delivery = deliveries[0] ?? confirmation?.delivery ?? response?.delivery ?? plan?.delivery_preview;
+  const isHttpDelivery = deliveries.some((item) => item.transport === "http_polling") || delivery?.transport === "http_polling";
   const mqttResult = confirmation?.fase_4_mqtt ?? response?.fase_4_mqtt;
+  const lightCommands = plan?.comandos_luces ?? intentJson?.comandos_luces ?? [];
   const dashboardStatusReply = buildDashboardStatusReply(connection, activeContext);
   const userReply =
     response?.respuesta_ia_usuario ??
@@ -933,13 +962,13 @@ function AiCommandCard({
               wide
             />
             <InfoRow label="Modulo" value={formatModuleLabel(plan?.module)} />
-            <InfoRow label="Accion" value={plan?.action ?? intentJson?.accion ?? "Pendiente"} />
-            <InfoRow label="Ambiente" value={plan?.espacio ?? intentJson?.espacio ?? "Pendiente"} />
+            <InfoRow label="Accion" value={formatCommandAction(plan, intentJson)} />
+            <InfoRow label="Ambiente" value={formatCommandSpaces(plan, intentJson)} />
             <InfoRow
               label="Ejecucion"
               value={
-                confirmation?.delivery
-                  ? formatDeliveryStatus(confirmation.delivery)
+                confirmation && deliveries.length > 0
+                  ? formatDeliveryListStatus(deliveries)
                   : confirmation?.message ??
                 (plan?.can_execute
                   ? "Lista para confirmar"
@@ -989,10 +1018,13 @@ function AiCommandCard({
             <InfoRow label="Intencion" value={intentJson?.intencion ?? "Pendiente"} />
             {isHttpDelivery ? (
               <>
-                <InfoRow label="Entrega" value="HTTPS polling ESP32" />
-                <InfoRow label="Estado" value={formatDeliveryStatus(delivery)} />
-                <InfoRow label="Payload" value={formatHttpDeliveryPayload(delivery)} />
-                <InfoRow label="Device ID" value={delivery?.device_id ?? "Pendiente"} />
+                <InfoRow label="Entrega" value={deliveries.length > 1 ? "HTTPS polling ESP32 multi-comando" : "HTTPS polling ESP32"} />
+                <InfoRow label="Estado" value={formatDeliveryListStatus(deliveries)} />
+                <InfoRow label="Payload" value={formatHttpDeliveryPayloadList(deliveries)} />
+                <InfoRow label="Device ID" value={formatDeliveryDeviceIds(deliveries)} />
+                {lightCommands.length > 1 ? (
+                  <InfoRow label="Comandos" value={formatLightCommands(lightCommands)} />
+                ) : null}
               </>
             ) : (
               <>
@@ -1436,16 +1468,83 @@ function formatMqttPayload(payload?: MqttLightPayload | null) {
   return `${espacio} ${accion}`;
 }
 
-function formatHttpDeliveryPayload(delivery?: DeviceCommandDelivery | null) {
-  if (!delivery) {
+function compactDeliveries(
+  deliveries: Array<DeviceCommandDelivery | null | undefined> | null | undefined,
+) {
+  return (deliveries ?? []).filter(
+    (delivery): delivery is DeviceCommandDelivery => Boolean(delivery),
+  );
+}
+
+function getConfirmationDeliveries(confirmation?: VoiceIntentConfirmResponse | null) {
+  const multi = compactDeliveries(confirmation?.deliveries);
+  if (multi.length > 0) {
+    return multi;
+  }
+
+  return compactDeliveries([confirmation?.delivery]);
+}
+
+function getVisibleDeliveries(
+  confirmation: VoiceIntentConfirmResponse | null,
+  response: VoiceIntentResponse | null,
+  plan: VoiceIntentResponse["plan"] | undefined,
+) {
+  const confirmed = getConfirmationDeliveries(confirmation);
+  if (confirmed.length > 0) {
+    return confirmed;
+  }
+
+  const responsePreviews = compactDeliveries(response?.delivery_previews);
+  if (responsePreviews.length > 0) {
+    return responsePreviews;
+  }
+
+  const planPreviews = compactDeliveries(plan?.delivery_previews);
+  if (planPreviews.length > 0) {
+    return planPreviews;
+  }
+
+  return compactDeliveries([response?.delivery, plan?.delivery_preview]);
+}
+
+function isTerminalDeliveryStatus(status?: string) {
+  return status === "executed" || status === "failed" || status === "expired";
+}
+
+function hasDeliveryFailure(deliveries: DeviceCommandDelivery[]) {
+  return deliveries.some(
+    (delivery) => delivery.status === "failed" || delivery.status === "expired",
+  );
+}
+
+function buildDeliveryKey(deliveries: DeviceCommandDelivery[]) {
+  return deliveries
+    .map((delivery) => `${delivery.command_id ?? "preview"}:${delivery.status}:${delivery.transport}`)
+    .join("|");
+}
+
+function formatHttpDeliveryPayloadList(deliveries: DeviceCommandDelivery[]) {
+  if (deliveries.length === 0) {
     return "SIN_PAYLOAD";
   }
 
-  return JSON.stringify({
+  const payloads = deliveries.map((delivery) => ({
     target: delivery.target ?? "led",
     action: delivery.action ?? "none",
     espacio: delivery.espacio ?? "desconocido",
-  });
+    status: delivery.status,
+  }));
+
+  return JSON.stringify(deliveries.length === 1 ? payloads[0] : payloads);
+}
+
+function formatDeliveryDeviceIds(deliveries: DeviceCommandDelivery[]) {
+  const deviceIds = Array.from(
+    new Set(deliveries.map((delivery) => delivery.device_id).filter(Boolean)),
+  );
+
+  return deviceIds.length > 0 ? deviceIds.join(", ") : "Pendiente";
 }
 
 function formatDeliveryStatus(delivery?: DeviceCommandDelivery | null) {
@@ -1482,16 +1581,85 @@ function formatDeliveryStatus(delivery?: DeviceCommandDelivery | null) {
   return `Estado de entrega: ${delivery.status}.`;
 }
 
+function formatDeliveryListStatus(deliveries: DeviceCommandDelivery[]) {
+  if (deliveries.length <= 1) {
+    return formatDeliveryStatus(deliveries[0]);
+  }
+
+  const total = deliveries.length;
+  const executed = deliveries.filter((delivery) => delivery.status === "executed").length;
+  const failed = deliveries.filter((delivery) => delivery.status === "failed").length;
+  const expired = deliveries.filter((delivery) => delivery.status === "expired").length;
+
+  if (executed === total) {
+    return `Todos los LEDs fueron ejecutados y confirmados por el ESP32 (${executed}/${total}).`;
+  }
+
+  if (failed > 0) {
+    return `Ejecucion parcial: ${executed}/${total} LEDs confirmados y ${failed} con error.`;
+  }
+
+  if (expired > 0) {
+    return `Ejecucion parcial: ${executed}/${total} LEDs confirmados y ${expired} expirados.`;
+  }
+
+  if (deliveries.every((delivery) => delivery.status === "pending_confirmation")) {
+    return `${total} comandos listos para confirmar y enviar al ESP32.`;
+  }
+
+  return `Comandos en proceso: ${executed}/${total} LEDs confirmados.`;
+}
+
+function formatLightCommands(commands?: LightCommandView[]) {
+  if (!commands || commands.length === 0) {
+    return "Pendiente";
+  }
+
+  return commands
+    .map((command) => `${command.accion ?? "NONE"} ${command.espacio ?? "desconocido"}`)
+    .join(", ");
+}
+
+function formatCommandAction(
+  plan?: VoiceIntentResponse["plan"],
+  intentJson?: VoiceIntentResponse["intencion_json"],
+) {
+  const commands = plan?.comandos_luces ?? intentJson?.comandos_luces;
+  if (commands && commands.length > 1) {
+    return formatLightCommands(commands);
+  }
+
+  return plan?.action ?? intentJson?.accion ?? "Pendiente";
+}
+
+function formatCommandSpaces(
+  plan?: VoiceIntentResponse["plan"],
+  intentJson?: VoiceIntentResponse["intencion_json"],
+) {
+  const commands = plan?.comandos_luces ?? intentJson?.comandos_luces;
+  if (commands && commands.length > 1) {
+    return commands.map((command) => command.espacio ?? "desconocido").join(", ");
+  }
+
+  return plan?.espacio ?? intentJson?.espacio ?? "Pendiente";
+}
+
 function formatIntentJson(intentJson?: VoiceIntentResponse["intencion_json"]) {
   if (!intentJson) {
     return "Pendiente";
   }
 
-  return JSON.stringify({
+  const payload: Record<string, unknown> = {
     intencion: intentJson.intencion ?? "otra",
     espacio: intentJson.espacio ?? "desconocido",
     accion: intentJson.accion ?? "NONE",
-  });
+  };
+
+  if (intentJson.comandos_luces?.length) {
+    payload.comandos_luces = intentJson.comandos_luces;
+  }
+
+  return JSON.stringify(payload);
 }
 
 function buildDashboardStatusReply(
