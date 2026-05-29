@@ -362,7 +362,11 @@ export function SyncLab() {
                 <span className="text-white"> Subir</span>.
               </li>
               <li>
-                6. Espera que el inventario muestre <span className="text-white">Online</span>{" "}
+                6. Abre Serial Monitor en <span className="text-white">115200 baudios</span>{" "}
+                y pulsa <span className="text-white">EN/RESET</span> si no ves el banner AFCR.
+              </li>
+              <li>
+                7. Espera que el inventario muestre <span className="text-white">Online</span>{" "}
                 y luego prueba cada ambiente desde el dashboard.
               </li>
             </ol>
@@ -411,7 +415,8 @@ export function SyncLab() {
                     codigo C++ para Arduino IDE
                   </p>
                   <p className="mt-2 text-sm leading-6 text-slate-300">
-                    Copia el sketch completo y edita estas tres lineas:
+                    Copia el sketch completo. Despues de subirlo, el Serial Monitor debe mostrar
+                    <span className="text-white"> AFCR ESP32 iniciando...</span> a 115200 baudios.
                   </p>
                 </div>
                 <button
@@ -435,6 +440,7 @@ export function SyncLab() {
                 si algo no funciona
               </p>
               <ul className="mt-3 grid gap-2 text-sm leading-6 text-slate-300">
+                <li>Serial Monitor en blanco: selecciona 115200 baudios, confirma el puerto correcto y pulsa EN/RESET.</li>
                 <li>El ESP32 no aparece: prueba un cable USB de datos u otro puerto.</li>
                 <li>No compila: instala el soporte ESP32 y la libreria ArduinoJson.</li>
                 <li>No sube: revisa placa y puerto; algunas placas requieren mantener BOOT al cargar.</li>

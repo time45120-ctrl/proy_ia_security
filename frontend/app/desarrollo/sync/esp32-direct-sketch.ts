@@ -9,9 +9,10 @@ export const ESP32_DIRECT_SKETCH = String.raw`/*
      - Dormitorio: GPIO 19
   2. Edita WIFI_SSID, WIFI_PASSWORD y PAIRING_TOKEN en Arduino IDE.
   3. Carga este sketch al ESP32 mediante USB.
-  4. El ESP32 reclama el token con POST /devices/claim.
-  5. Consulta GET /device/commands cada 5 segundos mediante HTTPS autenticado.
-  6. Ejecuta el LED del ambiente solicitado y confirma con POST /device/commands/{id}/ack.
+  4. Abre Serial Monitor en 115200 baudios y pulsa EN/RESET si no ves mensajes.
+  5. El ESP32 reclama el token con POST /devices/claim.
+  6. Consulta GET /device/commands cada 5 segundos mediante HTTPS autenticado.
+  7. Ejecuta el LED del ambiente solicitado y confirma con POST /device/commands/{id}/ack.
 
   Librerias Arduino:
   - ArduinoJson
@@ -55,8 +56,10 @@ const RoomLed ROOM_LEDS[] = {
 const int ROOM_LED_COUNT = sizeof(ROOM_LEDS) / sizeof(ROOM_LEDS[0]);
 const unsigned long POLL_INTERVAL_MS = 5000;
 const unsigned long LINK_RETRY_INTERVAL_MS = 10000;
+const unsigned long SERIAL_HEARTBEAT_MS = 10000;
 unsigned long lastPollAt = 0;
 unsigned long lastLinkAttemptAt = 0;
+unsigned long lastSerialHeartbeatAt = 0;
 
 // ISRG Root X1: valida la cadena Let's Encrypt de api.afcrseguridad.com.
 const char ISRG_ROOT_X1[] PROGMEM = R"EOF(
@@ -132,6 +135,24 @@ void initializeRoomLeds() {
   }
 }
 
+void printStartupBanner() {
+  delay(800);
+  Serial.println();
+  Serial.println("AFCR ESP32 iniciando...");
+  Serial.println("Serial Monitor: 115200 baudios");
+  Serial.println(String("API_URL: ") + API_URL);
+  Serial.println("Pines: sala=GPIO16, cocina=GPIO17, comedor=GPIO18, dormitorio=GPIO19");
+}
+
+void printHeartbeat(const String& detail) {
+  if (millis() - lastSerialHeartbeatAt < SERIAL_HEARTBEAT_MS) {
+    return;
+  }
+
+  lastSerialHeartbeatAt = millis();
+  Serial.println(String("AFCR vivo: ") + detail);
+}
+
 String tokenFingerprint() {
   uint32_t fingerprint = 2166136261UL;
   String token = String(PAIRING_TOKEN);
@@ -164,7 +185,7 @@ bool connectWifi() {
   Serial.println();
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("WiFi conectado: " + WiFi.localIP().toString());
+    Serial.println(String("WiFi conectado: ") + WiFi.localIP().toString());
     return true;
   }
 
@@ -216,7 +237,7 @@ bool claimDevice() {
   int code = http.POST(body);
 
   if (code < 200 || code >= 300) {
-    Serial.println("Fallo claim HTTP: " + String(code));
+    Serial.println(String("Fallo claim HTTP: ") + code);
     http.end();
     return false;
   }
@@ -244,18 +265,18 @@ bool claimDevice() {
   prefs.putString("token_hash", currentTokenFingerprint);
   prefs.end();
 
-  Serial.println("ESP32 enlazado: " + deviceId);
+  Serial.println(String("ESP32 enlazado: ") + deviceId);
   return true;
 }
 
 bool acknowledgeCommand(const String& commandId, const String& status, const String& detail) {
   WiFiClientSecure client;
   HTTPClient http;
-  if (!beginApiRequest(http, client, "/device/commands/" + commandId + "/ack")) {
+  if (!beginApiRequest(http, client, String("/device/commands/") + commandId + "/ack")) {
     return false;
   }
   http.addHeader("Content-Type", "application/json");
-  http.addHeader("Authorization", "Bearer " + deviceApiKey);
+  http.addHeader("Authorization", String("Bearer ") + deviceApiKey);
 
   StaticJsonDocument<256> request;
   request["device_id"] = deviceId;
@@ -278,15 +299,15 @@ void pollCommands() {
 
   WiFiClientSecure client;
   HTTPClient http;
-  if (!beginApiRequest(http, client, "/device/commands?device_id=" + deviceId)) {
+  if (!beginApiRequest(http, client, String("/device/commands?device_id=") + deviceId)) {
     Serial.println("No se pudo iniciar polling HTTP.");
     return;
   }
-  http.addHeader("Authorization", "Bearer " + deviceApiKey);
+  http.addHeader("Authorization", String("Bearer ") + deviceApiKey);
 
   int code = http.GET();
   if (code < 200 || code >= 300) {
-    Serial.println("Fallo polling HTTP: " + String(code));
+    Serial.println(String("Fallo polling HTTP: ") + code);
     http.end();
     return;
   }
@@ -315,17 +336,17 @@ void pollCommands() {
   String detail = "Comando no soportado";
 
   if (target == "led" && ledPin < 0) {
-    detail = "Ambiente no soportado: " + espacio;
+    detail = String("Ambiente no soportado: ") + espacio;
     Serial.println(detail);
   } else if (target == "led" && action == "turn_on") {
     digitalWrite(ledPin, HIGH);
     status = "executed";
-    detail = "LED " + roomLabel + " encendido";
+    detail = String("LED ") + roomLabel + " encendido";
     Serial.println(detail);
   } else if (target == "led" && action == "turn_off") {
     digitalWrite(ledPin, LOW);
     status = "executed";
-    detail = "LED " + roomLabel + " apagado";
+    detail = String("LED ") + roomLabel + " apagado";
     Serial.println(detail);
   }
 
@@ -336,6 +357,7 @@ void pollCommands() {
 
 void setup() {
   Serial.begin(115200);
+  printStartupBanner();
   initializeRoomLeds();
 
   if (!configurationReady()) {
@@ -355,6 +377,7 @@ void setup() {
 
 void loop() {
   if (!configurationReady()) {
+    printHeartbeat("configura WIFI_SSID, WIFI_PASSWORD y PAIRING_TOKEN");
     delay(1000);
     return;
   }
@@ -374,10 +397,12 @@ void loop() {
       lastLinkAttemptAt = millis();
       claimDevice();
     }
+    printHeartbeat("WiFi conectado; esperando credenciales HTTP del backend");
     delay(250);
     return;
   }
 
   pollCommands();
+  printHeartbeat(String("online; device_id=") + deviceId + "; ip=" + WiFi.localIP().toString());
 }
 `;
