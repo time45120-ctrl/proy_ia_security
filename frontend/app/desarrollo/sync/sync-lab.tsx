@@ -427,9 +427,12 @@ export function SyncLab() {
                   Copiar codigo C++
                 </button>
               </div>
-              <pre className="mt-4 overflow-x-auto rounded-lg border border-[#f6c563]/30 bg-[#f6c563]/10 p-3 text-xs leading-6 text-[#ffe0a3]">
-                {`const char* WIFI_SSID = "TU_WIFI";\nconst char* WIFI_PASSWORD = "TU_PASSWORD";\nconst char* PAIRING_TOKEN = "PEGA_AQUI_TU_TOKEN";`}
-              </pre>
+              <p className="mt-4 rounded-lg border border-[#f6c563]/30 bg-[#f6c563]/10 px-3 py-3 text-sm leading-6 text-[#ffe0a3]">
+                Edita solo las constantes <span className="text-white">WIFI_SSID</span>,{" "}
+                <span className="text-white">WIFI_PASSWORD</span> y{" "}
+                <span className="text-white">PAIRING_TOKEN</span> dentro del sketch completo de abajo.
+                No hay que crear un segundo bloque de configuracion.
+              </p>
               <pre className="mt-4 max-h-[32rem] overflow-auto rounded-lg border border-white/10 bg-[#030912] p-4 text-xs leading-5 text-slate-300">
                 {sketchForPairing}
               </pre>

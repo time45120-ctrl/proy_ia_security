@@ -33,13 +33,21 @@ Preferences prefs;
 String deviceId;
 String deviceApiKey;
 
+// =========================================================
+// CONFIGURACION DEL USUARIO
 // Edita solamente estas tres lineas antes de subir el sketch.
+// =========================================================
 const char* WIFI_SSID = "TU_WIFI";
 const char* WIFI_PASSWORD = "TU_PASSWORD";
 const char* PAIRING_TOKEN = "PEGA_AQUI_TU_TOKEN";
 
 // La web reemplaza esta URL por la API activa al copiar el sketch.
 const char* API_URL = "https://api.afcrseguridad.com";
+
+// Valores de ejemplo usados solo para validar que el usuario edito la seccion anterior.
+const char* DEFAULT_WIFI_SSID = "TU_WIFI";
+const char* DEFAULT_WIFI_PASSWORD = "TU_PASSWORD";
+const char* DEFAULT_PAIRING_TOKEN = "PEGA_AQUI_TU_TOKEN";
 
 struct RoomLed {
   const char* espacio;
@@ -165,12 +173,24 @@ String tokenFingerprint() {
   return String(fingerprint, HEX);
 }
 
+String configurationProblem() {
+  if (String(WIFI_SSID) == DEFAULT_WIFI_SSID || String(WIFI_SSID).length() == 0) {
+    return "falta cambiar WIFI_SSID";
+  }
+
+  if (String(WIFI_PASSWORD) == DEFAULT_WIFI_PASSWORD) {
+    return "falta cambiar WIFI_PASSWORD";
+  }
+
+  if (String(PAIRING_TOKEN) == DEFAULT_PAIRING_TOKEN || String(PAIRING_TOKEN).length() == 0) {
+    return "falta pegar PAIRING_TOKEN";
+  }
+
+  return "OK";
+}
+
 bool configurationReady() {
-  return String(WIFI_SSID) != "TU_WIFI"
-    && String(WIFI_SSID).length() > 0
-    && String(WIFI_PASSWORD) != "TU_PASSWORD"
-    && String(PAIRING_TOKEN) != "PEGA_AQUI_TU_TOKEN"
-    && String(PAIRING_TOKEN).length() > 0;
+  return configurationProblem() == "OK";
 }
 
 bool connectWifi() {
@@ -361,7 +381,8 @@ void setup() {
   initializeRoomLeds();
 
   if (!configurationReady()) {
-    Serial.println("Edita WIFI_SSID, WIFI_PASSWORD y PAIRING_TOKEN en Arduino IDE.");
+    Serial.println(String("Configuracion incompleta: ") + configurationProblem());
+    Serial.println("Edita las 3 constantes dentro del sketch completo y vuelve a subirlo.");
     return;
   }
 
@@ -377,7 +398,7 @@ void setup() {
 
 void loop() {
   if (!configurationReady()) {
-    printHeartbeat("configura WIFI_SSID, WIFI_PASSWORD y PAIRING_TOKEN");
+    printHeartbeat(String("configuracion incompleta: ") + configurationProblem());
     delay(1000);
     return;
   }
