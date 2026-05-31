@@ -337,11 +337,13 @@ class HttpPollingDeviceTests(unittest.TestCase):
         self.assertEqual(plan["action"], "NONE")
         self.assertIn("contradictorias", plan["respuesta"])
 
-    def test_confirm_delivers_multiple_http_commands_until_ack(self):
+    def test_confirm_delivers_multiple_http_commands_as_one_batch_until_ack(self):
         pairing, claimed = self.pair_esp32("ESP32 multiambiente")
         plan = self.compound_light_plan("prende cocina y comedor")
 
         self.assertTrue(plan["can_execute"])
+        self.assertTrue(plan["batch"])
+        self.assertEqual(plan["delivery_mode"], "batch_http_polling")
         self.assertEqual(len(plan["comandos_luces"]), 2)
         self.assertEqual(len(plan["delivery_previews"]), 2)
 
@@ -349,37 +351,36 @@ class HttpPollingDeviceTests(unittest.TestCase):
             api.VoiceIntentConfirmRequest(request_id=plan["request_id"])
         )
         self.assertTrue(confirmed["queued"])
+        self.assertTrue(confirmed["batch"])
+        self.assertEqual(confirmed["delivery_mode"], "batch_http_polling")
         self.assertEqual(confirmed["queued_count"], 2)
         self.assertEqual(len(confirmed["deliveries"]), 2)
         self.assertEqual(api.mqtt_client.published, [])
 
         authorization = f"Bearer {claimed['device_api_key']}"
-        first = api.poll_device_commands(pairing["device_id"], authorization)
-        self.assertEqual(first["status"], "delivered")
-        self.assertIn(first["espacio"], {"cocina", "comedor"})
-        api.acknowledge_device_command(
-            first["command_id"],
-            api.DeviceCommandAckRequest(
-                device_id=pairing["device_id"],
-                status="executed",
-                detail="primer LED listo",
-            ),
-            authorization,
-        )
+        batch = api.poll_device_commands(pairing["device_id"], authorization)
+        self.assertEqual(batch["status"], "delivered")
+        self.assertEqual(batch["target"], "leds")
+        self.assertEqual(batch["action"], "batch")
+        self.assertEqual(len(batch["commands"]), 2)
+        self.assertEqual({command["espacio"] for command in batch["commands"]}, {"cocina", "comedor"})
 
-        second = api.poll_device_commands(pairing["device_id"], authorization)
-        self.assertEqual(second["status"], "delivered")
-        self.assertIn(second["espacio"], {"cocina", "comedor"})
-        self.assertNotEqual(second["command_id"], first["command_id"])
-        api.acknowledge_device_command(
-            second["command_id"],
+        ack = api.acknowledge_device_command(
+            batch["command_id"],
             api.DeviceCommandAckRequest(
                 device_id=pairing["device_id"],
                 status="executed",
-                detail="segundo LED listo",
+                detail="batch LED listo",
             ),
             authorization,
         )
+        self.assertTrue(ack["ok"])
+        self.assertEqual(len(ack["deliveries"]), 2)
+        self.assertEqual({delivery["status"] for delivery in ack["deliveries"]}, {"executed"})
+
+        for delivery in confirmed["deliveries"]:
+            status = api.get_device_command_status(delivery["command_id"])
+            self.assertEqual(status["delivery"]["status"], "executed")
 
         idle = api.poll_device_commands(pairing["device_id"], authorization)
         self.assertEqual(idle["status"], "idle")
