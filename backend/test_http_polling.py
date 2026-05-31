@@ -57,6 +57,18 @@ class HttpPollingDeviceTests(unittest.TestCase):
             },
         )
 
+    def test_pairing_token_expires_after_configured_minutes(self):
+        before = api.utc_now()
+        pairing = api.create_pairing_token(
+            api.PairingTokenRequest(name="ESP32 multiambiente", type="ESP32", model="ESP32")
+        )
+        expires_at = api.parse_iso(pairing["pairing_expires_at"])
+        self.assertIsNotNone(expires_at)
+        delta = expires_at - before
+        self.assertGreaterEqual(delta, timedelta(minutes=api.PAIRING_TOKEN_MINUTES) - timedelta(seconds=2))
+        self.assertLessEqual(delta, timedelta(minutes=api.PAIRING_TOKEN_MINUTES) + timedelta(seconds=2))
+        self.assertEqual(api.PAIRING_TOKEN_MINUTES, 60)
+
     def test_claim_issues_key_once_and_poll_requires_bearer(self):
         pairing = api.create_pairing_token(
             api.PairingTokenRequest(name="Luz cocina", type="ESP32", model="ESP32")
