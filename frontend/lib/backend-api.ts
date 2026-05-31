@@ -68,7 +68,9 @@ export type VoiceIntentPlan = {
   mqtt_preview?: MqttPreview | null;
   delivery_preview?: DeviceCommandDelivery | null;
   delivery_previews?: DeviceCommandDelivery[] | null;
+  delivery_mode?: "batch_http_polling" | "http_polling" | "mqtt" | string | null;
   comandos_luces?: LightCommand[];
+  batch?: boolean;
   expires_at?: string;
 };
 
@@ -129,6 +131,8 @@ export type VoiceIntentConfirmResponse = {
   delivery?: DeviceCommandDelivery | null;
   deliveries?: DeviceCommandDelivery[] | null;
   queued_count?: number;
+  batch?: boolean;
+  delivery_mode?: "batch_http_polling" | "http_polling" | "mqtt" | string | null;
   plan?: VoiceIntentPlan;
   fase_4_mqtt?: {
     accion_mqtt?: string;

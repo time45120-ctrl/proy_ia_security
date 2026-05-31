@@ -12,7 +12,7 @@ export const ESP32_DIRECT_SKETCH = String.raw`/*
   4. Abre Serial Monitor en 115200 baudios y pulsa EN/RESET si no ves mensajes.
   5. El ESP32 reclama el token con POST /devices/claim.
   6. Consulta GET /device/commands cada 5 segundos mediante HTTPS autenticado.
-  7. Ejecuta el LED del ambiente solicitado y confirma con POST /device/commands/{id}/ack.
+  7. Ejecuta un comando simple o un lote batch de LEDs y confirma con POST /device/commands/{id}/ack.
 
   Librerias Arduino:
   - ArduinoJson
@@ -141,6 +141,69 @@ void initializeRoomLeds() {
     pinMode(ROOM_LEDS[i].pin, OUTPUT);
     digitalWrite(ROOM_LEDS[i].pin, LOW);
   }
+}
+
+bool validateLedCommand(const String& target, const String& action, const String& espacio, String& detail) {
+  if (target != "led") {
+    detail = String("Target no soportado: ") + target;
+    return false;
+  }
+
+  if (findRoomLedPin(espacio) < 0) {
+    detail = String("Ambiente no soportado: ") + espacio;
+    return false;
+  }
+
+  if (action != "turn_on" && action != "turn_off") {
+    detail = String("Accion LED no soportada: ") + action;
+    return false;
+  }
+
+  return true;
+}
+
+String applyLedCommand(const String& action, const String& espacio) {
+  int ledPin = findRoomLedPin(espacio);
+  bool turnOn = action == "turn_on";
+  digitalWrite(ledPin, turnOn ? HIGH : LOW);
+  return String("LED ") + roomLedLabel(espacio) + (turnOn ? " encendido" : " apagado");
+}
+
+bool executeSingleLedCommand(const String& target, const String& action, const String& espacio, String& detail) {
+  if (!validateLedCommand(target, action, espacio, detail)) {
+    return false;
+  }
+
+  detail = applyLedCommand(action, espacio);
+  Serial.println(detail);
+  return true;
+}
+
+bool executeBatchLedCommands(JsonArray commands, String& detail) {
+  if (commands.isNull() || commands.size() == 0) {
+    detail = "Batch vacio";
+    return false;
+  }
+
+  for (JsonVariant command : commands) {
+    String itemTarget = command["target"] | "led";
+    String itemAction = command["action"] | "";
+    String itemEspacio = command["espacio"] | "";
+    if (!validateLedCommand(itemTarget, itemAction, itemEspacio, detail)) {
+      return false;
+    }
+  }
+
+  detail = "Batch ejecutado:";
+  for (JsonVariant command : commands) {
+    String itemAction = command["action"] | "";
+    String itemEspacio = command["espacio"] | "";
+    String result = applyLedCommand(itemAction, itemEspacio);
+    detail += String(" ") + roomLedLabel(itemEspacio) + (itemAction == "turn_on" ? "=ON" : "=OFF");
+    Serial.println(result);
+  }
+
+  return true;
 }
 
 void printStartupBanner() {
@@ -332,7 +395,7 @@ void pollCommands() {
     return;
   }
 
-  StaticJsonDocument<512> response;
+  StaticJsonDocument<2048> response;
   DeserializationError error = deserializeJson(response, http.getString());
   http.end();
 
@@ -350,23 +413,19 @@ void pollCommands() {
     return;
   }
 
-  int ledPin = findRoomLedPin(espacio);
-  String roomLabel = roomLedLabel(espacio);
   String status = "failed";
   String detail = "Comando no soportado";
 
-  if (target == "led" && ledPin < 0) {
-    detail = String("Ambiente no soportado: ") + espacio;
-    Serial.println(detail);
-  } else if (target == "led" && action == "turn_on") {
-    digitalWrite(ledPin, HIGH);
+  if (target == "leds" && action == "batch") {
+    JsonArray commands = response["commands"].as<JsonArray>();
+    if (executeBatchLedCommands(commands, detail)) {
+      status = "executed";
+    } else {
+      Serial.println(detail);
+    }
+  } else if (executeSingleLedCommand(target, action, espacio, detail)) {
     status = "executed";
-    detail = String("LED ") + roomLabel + " encendido";
-    Serial.println(detail);
-  } else if (target == "led" && action == "turn_off") {
-    digitalWrite(ledPin, LOW);
-    status = "executed";
-    detail = String("LED ") + roomLabel + " apagado";
+  } else {
     Serial.println(detail);
   }
 
