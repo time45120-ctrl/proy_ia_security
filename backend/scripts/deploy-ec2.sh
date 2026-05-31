@@ -15,6 +15,24 @@ run_as_app_user() {
   fi
 }
 
+ensure_pairing_token_minutes() {
+  run_as_app_user python3 - <<'PY_ENV'
+from pathlib import Path
+
+path = Path('.env')
+lines = path.read_text().splitlines()
+updated = False
+for index, line in enumerate(lines):
+    if line.startswith('PAIRING_TOKEN_MINUTES='):
+        lines[index] = 'PAIRING_TOKEN_MINUTES=60'
+        updated = True
+        break
+if not updated:
+    lines.append('PAIRING_TOKEN_MINUTES=60')
+path.write_text('\n'.join(lines) + '\n')
+PY_ENV
+}
+
 cd "${APP_DIR}"
 
 test -f app_api.py
@@ -24,6 +42,8 @@ test -f .env
 if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
   run_as_app_user python3 -m venv "${VENV_DIR}"
 fi
+
+ensure_pairing_token_minutes
 
 run_as_app_user "${VENV_DIR}/bin/python" -m pip install --requirement requirements.txt
 run_as_app_user "${VENV_DIR}/bin/python" -c "import ast, pathlib; ast.parse(pathlib.Path('app_api.py').read_text()); print('app_api.py syntax OK')"
