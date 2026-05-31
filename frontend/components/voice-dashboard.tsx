@@ -876,6 +876,7 @@ function AiCommandCard({
   const isHttpDelivery = deliveries.some((item) => item.transport === "http_polling") || delivery?.transport === "http_polling";
   const mqttResult = confirmation?.fase_4_mqtt ?? response?.fase_4_mqtt;
   const lightCommands = plan?.comandos_luces ?? intentJson?.comandos_luces ?? [];
+  const usesBatchDelivery = confirmation?.batch || plan?.batch || confirmation?.delivery_mode === "batch_http_polling" || plan?.delivery_mode === "batch_http_polling";
   const dashboardStatusReply = buildDashboardStatusReply(connection, activeContext);
   const userReply =
     response?.respuesta_ia_usuario ??
@@ -1018,7 +1019,7 @@ function AiCommandCard({
             <InfoRow label="Intencion" value={intentJson?.intencion ?? "Pendiente"} />
             {isHttpDelivery ? (
               <>
-                <InfoRow label="Entrega" value={deliveries.length > 1 ? "HTTPS polling ESP32 multi-comando" : "HTTPS polling ESP32"} />
+                <InfoRow label="Entrega" value={usesBatchDelivery ? "HTTPS polling ESP32 batch" : deliveries.length > 1 ? "HTTPS polling ESP32 multi-comando" : "HTTPS polling ESP32"} />
                 <InfoRow label="Estado" value={formatDeliveryListStatus(deliveries)} />
                 <InfoRow label="Payload" value={formatHttpDeliveryPayloadList(deliveries)} />
                 <InfoRow label="Device ID" value={formatDeliveryDeviceIds(deliveries)} />

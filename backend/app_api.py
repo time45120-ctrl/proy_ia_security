@@ -830,6 +830,206 @@ def command_row_to_dict(row: sqlite3.Row | dict) -> dict:
     return command
 
 
+def command_poll_item(command: sqlite3.Row | dict) -> dict:
+    command_dict = command_row_to_dict(command)
+    return {
+        "command_id": command_dict["command_id"],
+        "target": command_dict["target"],
+        "action": command_dict["action"],
+        "espacio": command_dict["espacio"],
+        "status": command_dict["status"],
+        "expires_at": command_dict["expires_at"],
+    }
+
+
+def build_polled_command_response(commands: list[sqlite3.Row | dict]) -> dict:
+    if not commands:
+        return {
+            "ok": True,
+            "command_id": None,
+            "target": "led",
+            "action": "none",
+            "status": "idle",
+        }
+
+    command_items = [command_poll_item(command) for command in commands]
+    if len(command_items) == 1:
+        return {"ok": True, **command_items[0]}
+
+    return {
+        "ok": True,
+        "command_id": command_items[0]["command_id"],
+        "target": "leds",
+        "action": "batch",
+        "espacio": "multiple",
+        "status": "delivered",
+        "expires_at": min(item["expires_at"] for item in command_items if item.get("expires_at")),
+        "commands": command_items,
+    }
+
+
+def verify_supabase_http_device(device_id: str, device_api_key_hash: str) -> dict:
+    query = (
+        f"devices?select={SUPABASE_DEVICE_SAFE_COLUMNS}"
+        f"&device_id=eq.{urllib.parse.quote(device_id)}"
+        f"&device_api_key_hash=eq.{urllib.parse.quote(device_api_key_hash)}"
+        "&claimed_at=not.is.null&limit=1"
+    )
+    rows = supabase_rest("GET", query, service_role=True)
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(status_code=401, detail="Credencial de dispositivo invalida")
+    return device_row_to_dict(rows[0])
+
+
+def cleanup_expired_device_commands_for_device(device_id: str) -> None:
+    if not using_supabase():
+        return
+    query = (
+        "device_commands?status=in.(queued,delivered)"
+        f"&device_id=eq.{urllib.parse.quote(device_id)}"
+        f"&expires_at=lt.{urllib.parse.quote(to_iso(utc_now()))}"
+    )
+    supabase_rest(
+        "PATCH",
+        query,
+        service_role=True,
+        payload={"status": "expired"},
+    )
+
+
+def fetch_supabase_pending_command_group(device_id: str) -> list[dict]:
+    first_query = (
+        "device_commands?select=*"
+        f"&device_id=eq.{urllib.parse.quote(device_id)}"
+        "&status=in.(queued,delivered)&order=created_at.asc&limit=1"
+    )
+    rows = supabase_rest("GET", first_query, service_role=True)
+    if not isinstance(rows, list) or not rows:
+        return []
+
+    first = rows[0]
+    source_request_id = first.get("source_request_id")
+    if not source_request_id:
+        return [first]
+
+    group_query = (
+        "device_commands?select=*"
+        f"&device_id=eq.{urllib.parse.quote(device_id)}"
+        f"&source_request_id=eq.{urllib.parse.quote(str(source_request_id))}"
+        "&status=in.(queued,delivered)&order=created_at.asc"
+    )
+    group_rows = supabase_rest("GET", group_query, service_role=True)
+    return group_rows if isinstance(group_rows, list) and group_rows else [first]
+
+
+def mark_supabase_commands_delivered(device_id: str, commands: list[dict]) -> list[dict]:
+    queued = [command for command in commands if command.get("status") == "queued"]
+    if not queued:
+        return commands
+
+    now = to_iso(utc_now())
+    source_request_id = commands[0].get("source_request_id") if len(commands) > 1 else None
+    if source_request_id:
+        patch_query = (
+            "device_commands?status=eq.queued"
+            f"&device_id=eq.{urllib.parse.quote(device_id)}"
+            f"&source_request_id=eq.{urllib.parse.quote(str(source_request_id))}"
+        )
+        fetch_query = (
+            "device_commands?select=*"
+            f"&device_id=eq.{urllib.parse.quote(device_id)}"
+            f"&source_request_id=eq.{urllib.parse.quote(str(source_request_id))}"
+            "&status=in.(queued,delivered)&order=created_at.asc"
+        )
+    else:
+        command_id = str(queued[0]["command_id"])
+        patch_query = f"device_commands?command_id=eq.{urllib.parse.quote(command_id)}&status=eq.queued"
+        fetch_query = f"device_commands?select=*&command_id=eq.{urllib.parse.quote(command_id)}&limit=1"
+
+    supabase_rest(
+        "PATCH",
+        patch_query,
+        service_role=True,
+        payload={"status": "delivered", "delivered_at": now},
+    )
+    updated = supabase_rest("GET", fetch_query, service_role=True)
+    return updated if isinstance(updated, list) and updated else commands
+
+
+def poll_supabase_device_commands(device_id: str, device_api_key_hash: str) -> dict:
+    verify_supabase_http_device(device_id, device_api_key_hash)
+    supabase_rest(
+        "PATCH",
+        f"devices?device_id=eq.{urllib.parse.quote(device_id)}",
+        service_role=True,
+        payload={"status": "online", "last_seen": to_iso(utc_now())},
+    )
+    cleanup_expired_device_commands_for_device(device_id)
+    commands = fetch_supabase_pending_command_group(device_id)
+    commands = mark_supabase_commands_delivered(device_id, commands)
+    return build_polled_command_response(commands)
+
+
+def fetch_sqlite_pending_command_group(conn: sqlite3.Connection, device_id: str) -> list[sqlite3.Row]:
+    first = conn.execute(
+        """
+        SELECT * FROM device_commands
+        WHERE device_id = ?
+          AND status IN ('queued', 'delivered')
+        ORDER BY created_at ASC
+        LIMIT 1
+        """,
+        (device_id,)
+    ).fetchone()
+    if first is None:
+        return []
+
+    source_request_id = first["source_request_id"]
+    if not source_request_id:
+        return [first]
+
+    rows = conn.execute(
+        """
+        SELECT * FROM device_commands
+        WHERE device_id = ?
+          AND source_request_id = ?
+          AND status IN ('queued', 'delivered')
+        ORDER BY created_at ASC
+        """,
+        (device_id, source_request_id)
+    ).fetchall()
+    return rows or [first]
+
+
+def mark_sqlite_commands_delivered(conn: sqlite3.Connection, commands: list[sqlite3.Row]) -> list[sqlite3.Row]:
+    queued_ids = [command["command_id"] for command in commands if command["status"] == "queued"]
+    if not queued_ids:
+        return commands
+
+    now = to_iso(utc_now())
+    placeholders = ",".join("?" for _ in queued_ids)
+    conn.execute(
+        f"""
+        UPDATE device_commands
+        SET status = 'delivered', delivered_at = ?
+        WHERE command_id IN ({placeholders})
+        """,
+        (now, *queued_ids)
+    )
+    conn.commit()
+
+    all_ids = [command["command_id"] for command in commands]
+    fetch_placeholders = ",".join("?" for _ in all_ids)
+    return conn.execute(
+        f"""
+        SELECT * FROM device_commands
+        WHERE command_id IN ({fetch_placeholders})
+        ORDER BY created_at ASC
+        """,
+        tuple(all_ids)
+    ).fetchall()
+
+
 def enqueue_http_led_command(
     device: dict,
     accion: str,
@@ -1209,18 +1409,7 @@ def poll_device_commands(
 ):
     device_auth = authenticate_http_device(device_id, authorization)
     if using_supabase():
-        result = supabase_http_request(
-            "POST",
-            "/rest/v1/rpc/poll_device_command",
-            service_role=True,
-            payload={
-                "p_device_id": device_id,
-                "p_device_api_key_hash": device_auth["device_api_key_hash"],
-            },
-        )
-        if not isinstance(result, dict):
-            raise HTTPException(status_code=401, detail="Credencial de dispositivo invalida")
-        return {"ok": True, **result}
+        return poll_supabase_device_commands(device_id, device_auth["device_api_key_hash"])
 
     cleanup_expired_device_commands()
     now = to_iso(utc_now())
@@ -1234,52 +1423,10 @@ def poll_device_commands(
             """,
             (now, device_id)
         )
-        row = conn.execute(
-            """
-            SELECT * FROM device_commands
-            WHERE device_id = ?
-              AND status IN ('queued', 'delivered')
-            ORDER BY created_at ASC
-            LIMIT 1
-            """,
-            (device_id,)
-        ).fetchone()
+        commands = fetch_sqlite_pending_command_group(conn, device_id)
+        commands = mark_sqlite_commands_delivered(conn, commands)
 
-        if row is not None and row["status"] == "queued":
-            conn.execute(
-                """
-                UPDATE device_commands
-                SET status = 'delivered', delivered_at = ?
-                WHERE command_id = ?
-                """,
-                (now, row["command_id"])
-            )
-            row = conn.execute(
-                "SELECT * FROM device_commands WHERE command_id = ?",
-                (row["command_id"],)
-            ).fetchone()
-
-        conn.commit()
-
-    if row is None:
-        return {
-            "ok": True,
-            "command_id": None,
-            "target": "led",
-            "action": "none",
-            "status": "idle",
-        }
-
-    command = command_row_to_dict(row)
-    return {
-        "ok": True,
-        "command_id": command["command_id"],
-        "target": command["target"],
-        "action": command["action"],
-        "espacio": command["espacio"],
-        "status": command["status"],
-        "expires_at": command["expires_at"],
-    }
+    return build_polled_command_response(commands)
 
 
 @app.post("/device/commands/{command_id}/ack")
@@ -1295,21 +1442,13 @@ def acknowledge_device_command(
         raise HTTPException(status_code=400, detail="status debe ser executed o failed")
 
     if using_supabase():
-        delivery = supabase_http_request(
-            "POST",
-            "/rest/v1/rpc/ack_device_command",
-            service_role=True,
-            payload={
-                "p_command_id": command_id,
-                "p_device_id": payload.device_id.strip(),
-                "p_device_api_key_hash": device_auth["device_api_key_hash"],
-                "p_status": status,
-                "p_detail": payload.detail,
-            },
+        return acknowledge_supabase_device_command(
+            command_id,
+            payload.device_id.strip(),
+            device_auth["device_api_key_hash"],
+            status,
+            payload.detail,
         )
-        if not isinstance(delivery, dict):
-            raise HTTPException(status_code=404, detail="Comando no encontrado o expirado")
-        return {"ok": status == "executed", "delivery": delivery}
 
     with get_db_connection() as conn:
         row = conn.execute(
@@ -1326,28 +1465,119 @@ def acknowledge_device_command(
         if row["status"] not in {"queued", "delivered", "executed", "failed"}:
             raise HTTPException(status_code=409, detail="Comando no puede confirmarse")
 
+        source_request_id = row["source_request_id"]
+        if source_request_id:
+            group_rows = conn.execute(
+                """
+                SELECT * FROM device_commands
+                WHERE device_id = ?
+                  AND source_request_id = ?
+                  AND status IN ('queued', 'delivered', 'executed', 'failed')
+                ORDER BY created_at ASC
+                """,
+                (payload.device_id.strip(), source_request_id)
+            ).fetchall()
+        else:
+            group_rows = [row]
+
+        command_ids = [command["command_id"] for command in group_rows]
+        placeholders = ",".join("?" for _ in command_ids)
         conn.execute(
-            """
+            f"""
             UPDATE device_commands
             SET status = ?, ack_at = ?, failure_detail = ?
-            WHERE command_id = ?
+            WHERE command_id IN ({placeholders})
             """,
             (
                 status,
                 to_iso(utc_now()),
                 (payload.detail or "").strip() or None,
-                command_id,
+                *command_ids,
             )
         )
         conn.commit()
         updated = conn.execute(
-            "SELECT * FROM device_commands WHERE command_id = ?",
-            (command_id,)
-        ).fetchone()
+            f"""
+            SELECT * FROM device_commands
+            WHERE command_id IN ({placeholders})
+            ORDER BY created_at ASC
+            """,
+            tuple(command_ids)
+        ).fetchall()
 
+    deliveries = [command_row_to_dict(command) for command in updated]
     return {
         "ok": status == "executed",
-        "delivery": command_row_to_dict(updated),
+        "delivery": deliveries[0] if deliveries else None,
+        "deliveries": deliveries,
+    }
+
+
+def acknowledge_supabase_device_command(
+    command_id: str,
+    device_id: str,
+    device_api_key_hash: str,
+    status: str,
+    detail: str | None,
+) -> dict:
+    verify_supabase_http_device(device_id, device_api_key_hash)
+    cleanup_expired_device_commands_for_device(device_id)
+
+    query = (
+        "device_commands?select=*"
+        f"&command_id=eq.{urllib.parse.quote(command_id)}"
+        f"&device_id=eq.{urllib.parse.quote(device_id)}"
+        "&limit=1"
+    )
+    rows = supabase_rest("GET", query, service_role=True)
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(status_code=404, detail="Comando no encontrado")
+
+    command = rows[0]
+    if command.get("status") == "expired":
+        raise HTTPException(status_code=410, detail="Comando expirado")
+    if command.get("status") not in {"queued", "delivered", "executed", "failed"}:
+        raise HTTPException(status_code=409, detail="Comando no puede confirmarse")
+
+    source_request_id = command.get("source_request_id")
+    if source_request_id:
+        group_query = (
+            "device_commands?select=*"
+            f"&device_id=eq.{urllib.parse.quote(device_id)}"
+            f"&source_request_id=eq.{urllib.parse.quote(str(source_request_id))}"
+            "&status=in.(queued,delivered,executed,failed)&order=created_at.asc"
+        )
+        group_rows = supabase_rest("GET", group_query, service_role=True)
+        commands = group_rows if isinstance(group_rows, list) and group_rows else [command]
+        patch_query = (
+            "device_commands?status=in.(queued,delivered,executed,failed)"
+            f"&device_id=eq.{urllib.parse.quote(device_id)}"
+            f"&source_request_id=eq.{urllib.parse.quote(str(source_request_id))}"
+        )
+        fetch_query = group_query.replace("&status=in.(queued,delivered,executed,failed)", "")
+    else:
+        commands = [command]
+        patch_query = f"device_commands?command_id=eq.{urllib.parse.quote(command_id)}"
+        fetch_query = query
+
+    supabase_rest(
+        "PATCH",
+        patch_query,
+        service_role=True,
+        payload={
+            "status": status,
+            "ack_at": to_iso(utc_now()),
+            "failure_detail": (detail or "").strip() or None,
+        },
+    )
+    updated = supabase_rest("GET", fetch_query, service_role=True)
+    deliveries = [command_row_to_dict(command) for command in updated] if isinstance(updated, list) else []
+    if not deliveries:
+        deliveries = [command_row_to_dict(command) for command in commands]
+    return {
+        "ok": status == "executed",
+        "delivery": deliveries[0] if deliveries else None,
+        "deliveries": deliveries,
     }
 
 
@@ -2666,7 +2896,7 @@ def build_voice_intent_plan(
                 else f"Preparar {module_label} con accion {action} para {espacio_label}."
             ),
             (
-                "Esperar confirmacion y dejar los comandos disponibles para el ESP32 por HTTPS."
+                "Esperar confirmacion y enviar un solo lote batch al ESP32 por HTTPS."
                 if delivery_previews
                 else (
                     "Esperar confirmacion y dejar el comando disponible para el ESP32 por HTTPS."
@@ -2725,11 +2955,13 @@ def build_voice_intent_plan(
         "mqtt_preview": mqtt_preview,
         "delivery_preview": delivery_preview,
         "delivery_previews": delivery_previews or None,
+        "delivery_mode": "batch_http_polling" if len(light_commands) > 1 and delivery_previews else ("http_polling" if delivery_preview else "mqtt" if mqtt_preview else None),
         "expires_at": to_iso(utc_now() + timedelta(seconds=VOICE_PLAN_TTL_SECONDS)),
     }
 
     if len(light_commands) > 1:
         plan["comandos_luces"] = light_commands
+        plan["batch"] = bool(delivery_previews)
 
     if not using_supabase():
         PENDING_VOICE_PLANS[request_id] = {
@@ -3061,11 +3293,13 @@ def confirm_voice_intent(
             "ok": True,
             "queued": True,
             "executed": False,
-            "message": "Comandos enviados a la cola del ESP32. Esperando confirmacion de cada LED.",
+            "message": "Comandos enviados en un lote batch al ESP32. Esperando confirmacion de los LEDs.",
             "plan": plan,
             "delivery": deliveries[0] if deliveries else None,
             "deliveries": deliveries,
             "queued_count": len(deliveries),
+            "batch": True,
+            "delivery_mode": "batch_http_polling",
             "fase_4_mqtt": {
                 "accion_mqtt": "COLA_HTTP_ESP32_MULTI",
                 "mqtt_topic": None,
