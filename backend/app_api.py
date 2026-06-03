@@ -3399,7 +3399,7 @@ def voice_intent_user_reply_audio(
     content, storage_content_type = supabase_binary_request(
         "GET",
         f"/storage/v1/object/authenticated/{SUPABASE_AUDIO_BUCKET}/{quoted_path}",
-        service_role=True,
+        access_token=context["token"],
     )
     media_type = expected_content_type or storage_content_type or "audio/mpeg"
     return Response(
