@@ -6,6 +6,7 @@ import {
   API_BASE_URL,
   confirmVoiceIntentPlan,
   getDeviceCommandStatus,
+  getVoiceIntentUserReplyAudio,
   listRecentVoiceIntents,
   pingBackend,
   sendVoiceIntentPreview,
@@ -32,6 +33,7 @@ type DeviceCard = {
 type DeviceDetailId = "lights" | "doors" | "cameras" | "drones";
 type ActiveDetail = "ia" | DeviceDetailId;
 type DebugLogLevel = "info" | "success" | "warning" | "error";
+type AiSpeechStatus = "idle" | "loading" | "playing" | "paused" | "error" | "unavailable";
 type DebugLogEntry = {
   id: string;
   timestamp: string;
@@ -215,6 +217,9 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioLevelFrameRef = useRef<number | null>(null);
   const audioLevelStatsRef = useRef({ samples: 0, sum: 0, peak: 0 });
+  const aiReplyAudioRef = useRef<HTMLAudioElement | null>(null);
+  const aiReplyAudioUrlRef = useRef<string | null>(null);
+  const aiReplyAudioTokenRef = useRef(0);
   const [isUploading, setIsUploading] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -233,6 +238,8 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
   const [isConfirming, setIsConfirming] = useState(false);
   const [recentIntents, setRecentIntents] = useState<VoiceIntentAuditRecord[]>([]);
   const [debugLogs, setDebugLogs] = useState<DebugLogEntry[]>([]);
+  const [aiSpeechStatus, setAiSpeechStatus] = useState<AiSpeechStatus>("idle");
+  const [aiSpeechError, setAiSpeechError] = useState<string | null>(null);
   const confirmationDeliveryKey = buildDeliveryKey(getConfirmationDeliveries(confirmation));
 
   useEffect(() => {
@@ -241,6 +248,7 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
 
     return () => {
       stopMicrophoneStream();
+      releaseAiReplyAudio();
     };
   }, []);
 
@@ -263,6 +271,29 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
       window.clearInterval(intervalId);
     };
   }, [isRecording]);
+
+  useEffect(() => {
+    const audioInfo = response?.respuesta_ia_audio;
+
+    if (!response) {
+      stopAiReplyAudio("idle");
+      return;
+    }
+
+    if (audioInfo?.available && audioInfo.endpoint) {
+      void playAiReplyAudio("auto");
+      return;
+    }
+
+    if (audioInfo?.error) {
+      stopAiReplyAudio("error");
+      setAiSpeechError(audioInfo.error);
+      appendDebugLog("warning", "Audio IA no disponible", audioInfo.error);
+      return;
+    }
+
+    stopAiReplyAudio("unavailable");
+  }, [response?.plan?.request_id, response?.respuesta_ia_audio?.available, response?.respuesta_ia_audio?.endpoint]);
 
   useEffect(() => {
     const deliveries = getConfirmationDeliveries(confirmation);
@@ -354,6 +385,117 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
     setDebugLogs((current) => [entry, ...current].slice(0, 14));
   }
 
+  function releaseAiReplyAudio() {
+    aiReplyAudioRef.current?.pause();
+    if (aiReplyAudioRef.current) {
+      aiReplyAudioRef.current.src = "";
+    }
+    aiReplyAudioRef.current = null;
+
+    if (aiReplyAudioUrlRef.current) {
+      window.URL.revokeObjectURL(aiReplyAudioUrlRef.current);
+      aiReplyAudioUrlRef.current = null;
+    }
+  }
+
+  function stopAiReplyAudio(nextStatus: AiSpeechStatus = "idle", shouldLog = false) {
+    const hadAudio = Boolean(aiReplyAudioRef.current || aiReplyAudioUrlRef.current);
+    aiReplyAudioTokenRef.current += 1;
+    releaseAiReplyAudio();
+    setAiSpeechStatus(nextStatus);
+
+    if (nextStatus !== "error") {
+      setAiSpeechError(null);
+    }
+
+    if (shouldLog && hadAudio) {
+      appendDebugLog("info", "Audio IA detenido por el usuario");
+    }
+  }
+
+  async function playAiReplyAudio(source: "auto" | "manual") {
+    const audioInfo = response?.respuesta_ia_audio;
+
+    if (!audioInfo?.available || !audioInfo.endpoint) {
+      const error = audioInfo?.error ?? "El backend no envio audio IA para esta respuesta.";
+      setAiSpeechStatus(audioInfo ? "error" : "unavailable");
+      setAiSpeechError(error);
+      appendDebugLog("warning", "Audio IA no disponible", error);
+      return;
+    }
+
+    const playToken = aiReplyAudioTokenRef.current + 1;
+    aiReplyAudioTokenRef.current = playToken;
+    releaseAiReplyAudio();
+    setAiSpeechStatus("loading");
+    setAiSpeechError(null);
+    appendDebugLog("info", source === "auto" ? "Preparando voz IA automatica" : "Preparando repeticion de voz IA", {
+      endpoint: audioInfo.endpoint,
+      content_type: audioInfo.content_type ?? "audio/mpeg",
+      model: audioInfo.model ?? "no informado",
+      voice: audioInfo.voice ?? "no informada",
+    });
+
+    try {
+      const blob = await getVoiceIntentUserReplyAudio(audioInfo.endpoint);
+      const objectUrl = window.URL.createObjectURL(blob);
+
+      if (aiReplyAudioTokenRef.current !== playToken) {
+        window.URL.revokeObjectURL(objectUrl);
+        return;
+      }
+
+      const audio = new Audio(objectUrl);
+      audio.preload = "auto";
+      aiReplyAudioRef.current = audio;
+      aiReplyAudioUrlRef.current = objectUrl;
+
+      audio.onplay = () => {
+        if (aiReplyAudioTokenRef.current !== playToken) {
+          return;
+        }
+        setAiSpeechStatus("playing");
+        appendDebugLog("success", "Audio IA reproduciendo", { source });
+      };
+
+      audio.onpause = () => {
+        if (aiReplyAudioTokenRef.current !== playToken || audio.ended) {
+          return;
+        }
+        setAiSpeechStatus("paused");
+      };
+
+      audio.onended = () => {
+        if (aiReplyAudioTokenRef.current !== playToken) {
+          return;
+        }
+        setAiSpeechStatus("idle");
+        appendDebugLog("info", "Audio IA finalizado");
+      };
+
+      audio.onerror = () => {
+        if (aiReplyAudioTokenRef.current !== playToken) {
+          return;
+        }
+        const message = "El navegador no pudo reproducir el MP3 generado por OpenAI.";
+        setAiSpeechStatus("error");
+        setAiSpeechError(message);
+        appendDebugLog("error", "Error reproduciendo audio IA", message);
+      };
+
+      await audio.play();
+    } catch (error) {
+      if (aiReplyAudioTokenRef.current !== playToken) {
+        return;
+      }
+      const message = getErrorMessage(error);
+      releaseAiReplyAudio();
+      setAiSpeechStatus("error");
+      setAiSpeechError(message);
+      appendDebugLog("error", source === "auto" ? "Autoplay de audio IA no disponible" : "Fallo al reproducir audio IA", message);
+    }
+  }
+
   async function handlePing() {
     setIsChecking(true);
     setConnection("checking");
@@ -409,6 +551,7 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
     }
 
     try {
+      stopAiReplyAudio("idle");
       appendDebugLog("info", "Solicitando permiso de microfono");
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -622,7 +765,19 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
         backend_size_bytes: audioInfo?.content_size_bytes ?? 0,
         stored: audioInfo?.stored ?? false,
         can_execute: payload.plan?.can_execute ?? false,
+        tts_available: payload.respuesta_ia_audio?.available ?? false,
       });
+
+      if (payload.respuesta_ia_audio?.available) {
+        appendDebugLog("success", "Audio IA generado por backend", {
+          endpoint: payload.respuesta_ia_audio.endpoint ?? "sin endpoint",
+          content_type: payload.respuesta_ia_audio.content_type ?? "audio/mpeg",
+          voice: payload.respuesta_ia_audio.voice ?? "no informada",
+          model: payload.respuesta_ia_audio.model ?? "no informado",
+        });
+      } else if (payload.respuesta_ia_audio?.error) {
+        appendDebugLog("warning", "Backend no genero audio IA", payload.respuesta_ia_audio.error);
+      }
     } catch (error) {
       const message = getErrorMessage(error);
       setConnection("error");
@@ -681,6 +836,7 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
   }
 
   function handleDiscardPlan() {
+    stopAiReplyAudio("idle", true);
     setResponse(null);
     setConfirmation(null);
     setErrorText(null);
@@ -743,11 +899,15 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
               isUploading={isUploading}
               onConfirmPlan={() => void handleConfirmPlan()}
               onDiscardPlan={handleDiscardPlan}
+              onReplayAiReply={() => void playAiReplyAudio("manual")}
+              onStopAiReply={() => stopAiReplyAudio("idle", true)}
               onVoiceNodeClick={() => void handleVoiceNodeClick()}
               recordingSeconds={recordingSeconds}
               response={response}
               statusText={statusText}
               debugLogs={debugLogs}
+              aiSpeechStatus={aiSpeechStatus}
+              aiSpeechError={aiSpeechError}
             />
 
             {activeDetail !== "ia" ? (
@@ -843,11 +1003,15 @@ function AiCommandCard({
   isUploading,
   onConfirmPlan,
   onDiscardPlan,
+  onReplayAiReply,
+  onStopAiReply,
   onVoiceNodeClick,
   recordingSeconds,
   response,
   statusText,
   debugLogs,
+  aiSpeechStatus,
+  aiSpeechError,
 }: {
   activeContext: string;
   confirmation: VoiceIntentConfirmResponse | null;
@@ -858,11 +1022,15 @@ function AiCommandCard({
   isUploading: boolean;
   onConfirmPlan: () => void;
   onDiscardPlan: () => void;
+  onReplayAiReply: () => void;
+  onStopAiReply: () => void;
   onVoiceNodeClick: () => void;
   recordingSeconds: number;
   response: VoiceIntentResponse | null;
   statusText: string;
   debugLogs: DebugLogEntry[];
+  aiSpeechStatus: AiSpeechStatus;
+  aiSpeechError: string | null;
 }) {
   const intentJson =
     response?.respuesta_json_dispositivo ??
@@ -871,6 +1039,7 @@ function AiCommandCard({
     response?.fase_3_ia_json?.intencion_json ??
     response?.fase_3_ia_json?.ia_json;
   const plan = response?.plan;
+  const aiAudio = response?.respuesta_ia_audio ?? plan?.respuesta_ia_audio;
   const deliveries = getVisibleDeliveries(confirmation, response, plan);
   const delivery = deliveries[0] ?? confirmation?.delivery ?? response?.delivery ?? plan?.delivery_preview;
   const isHttpDelivery = deliveries.some((item) => item.transport === "http_polling") || delivery?.transport === "http_polling";
@@ -956,7 +1125,14 @@ function AiCommandCard({
         <div className="grid min-w-0 gap-4 overflow-hidden border-t border-white/10 pt-4 text-sm xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0">
           <div className="grid gap-2">
             <InfoRow label="Transcripcion" value={transcript} />
-            <InfoRow label="Respuesta IA para el usuario" value={userReply} wide />
+            <UserReplyAudioRow
+              value={userReply}
+              audio={aiAudio}
+              status={aiSpeechStatus}
+              error={aiSpeechError}
+              onReplay={onReplayAiReply}
+              onStop={onStopAiReply}
+            />
             <InfoRow
               label="Respuesta Json para el dispositivo"
               value={deviceJsonReply}
@@ -1380,6 +1556,100 @@ function formatBytes(value: number) {
   return `${(value / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+function UserReplyAudioRow({
+  value,
+  audio,
+  status,
+  error,
+  onReplay,
+  onStop,
+}: {
+  value: string;
+  audio?: VoiceIntentResponse["respuesta_ia_audio"] | null;
+  status: AiSpeechStatus;
+  error: string | null;
+  onReplay: () => void;
+  onStop: () => void;
+}) {
+  const hasAudio = Boolean(audio?.available && audio.endpoint);
+  const hasAudioMetadata = Boolean(audio);
+  const canReplay = hasAudio && status !== "loading";
+  const canStop = status === "loading" || status === "playing" || status === "paused";
+  const statusLabel = formatAiSpeechStatus(status, error, audio);
+
+  return (
+    <div className="grid min-w-0 gap-2 border-b border-white/5 pb-2 last:border-none last:pb-0">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-slate-500">Respuesta IA para el usuario</span>
+        {hasAudioMetadata ? (
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onReplay}
+              disabled={!canReplay}
+              title="Reproducir voz IA"
+              aria-label="Reproducir voz IA"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#44c7f4]/25 bg-[#44c7f4]/10 text-[#b7ebff] transition hover:bg-[#44c7f4]/15 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.04] disabled:text-slate-600"
+            >
+              <SpeakerIcon className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={onStop}
+              disabled={!canStop}
+              title="Detener voz IA"
+              aria-label="Detener voz IA"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/15 bg-white/5 text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <StopIcon className="h-4 w-4" />
+            </button>
+          </div>
+        ) : null}
+      </div>
+      <span className="min-w-0 whitespace-pre-wrap break-words text-slate-200 [overflow-wrap:anywhere]">
+        {value}
+      </span>
+      {hasAudioMetadata ? (
+        <span className={status === "error" ? "text-xs text-rose-200" : "text-xs text-slate-500"}>
+          Voz generada por IA · {statusLabel}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function formatAiSpeechStatus(
+  status: AiSpeechStatus,
+  error: string | null,
+  audio?: VoiceIntentResponse["respuesta_ia_audio"] | null,
+) {
+  if (status === "loading") {
+    return "cargando audio";
+  }
+
+  if (status === "playing") {
+    return "reproduciendo";
+  }
+
+  if (status === "paused") {
+    return "pausado";
+  }
+
+  if (status === "error") {
+    return error ?? audio?.error ?? "audio no disponible";
+  }
+
+  if (status === "unavailable" || audio?.available === false) {
+    return audio?.error ?? "audio no disponible";
+  }
+
+  if (audio?.available) {
+    return "listo para escuchar";
+  }
+
+  return "pendiente";
+}
+
 function InfoRow({
   label,
   value,
@@ -1799,6 +2069,24 @@ function getSignalLabel(state: BackendConnectionState) {
   }
 
   return "Chequeando";
+}
+
+function SpeakerIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path d="M4 9v6h4l5 4V5L8 9H4Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M16 9.5a4 4 0 0 1 0 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M18.5 7a8 8 0 0 1 0 10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function StopIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path d="M7 7h10v10H7V7Z" fill="currentColor" />
+    </svg>
+  );
 }
 
 function MicIcon({ className }: { className?: string }) {

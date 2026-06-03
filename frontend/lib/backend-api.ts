@@ -27,6 +27,16 @@ export type MqttLightPayload = {
   device_id?: string;
 };
 
+export type VoiceIntentAudio = {
+  available?: boolean;
+  content_type?: string;
+  endpoint?: string | null;
+  error?: string;
+  expires_at?: string;
+  model?: string;
+  voice?: string;
+};
+
 export type MqttPreview = {
   mqtt_topic?: string | null;
   mqtt_payload?: MqttLightPayload | null;
@@ -69,6 +79,7 @@ export type VoiceIntentPlan = {
   delivery_preview?: DeviceCommandDelivery | null;
   delivery_previews?: DeviceCommandDelivery[] | null;
   delivery_mode?: "batch_http_polling" | "http_polling" | "mqtt" | string | null;
+  respuesta_ia_audio?: VoiceIntentAudio | null;
   comandos_luces?: LightCommand[];
   batch?: boolean;
   expires_at?: string;
@@ -81,6 +92,7 @@ export type VoiceIntentResponse = {
   respuesta_usuario?: string;
   respuesta_json_dispositivo?: VoiceIntentJson | null;
   respuesta_ia_usuario?: string;
+  respuesta_ia_audio?: VoiceIntentAudio | null;
   fase_1_audio_guardado?: {
     filename?: string;
     content_type?: string;
@@ -272,6 +284,28 @@ export async function sendVoiceIntentPreview(file: File) {
   }
 
   return (await response.json()) as VoiceIntentResponse;
+}
+
+function resolveApiEndpoint(endpoint: string) {
+  const trimmedEndpoint = endpoint.trim();
+  if (/^https?:\/\//i.test(trimmedEndpoint)) {
+    return trimmedEndpoint;
+  }
+
+  return `${API_BASE_URL}/${trimmedEndpoint.replace(/^\/+/, "")}`;
+}
+
+export async function getVoiceIntentUserReplyAudio(endpoint: string) {
+  const response = await fetch(resolveApiEndpoint(endpoint), {
+    cache: "no-store",
+    headers: await authenticatedHeaders(),
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  return response.blob();
 }
 
 export async function confirmVoiceIntentPlan(requestId: string) {
