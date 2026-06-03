@@ -23,7 +23,7 @@
 # IMPORTACIONES
 # =========================================================
 
-from fastapi import FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
@@ -152,6 +152,15 @@ AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").strip().lower()
 # Puedes bajarlo a gpt-4o-mini si necesitas menor costo/latencia.
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 OPENAI_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "700"))
+OPENAI_TTS_ENABLED = os.getenv("OPENAI_TTS_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+OPENAI_TTS_MODEL = os.getenv("OPENAI_TTS_MODEL", "gpt-4o-mini-tts").strip()
+OPENAI_TTS_VOICE = os.getenv("OPENAI_TTS_VOICE", "marin").strip()
+OPENAI_TTS_RESPONSE_FORMAT = os.getenv("OPENAI_TTS_RESPONSE_FORMAT", "mp3").strip().lower()
+OPENAI_TTS_INSTRUCTIONS = os.getenv(
+    "OPENAI_TTS_INSTRUCTIONS",
+    "Habla en espanol latino con tono claro, cercano, profesional y tranquilo. "
+    "Debe sonar como un asistente domotico confiable que responde de forma breve.",
+).strip()
 AI_TEMPERATURE = float(os.getenv("AI_TEMPERATURE", "0.45"))
 AI_RESPONSE_STYLE = os.getenv(
     "AI_RESPONSE_STYLE",
@@ -434,6 +443,35 @@ def supabase_http_request(
         raise HTTPException(status_code=503, detail="No se pudo conectar a Supabase") from error
 
 
+def supabase_binary_request(
+    method: str,
+    endpoint: str,
+    *,
+    access_token: str | None = None,
+    service_role: bool = False,
+    payload: bytes | None = None,
+    headers: dict[str, str] | None = None,
+) -> tuple[bytes, str]:
+    request_headers = supabase_headers(access_token, service_role)
+    request_headers.update(headers or {})
+    request = urllib.request.Request(
+        f"{SUPABASE_URL}{endpoint}",
+        data=payload,
+        headers=request_headers,
+        method=method,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return response.read(), response.headers.get("Content-Type", "application/octet-stream")
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")
+        print(f"SUPABASE BINARY HTTP {error.code}: {detail}")
+        raise HTTPException(status_code=error.code, detail="Audio privado no disponible") from error
+    except urllib.error.URLError as error:
+        print("SUPABASE BINARY CONNECTION ERROR:", error)
+        raise HTTPException(status_code=503, detail="No se pudo conectar a Supabase Storage") from error
+
+
 def supabase_rest(
     method: str,
     resource: str,
@@ -518,6 +556,148 @@ def upload_private_audio(
     )
     expires_at = to_iso(utc_now() + timedelta(days=VOICE_AUDIO_RETENTION_DAYS))
     return object_path, expires_at
+
+
+TTS_AUDIO_FORMATS = {
+    "mp3": ("audio/mpeg", ".mp3"),
+    "wav": ("audio/wav", ".wav"),
+    "opus": ("audio/ogg", ".opus"),
+    "aac": ("audio/aac", ".aac"),
+    "flac": ("audio/flac", ".flac"),
+}
+
+
+def tts_format_settings() -> tuple[str, str, str]:
+    response_format = OPENAI_TTS_RESPONSE_FORMAT
+    if response_format not in TTS_AUDIO_FORMATS:
+        response_format = "mp3"
+    content_type, suffix = TTS_AUDIO_FORMATS[response_format]
+    return response_format, content_type, suffix
+
+
+def build_tts_audio_endpoint(request_id: str) -> str:
+    return f"/voice-intents/{urllib.parse.quote(request_id)}/audio/respuesta-ia"
+
+
+def build_response_tts_audio_metadata(
+    *,
+    request_id: str,
+    available: bool,
+    content_type: str | None = None,
+    storage_path: str | None = None,
+    expires_at: str | None = None,
+    error: str | None = None,
+) -> dict:
+    _, default_content_type, _ = tts_format_settings()
+    metadata = {
+        "available": available,
+        "content_type": content_type or default_content_type,
+        "endpoint": build_tts_audio_endpoint(request_id),
+        "model": OPENAI_TTS_MODEL,
+        "voice": OPENAI_TTS_VOICE,
+    }
+    if storage_path:
+        metadata["storage_path"] = storage_path
+    if expires_at:
+        metadata["expires_at"] = expires_at
+    if error:
+        metadata["error"] = error
+    return metadata
+
+
+def generate_response_tts_audio(context: dict | None, request_id: str, respuesta_usuario: str) -> dict:
+    if not OPENAI_TTS_ENABLED:
+        return build_response_tts_audio_metadata(
+            request_id=request_id,
+            available=False,
+            error="Texto a voz desactivado por OPENAI_TTS_ENABLED.",
+        )
+
+    if context is None or not using_supabase():
+        return build_response_tts_audio_metadata(
+            request_id=request_id,
+            available=False,
+            error="Texto a voz requiere sesion y Supabase Storage configurado.",
+        )
+
+    if openai_client is None:
+        return build_response_tts_audio_metadata(
+            request_id=request_id,
+            available=False,
+            error="OpenAI no esta inicializado para generar voz.",
+        )
+
+    text_to_speak = " ".join(str(respuesta_usuario or "").split())
+    if not text_to_speak:
+        return build_response_tts_audio_metadata(
+            request_id=request_id,
+            available=False,
+            error="La respuesta IA esta vacia y no se puede convertir a voz.",
+        )
+
+    response_format, content_type, suffix = tts_format_settings()
+    text_to_speak = text_to_speak[:4096]
+    temporary_path = None
+
+    try:
+        temporary = tempfile.NamedTemporaryFile(prefix="afcr_tts_", suffix=suffix, delete=False)
+        temporary_path = temporary.name
+        temporary.close()
+
+        with openai_client.audio.speech.with_streaming_response.create(
+            model=OPENAI_TTS_MODEL,
+            voice=OPENAI_TTS_VOICE,
+            input=text_to_speak,
+            instructions=OPENAI_TTS_INSTRUCTIONS,
+            response_format=response_format,
+        ) as speech_response:
+            speech_response.stream_to_file(temporary_path)
+
+        audio_bytes = Path(temporary_path).read_bytes()
+        storage_path, expires_at = upload_private_audio(
+            context,
+            request_id,
+            f"respuesta-ia{suffix}",
+            content_type,
+            audio_bytes,
+        )
+        return build_response_tts_audio_metadata(
+            request_id=request_id,
+            available=True,
+            content_type=content_type,
+            storage_path=storage_path,
+            expires_at=expires_at,
+        )
+    except Exception as error:
+        print("OPENAI TTS ERROR:", error)
+        return build_response_tts_audio_metadata(
+            request_id=request_id,
+            available=False,
+            content_type=content_type,
+            error="No se pudo generar la voz IA para esta respuesta.",
+        )
+    finally:
+        if temporary_path:
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
+
+
+def resolve_tts_storage_path(record: dict, request_id: str) -> tuple[str, str]:
+    plan = record.get("plan") if isinstance(record.get("plan"), dict) else {}
+    metadata = plan.get("respuesta_ia_audio") if isinstance(plan.get("respuesta_ia_audio"), dict) else {}
+    storage_path = str(metadata.get("storage_path") or "").strip()
+    content_type = str(metadata.get("content_type") or "").strip()
+
+    if storage_path:
+        return storage_path, content_type or tts_format_settings()[1]
+
+    _, fallback_content_type, suffix = tts_format_settings()
+    user_id = str(record.get("user_id") or "").strip()
+    if not user_id:
+        raise HTTPException(status_code=404, detail="Audio IA no encontrado")
+    return f"{user_id}/{request_id}/respuesta-ia{suffix}", content_type or fallback_content_type
 
 
 def get_db_connection():
@@ -3082,6 +3262,7 @@ async def voice_intent(
     fase_1 = await fase_1_recibir_y_guardar_audio(audio)
     audio_path = None
     audio_expires_at = None
+    respuesta_ia_audio = None
 
     try:
         texto_transcrito = fase_2_transcribir_audio(
@@ -3097,6 +3278,8 @@ async def voice_intent(
             context["organization_id"] if context else None,
             context["token"] if context else None,
         )
+        respuesta_ia_audio = generate_response_tts_audio(context, plan["request_id"], respuesta_usuario)
+        plan["respuesta_ia_audio"] = respuesta_ia_audio
 
         if context:
             audio_path, audio_expires_at = upload_private_audio(
@@ -3167,6 +3350,7 @@ async def voice_intent(
         "respuesta_usuario": respuesta_usuario,
         "respuesta_json_dispositivo": ia_json,
         "respuesta_ia_usuario": respuesta_usuario,
+        "respuesta_ia_audio": respuesta_ia_audio,
 
         "plan": plan,
         "fase_4_mqtt": {
@@ -3177,6 +3361,55 @@ async def voice_intent(
         "delivery": plan.get("delivery_preview"),
         "delivery_previews": plan.get("delivery_previews"),
     }
+
+
+@app.get("/voice-intents/{request_id}/audio/respuesta-ia")
+def voice_intent_user_reply_audio(
+    request_id: str,
+    authorization: str | None = Header(default=None),
+):
+    if not using_supabase():
+        raise HTTPException(status_code=503, detail="Supabase no esta configurado en el backend")
+
+    context = authenticated_context(authorization)
+    safe_request_id = request_id.strip()
+    if not safe_request_id:
+        raise HTTPException(status_code=404, detail="Audio IA no encontrado")
+
+    safe_organization_id = urllib.parse.quote(context["organization_id"])
+    safe_request_id_query = urllib.parse.quote(safe_request_id)
+    query = (
+        "voice_intents?select=request_id,user_id,organization_id,plan"
+        f"&request_id=eq.{safe_request_id_query}"
+        f"&organization_id=eq.{safe_organization_id}"
+        "&limit=1"
+    )
+    rows = supabase_rest("GET", query, access_token=context["token"])
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(status_code=404, detail="Audio IA no encontrado")
+
+    record = rows[0]
+    plan = record.get("plan") if isinstance(record.get("plan"), dict) else {}
+    metadata = plan.get("respuesta_ia_audio") if isinstance(plan.get("respuesta_ia_audio"), dict) else {}
+    if metadata and metadata.get("available") is False:
+        raise HTTPException(status_code=404, detail="Audio IA no disponible para esta respuesta")
+
+    storage_path, expected_content_type = resolve_tts_storage_path(record, safe_request_id)
+    quoted_path = urllib.parse.quote(storage_path, safe="/")
+    content, storage_content_type = supabase_binary_request(
+        "GET",
+        f"/storage/v1/object/authenticated/{SUPABASE_AUDIO_BUCKET}/{quoted_path}",
+        service_role=True,
+    )
+    media_type = expected_content_type or storage_content_type or "audio/mpeg"
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": "inline; filename=respuesta-ia.mp3",
+        },
+    )
 
 
 @app.post("/voice-intent/confirm")
