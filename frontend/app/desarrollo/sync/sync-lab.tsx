@@ -5,6 +5,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   API_BASE_URL,
   createPairingToken,
+  deleteLinkedDevice,
+  type LinkedDeviceRecord,
   type PairingTokenResponse,
 } from "@/lib/backend-api";
 import { useDevelopmentWorkspace } from "../workspace-context";
@@ -40,6 +42,7 @@ export function SyncLab() {
   const [deviceModel, setDeviceModel] = useState(deviceModelOptions[0].value);
   const [deviceName, setDeviceName] = useState(legacyDeviceNameOptions[0]);
   const [isCreatingPairing, setIsCreatingPairing] = useState(false);
+  const [deletingDeviceId, setDeletingDeviceId] = useState<string | null>(null);
   const [pairingInfo, setPairingInfo] = useState<
     (PairingTokenResponse & {
       deviceName: string;
@@ -144,6 +147,42 @@ export function SyncLab() {
     setCopyNotice(
       `No se pudo copiar ${label.toLowerCase()} automaticamente. Seleccionalo y copialo manualmente.`,
     );
+  }
+
+  async function handleDeleteDevice(device: LinkedDeviceRecord) {
+    if (device.is_demo || deletingDeviceId) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Eliminar el enlace "${device.name}"? Esta accion no se puede deshacer.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingDeviceId(device.device_id);
+    setLocalNotice(null);
+    setCopyNotice(null);
+
+    try {
+      await deleteLinkedDevice(device.device_id);
+      if (pairingInfo?.device_id === device.device_id) {
+        setPairingInfo(null);
+      }
+      setLocalNotice(`Enlace ${device.name} eliminado.`);
+      await refreshDevices();
+    } catch (error) {
+      setLocalNotice(getErrorMessage(error));
+      window.requestAnimationFrame(() => {
+        noticeRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+      });
+    } finally {
+      setDeletingDeviceId(null);
+    }
   }
 
   return (
@@ -532,39 +571,59 @@ export function SyncLab() {
                 Aun no hay dispositivos reales enlazados. Crea un enlace ESP32 y carga el sketch para que aparezca aqui.
               </p>
             ) : (
-              linkedDevices.map((device) => (
-                <article
-                  key={device.device_id}
-                  className="grid gap-3 rounded-lg border border-white/10 bg-[#050c16]/70 p-4 sm:grid-cols-[1fr_1fr_auto] sm:items-center"
-                >
-                  <div>
-                    <p className="text-xs uppercase tracking-[0.16em] text-[#9edfff]">
-                      {device.type}
-                    </p>
-                    <h4 className="mt-1 font-display text-lg font-semibold text-white">
-                      {device.name}
-                    </h4>
-                  </div>
-                  <p className="text-sm text-slate-300">
-                    Modelo: <span className="text-white">{device.model}</span>
-                    <span className="mx-2 text-slate-600">/</span>
-                    {device.transport === "http_polling" ? (
-                      <>
-                        Comandos: <span className="text-white">HTTPS polling</span>
-                      </>
-                    ) : (
-                      <>
-                        Topic: <span className="text-white">{device.mqtt_topic}</span>
-                      </>
-                    )}
-                  </p>
-                  <span
-                    className={`rounded-full border px-3 py-2 text-xs uppercase tracking-[0.14em] ${getDeviceStatusTone(device.status)}`}
+              linkedDevices.map((device) => {
+                const isDeleting = deletingDeviceId === device.device_id;
+
+                return (
+                  <article
+                    key={device.device_id}
+                    className={`grid gap-3 rounded-lg border border-white/10 bg-[#050c16]/70 p-4 transition sm:grid-cols-[1fr_1fr_auto] sm:items-center ${
+                      isDeleting ? "opacity-60" : ""
+                    }`}
                   >
-                    {device.status_label}
-                  </span>
-                </article>
-              ))
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.16em] text-[#9edfff]">
+                        {device.type}
+                      </p>
+                      <h4 className="mt-1 font-display text-lg font-semibold text-white">
+                        {device.name}
+                      </h4>
+                    </div>
+                    <p className="text-sm text-slate-300">
+                      Modelo: <span className="text-white">{device.model}</span>
+                      <span className="mx-2 text-slate-600">/</span>
+                      {device.transport === "http_polling" ? (
+                        <>
+                          Comandos: <span className="text-white">HTTPS polling</span>
+                        </>
+                      ) : (
+                        <>
+                          Topic: <span className="text-white">{device.mqtt_topic}</span>
+                        </>
+                      )}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                      <span
+                        className={`rounded-full border px-3 py-2 text-xs uppercase tracking-[0.14em] ${getDeviceStatusTone(device.status)}`}
+                      >
+                        {device.status_label}
+                      </span>
+                      {!device.is_demo ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteDevice(device)}
+                          disabled={Boolean(deletingDeviceId)}
+                          title={`Eliminar enlace ${device.name}`}
+                          aria-label={`Eliminar enlace ${device.name}`}
+                          className="rounded-lg border border-[#ff8a9f]/30 bg-[#ff8a9f]/10 px-3 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#ffc1cb] transition hover:bg-[#ff8a9f]/15 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {isDeleting ? "Eliminando..." : "Eliminar"}
+                        </button>
+                      ) : null}
+                    </div>
+                  </article>
+                );
+              })
             )}
           </div>
         </section>
