@@ -1534,6 +1534,91 @@ def list_devices(authorization: str | None = Header(default=None)):
     }
 
 
+@app.delete("/devices/{device_id}")
+def delete_device(
+    device_id: str,
+    authorization: str | None = Header(default=None),
+):
+    safe_device_id = urllib.parse.quote(device_id.strip(), safe="")
+    if not safe_device_id:
+        raise HTTPException(status_code=400, detail="device_id es obligatorio")
+
+    if using_supabase():
+        context = authenticated_context(authorization)
+        safe_organization_id = urllib.parse.quote(context["organization_id"], safe="")
+        device_query = (
+            f"devices?select={SUPABASE_DEVICE_SAFE_COLUMNS}"
+            f"&device_id=eq.{safe_device_id}"
+            f"&organization_id=eq.{safe_organization_id}"
+            "&limit=1"
+        )
+        rows = supabase_rest("GET", device_query, service_role=True)
+        if not isinstance(rows, list) or not rows:
+            raise HTTPException(status_code=404, detail="Dispositivo no encontrado")
+
+        device = rows[0]
+        created_by = str(device.get("created_by") or "")
+        if context["role"] != "owner" and created_by != context["user_id"]:
+            raise HTTPException(status_code=403, detail="No puedes eliminar este enlace")
+
+        command_query = (
+            "device_commands?select=command_id"
+            f"&device_id=eq.{safe_device_id}"
+            f"&organization_id=eq.{safe_organization_id}"
+        )
+        deleted_commands = supabase_rest(
+            "DELETE",
+            command_query,
+            service_role=True,
+            representation=True,
+        )
+        device_delete_query = (
+            "devices?select=device_id"
+            f"&device_id=eq.{safe_device_id}"
+            f"&organization_id=eq.{safe_organization_id}"
+        )
+        deleted_devices = supabase_rest(
+            "DELETE",
+            device_delete_query,
+            service_role=True,
+            representation=True,
+        )
+        if not isinstance(deleted_devices, list) or not deleted_devices:
+            raise HTTPException(status_code=404, detail="Dispositivo no encontrado")
+
+        return {
+            "ok": True,
+            "deleted_device_id": device_id,
+            "deleted_commands": (
+                len(deleted_commands) if isinstance(deleted_commands, list) else 0
+            ),
+        }
+
+    with get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT device_id FROM devices WHERE device_id = ?",
+            (device_id.strip(),),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Dispositivo no encontrado")
+
+        deleted_commands = conn.execute(
+            "DELETE FROM device_commands WHERE device_id = ?",
+            (device_id.strip(),),
+        ).rowcount
+        conn.execute(
+            "DELETE FROM devices WHERE device_id = ?",
+            (device_id.strip(),),
+        )
+        conn.commit()
+
+    return {
+        "ok": True,
+        "deleted_device_id": device_id,
+        "deleted_commands": max(deleted_commands, 0),
+    }
+
+
 @app.post("/devices/{device_id}/heartbeat")
 def device_heartbeat(
     device_id: str,
