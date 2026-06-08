@@ -180,15 +180,15 @@ ESPACIOS_VALIDOS = {
     "dormitorio"
 }
 ESPACIOS_DESCRIPCION = {
-    "sala": "sala",
-    "comedor": "comedor",
-    "cocina": "cocina",
-    "dormitorio": "dormitorio",
+    "sala": "Sala",
+    "comedor": "Comedor",
+    "cocina": "Cocina",
+    "dormitorio": "Dormitorio",
 }
 ESP32_MULTIROOM_ESPACIOS = ("sala", "cocina", "comedor", "dormitorio")
 LIGHT_ACTION_ALIASES = {
-    "ON": ("prende", "prender", "enciende", "encender", "activar", "activa", "ilumina", "iluminar", "sube", "subir", "pon", "poner"),
-    "OFF": ("apaga", "apagar", "desactiva", "desactivar", "quita", "quitar", "baja", "bajar"),
+    "ON": ("prende", "prender", "prenda", "prendas", "enciende", "encender", "activar", "activa", "ilumina", "iluminar", "sube", "subir", "pon", "poner"),
+    "OFF": ("apaga", "apagar", "apague", "apagues", "desactiva", "desactivar", "quita", "quitar", "baja", "bajar"),
 }
 LIGHT_ACTION_WORDS = {
     alias: action
@@ -2341,14 +2341,25 @@ def normalize_light_commands(
         if model_conflict:
             return [], True
 
-    if len(text_commands) > 1 or mentions_all_lights(texto_transcrito):
+    fallback_space = normalize_espacio(str(fallback_space))
+    fallback_action = str(fallback_action).strip().upper()
+    all_lights_requested = mentions_all_lights(texto_transcrito)
+
+    if all_lights_requested:
+        if text_commands:
+            return text_commands, False
+        if fallback_action in {"ON", "OFF"}:
+            return coalesce_light_commands([
+                {"espacio": espacio, "accion": fallback_action}
+                for espacio in ESP32_MULTIROOM_ESPACIOS
+            ])
+
+    if len(text_commands) > 1:
         return text_commands, False
 
     if model_commands:
         return model_commands, False
 
-    fallback_space = normalize_espacio(str(fallback_space))
-    fallback_action = str(fallback_action).strip().upper()
     if fallback_space in ESPACIOS_VALIDOS and fallback_action in {"ON", "OFF"}:
         return [{"espacio": fallback_space, "accion": fallback_action}], False
 
@@ -2371,6 +2382,44 @@ def describe_light_commands(commands: list[dict]) -> str:
     if len(labels) == 1:
         return labels[0]
     return ", ".join(labels[:-1]) + f" y {labels[-1]}"
+
+
+def light_space_label(espacio: str) -> str:
+    """Devuelve el nombre visible del ambiente sin cambiar el contrato interno."""
+    normalized_space = normalize_espacio(str(espacio))
+    if normalized_space in ESPACIOS_DESCRIPCION:
+        return ESPACIOS_DESCRIPCION[normalized_space]
+
+    plain = str(espacio or "").strip().lower()
+    if plain in {"multiple", "todos", "todas", "all"}:
+        return "Todas"
+
+    return str(espacio or "desconocido")
+
+
+def is_all_lights_command(commands: list[dict]) -> bool:
+    if len(commands) != len(ESP32_MULTIROOM_ESPACIOS):
+        return False
+
+    command_spaces = {normalize_espacio(str(command.get("espacio", ""))) for command in commands}
+    return command_spaces == set(ESP32_MULTIROOM_ESPACIOS)
+
+
+def public_light_command(command: dict) -> dict:
+    return {
+        **command,
+        "espacio": light_space_label(str(command.get("espacio", "desconocido"))),
+    }
+
+
+def public_delivery_preview(preview: dict | None) -> dict | None:
+    if preview is None:
+        return None
+
+    return {
+        **preview,
+        "espacio": light_space_label(str(preview.get("espacio", "desconocido"))),
+    }
 
 
 def extract_json(text: str):
@@ -3171,7 +3220,7 @@ def build_voice_intent_plan(
             ),
         ]
     elif module == "lights" and light_commands:
-        respuesta = ai_reply or (
+        respuesta = (
             f"Entendi que quieres {command_summary}, pero no encuentro un ESP32 enlazado "
             "para recibir esos comandos ahora mismo."
         )
@@ -3209,6 +3258,17 @@ def build_voice_intent_plan(
             "Pedir solo el dato faltante si falta modulo, ambiente o accion.",
         ]
 
+    public_space = (
+        "Todas"
+        if len(light_commands) > 1 and is_all_lights_command(light_commands)
+        else light_space_label(espacio)
+    )
+    public_delivery_preview_value = public_delivery_preview(delivery_preview)
+    public_delivery_previews = [
+        public_delivery_preview(preview)
+        for preview in delivery_previews
+    ]
+
     plan = {
         "request_id": request_id,
         "respuesta": respuesta,
@@ -3216,16 +3276,16 @@ def build_voice_intent_plan(
         "can_execute": can_execute,
         "module": module,
         "action": action,
-        "espacio": espacio,
+        "espacio": public_space,
         "mqtt_preview": mqtt_preview,
-        "delivery_preview": delivery_preview,
-        "delivery_previews": delivery_previews or None,
+        "delivery_preview": public_delivery_preview_value,
+        "delivery_previews": public_delivery_previews or None,
         "delivery_mode": "batch_http_polling" if len(light_commands) > 1 and delivery_previews else ("http_polling" if delivery_preview else "mqtt" if mqtt_preview else None),
         "expires_at": to_iso(utc_now() + timedelta(seconds=VOICE_PLAN_TTL_SECONDS)),
     }
 
     if len(light_commands) > 1:
-        plan["comandos_luces"] = light_commands
+        plan["comandos_luces"] = [public_light_command(command) for command in light_commands]
         plan["batch"] = bool(delivery_previews)
 
     if not using_supabase():
@@ -3363,7 +3423,8 @@ async def voice_intent(
             context["organization_id"] if context else None,
             context["token"] if context else None,
         )
-        respuesta_ia_audio = generate_response_tts_audio(context, plan["request_id"], respuesta_usuario)
+        respuesta_usuario_final = str(plan.get("respuesta") or respuesta_usuario).strip()
+        respuesta_ia_audio = generate_response_tts_audio(context, plan["request_id"], respuesta_usuario_final)
         plan["respuesta_ia_audio"] = respuesta_ia_audio
 
         if context:
@@ -3388,7 +3449,7 @@ async def voice_intent(
                     "audio_expires_at": audio_expires_at,
                     "transcription": texto_transcrito,
                     "ai_provider": AI_PROVIDER,
-                    "response_for_user": respuesta_usuario,
+                    "response_for_user": respuesta_usuario_final,
                     "device_intent": ia_json,
                     "plan": plan,
                     "status": "pending_confirmation" if plan["can_execute"] else "not_executable",
@@ -3427,14 +3488,14 @@ async def voice_intent(
             "ia_json_raw": ia_json_raw,
             "ia_json": ia_json,
             "intencion_json": ia_json,
-            "respuesta_usuario": respuesta_usuario,
+            "respuesta_usuario": respuesta_usuario_final,
             "respuesta_json_dispositivo": ia_json,
-            "respuesta_ia_usuario": respuesta_usuario,
+            "respuesta_ia_usuario": respuesta_usuario_final,
         },
         "intencion_json": ia_json,
-        "respuesta_usuario": respuesta_usuario,
+        "respuesta_usuario": respuesta_usuario_final,
         "respuesta_json_dispositivo": ia_json,
-        "respuesta_ia_usuario": respuesta_usuario,
+        "respuesta_ia_usuario": respuesta_usuario_final,
         "respuesta_ia_audio": respuesta_ia_audio,
 
         "plan": plan,
