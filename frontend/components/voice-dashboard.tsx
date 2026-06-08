@@ -750,10 +750,15 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
       setResponse(payload);
       void refreshRecentIntents();
       setConnection("online");
+      const planCanExecute = payload.plan?.can_execute ?? false;
       setStatusText(
         transcript
-          ? `Plan listo para confirmar: "${transcript}".`
-          : "Audio enviado correctamente. La IA devolvio un plan.",
+          ? planCanExecute
+            ? `Plan listo para confirmar: "${transcript}".`
+            : `La IA respondio, pero el plan aun no es ejecutable: "${transcript}".`
+          : planCanExecute
+            ? "Audio enviado correctamente. La IA devolvio un plan listo para confirmar."
+            : "Audio enviado correctamente. La IA devolvio un plan no ejecutable todavia.",
       );
       appendDebugLog(transcript ? "success" : "warning", "Respuesta de voz recibida", {
         transcript: transcript || "vacio",
@@ -1881,13 +1886,36 @@ function formatDeliveryListStatus(deliveries: DeviceCommandDelivery[]) {
   return `Comandos en proceso: ${executed}/${total} LEDs confirmados.`;
 }
 
+function formatSpaceLabel(space?: string) {
+  const normalized = (space ?? "desconocido")
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, " ");
+
+  if (["multiple", "todos", "todas", "all"].includes(normalized)) {
+    return "Todas";
+  }
+
+  const labels: Record<string, string> = {
+    sala: "Sala",
+    comedor: "Comedor",
+    cocina: "Cocina",
+    dormitorio: "Dormitorio",
+    "cuarto principal": "Dormitorio",
+    cuarto_principal: "Dormitorio",
+    desconocido: "desconocido",
+  };
+
+  return labels[normalized] ?? space ?? "desconocido";
+}
+
 function formatLightCommands(commands?: LightCommandView[]) {
   if (!commands || commands.length === 0) {
     return "Pendiente";
   }
 
   return commands
-    .map((command) => `${command.accion ?? "NONE"} ${command.espacio ?? "desconocido"}`)
+    .map((command) => `${command.accion ?? "NONE"} ${formatSpaceLabel(command.espacio)}`)
     .join(", ");
 }
 
@@ -1909,10 +1937,10 @@ function formatCommandSpaces(
 ) {
   const commands = plan?.comandos_luces ?? intentJson?.comandos_luces;
   if (commands && commands.length > 1) {
-    return commands.map((command) => command.espacio ?? "desconocido").join(", ");
+    return commands.map((command) => formatSpaceLabel(command.espacio)).join(", ");
   }
 
-  return plan?.espacio ?? intentJson?.espacio ?? "Pendiente";
+  return formatSpaceLabel(plan?.espacio ?? intentJson?.espacio ?? "Pendiente");
 }
 
 function formatIntentJson(intentJson?: VoiceIntentResponse["intencion_json"]) {
