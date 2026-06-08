@@ -3261,13 +3261,8 @@ def build_voice_intent_plan(
     public_space = (
         "Todas"
         if len(light_commands) > 1 and is_all_lights_command(light_commands)
-        else light_space_label(espacio)
+        else espacio
     )
-    public_delivery_preview_value = public_delivery_preview(delivery_preview)
-    public_delivery_previews = [
-        public_delivery_preview(preview)
-        for preview in delivery_previews
-    ]
 
     plan = {
         "request_id": request_id,
@@ -3278,8 +3273,8 @@ def build_voice_intent_plan(
         "action": action,
         "espacio": public_space,
         "mqtt_preview": mqtt_preview,
-        "delivery_preview": public_delivery_preview_value,
-        "delivery_previews": public_delivery_previews or None,
+        "delivery_preview": delivery_preview,
+        "delivery_previews": delivery_previews or None,
         "delivery_mode": "batch_http_polling" if len(light_commands) > 1 and delivery_previews else ("http_polling" if delivery_preview else "mqtt" if mqtt_preview else None),
         "expires_at": to_iso(utc_now() + timedelta(seconds=VOICE_PLAN_TTL_SECONDS)),
     }
