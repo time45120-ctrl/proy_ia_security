@@ -356,6 +356,26 @@ export async function listDevices() {
   };
 }
 
+export async function deleteLinkedDevice(deviceId: string) {
+  const response = await fetch(
+    `${API_BASE_URL}/devices/${encodeURIComponent(deviceId)}`,
+    {
+      method: "DELETE",
+      headers: await authenticatedHeaders(),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  return (await response.json()) as {
+    ok?: boolean;
+    deleted_device_id?: string;
+    deleted_commands?: number;
+  };
+}
+
 export async function createPairingToken(input: {
   name: string;
   type: string;
