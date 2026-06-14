@@ -94,6 +94,25 @@ class HttpPollingDeviceTests(unittest.TestCase):
         )
         self.assertEqual(idle["status"], "idle")
 
+    def test_new_esp32_led_states_start_off(self):
+        pairing, _claimed = self.pair_esp32("ESP32 multiambiente")
+
+        states = api.get_device_led_states(pairing["device_id"], authorization=None)
+
+        self.assertTrue(states["ok"])
+        self.assertEqual(states["summary"]["total"], 4)
+        self.assertEqual(states["summary"]["on"], 0)
+        self.assertEqual(states["summary"]["off"], 4)
+        self.assertEqual(
+            {item["espacio"]: item["state"] for item in states["states"]},
+            {
+                "sala": "OFF",
+                "cocina": "OFF",
+                "comedor": "OFF",
+                "dormitorio": "OFF",
+            },
+        )
+
     def test_confirm_delivers_http_command_until_ack(self):
         pairing, claimed = self.pair_esp32()
         plan = self.light_plan()
@@ -125,8 +144,39 @@ class HttpPollingDeviceTests(unittest.TestCase):
         self.assertTrue(ack["ok"])
         self.assertEqual(ack["delivery"]["status"], "executed")
 
+        states = api.get_device_led_states(pairing["device_id"], authorization=None)
+        state_by_room = {item["espacio"]: item["state"] for item in states["states"]}
+        self.assertEqual(state_by_room["cocina"], "ON")
+        self.assertEqual(states["summary"]["on"], 1)
+        self.assertEqual(states["summary"]["off"], 3)
+
         idle = api.poll_device_commands(pairing["device_id"], authorization)
         self.assertEqual(idle["status"], "idle")
+
+    def test_failed_ack_does_not_change_led_state(self):
+        pairing, claimed = self.pair_esp32()
+        delivery = api.send_device_command(
+            pairing["device_id"],
+            api.DeviceCommandRequest(accion="ON", espacio="cocina"),
+        )["delivery"]
+        authorization = f"Bearer {claimed['device_api_key']}"
+        delivered = api.poll_device_commands(pairing["device_id"], authorization)
+        self.assertEqual(delivered["command_id"], delivery["command_id"])
+
+        ack = api.acknowledge_device_command(
+            delivered["command_id"],
+            api.DeviceCommandAckRequest(
+                device_id=pairing["device_id"],
+                status="failed",
+                detail="LED no respondio",
+            ),
+            authorization,
+        )
+
+        self.assertFalse(ack["ok"])
+        states = api.get_device_led_states(pairing["device_id"], authorization=None)
+        state_by_room = {item["espacio"]: item["state"] for item in states["states"]}
+        self.assertEqual(state_by_room["cocina"], "OFF")
 
     def test_expired_command_is_not_delivered(self):
         pairing, claimed = self.pair_esp32()
@@ -389,6 +439,15 @@ class HttpPollingDeviceTests(unittest.TestCase):
         self.assertTrue(ack["ok"])
         self.assertEqual(len(ack["deliveries"]), 2)
         self.assertEqual({delivery["status"] for delivery in ack["deliveries"]}, {"executed"})
+
+        states = api.get_device_led_states(pairing["device_id"], authorization=None)
+        state_by_room = {item["espacio"]: item["state"] for item in states["states"]}
+        self.assertEqual(state_by_room["cocina"], "ON")
+        self.assertEqual(state_by_room["comedor"], "ON")
+        self.assertEqual(state_by_room["sala"], "OFF")
+        self.assertEqual(state_by_room["dormitorio"], "OFF")
+        self.assertEqual(states["summary"]["on"], 2)
+        self.assertEqual(states["summary"]["off"], 2)
 
         for delivery in confirmed["deliveries"]:
             status = api.get_device_command_status(delivery["command_id"])
