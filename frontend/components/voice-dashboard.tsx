@@ -230,6 +230,7 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
   const aiReplyAudioRef = useRef<HTMLAudioElement | null>(null);
   const aiReplyAudioUrlRef = useRef<string | null>(null);
   const aiReplyAudioTokenRef = useRef(0);
+  const lightStateRequestInFlightRef = useRef(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -251,7 +252,6 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
   const [aiSpeechStatus, setAiSpeechStatus] = useState<AiSpeechStatus>("idle");
   const [aiSpeechError, setAiSpeechError] = useState<string | null>(null);
   const [lightStates, setLightStates] = useState<DeviceLedStatesResponse | null>(null);
-  const [isLoadingLightStates, setIsLoadingLightStates] = useState(false);
   const [lightStateError, setLightStateError] = useState<string | null>(null);
   const [lightStateRefreshToken, setLightStateRefreshToken] = useState(0);
   const confirmationDeliveryKey = buildDeliveryKey(getConfirmationDeliveries(confirmation));
@@ -560,7 +560,11 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
   }
 
   async function refreshLightStates() {
-    setIsLoadingLightStates(true);
+    if (lightStateRequestInFlightRef.current) {
+      return;
+    }
+
+    lightStateRequestInFlightRef.current = true;
     setLightStateError(null);
 
     try {
@@ -577,7 +581,7 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
     } catch (error) {
       setLightStateError(getErrorMessage(error));
     } finally {
-      setIsLoadingLightStates(false);
+      lightStateRequestInFlightRef.current = false;
     }
   }
 
@@ -972,11 +976,9 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
             {activeDetail !== "ia" ? (
               <DeviceDetailDashboard
                 config={detailDashboards[activeDetail]}
-                isLoadingLightStates={isLoadingLightStates}
                 lightStateError={lightStateError}
                 lightStates={lightStates}
                 onBack={() => setActiveDetail("ia")}
-                onRefreshLightStates={() => void refreshLightStates()}
               />
             ) : null}
           </section>
@@ -1096,17 +1098,6 @@ function buildVisibleLightStates(states: DeviceLedStatesResponse | null) {
 
 function normalizeVisibleLedState(value?: string | null) {
   return value === "ON" ? "ON" : "OFF";
-}
-
-function formatLedStateTimestamp(value?: string | null, sourceCommandId?: string | null) {
-  if (!value || !sourceCommandId) {
-    return "Inicial";
-  }
-
-  return new Intl.DateTimeFormat("es", {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
 }
 
 function getLedStateCardTone(state: string) {
@@ -1375,27 +1366,21 @@ function AiCommandCard({
 
 function DeviceDetailDashboard({
   config,
-  isLoadingLightStates,
   lightStateError,
   lightStates,
   onBack,
-  onRefreshLightStates,
 }: {
   config: DetailDashboardConfig;
-  isLoadingLightStates: boolean;
   lightStateError: string | null;
   lightStates: DeviceLedStatesResponse | null;
   onBack: () => void;
-  onRefreshLightStates: () => void;
 }) {
   if (config.id === "lights") {
     return (
       <LightStatesDashboard
         config={config}
         error={lightStateError}
-        isLoading={isLoadingLightStates}
         onBack={onBack}
-        onRefresh={onRefreshLightStates}
         states={lightStates}
       />
     );
@@ -1480,16 +1465,12 @@ function DeviceDetailDashboard({
 function LightStatesDashboard({
   config,
   error,
-  isLoading,
   onBack,
-  onRefresh,
   states,
 }: {
   config: DetailDashboardConfig;
   error: string | null;
-  isLoading: boolean;
   onBack: () => void;
-  onRefresh: () => void;
   states: DeviceLedStatesResponse | null;
 }) {
   const rooms = buildVisibleLightStates(states);
@@ -1515,15 +1496,7 @@ function LightStatesDashboard({
             {states?.device?.name ?? "ESP32 multiambiente"} / {deviceStatus}
           </p>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2">
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={isLoading}
-            className="min-h-10 rounded-lg border border-[#44c7f4]/25 bg-[#44c7f4]/10 px-4 py-2 text-sm font-semibold text-[#b7ebff] transition hover:bg-[#44c7f4]/15 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isLoading ? "Actualizando..." : "Actualizar"}
-          </button>
+        <div>
           <button
             type="button"
             onClick={onBack}
@@ -1534,14 +1507,10 @@ function LightStatesDashboard({
         </div>
       </div>
 
-      <section className="grid gap-3 sm:grid-cols-4">
+      <section className="grid gap-3 sm:grid-cols-3">
         <MetricTile label="Ambientes" value={String(summary.total)} />
         <MetricTile label="Encendidas" value={String(summary.on)} />
         <MetricTile label="Apagadas" value={String(summary.off)} />
-        <MetricTile
-          label="Actualizado"
-          value={formatLedStateTimestamp(summary.last_updated_at, summary.last_updated_at)}
-        />
       </section>
 
       {error ? (
@@ -1572,9 +1541,6 @@ function LightStatesDashboard({
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
               <span className={`rounded-full border px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] ${getLedStatePillTone(room.state)}`}>
                 {room.state}
-              </span>
-              <span className="text-xs text-slate-500">
-                {formatLedStateTimestamp(room.updated_at, room.source_command_id)}
               </span>
             </div>
           </article>
