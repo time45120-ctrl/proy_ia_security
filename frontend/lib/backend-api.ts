@@ -170,6 +170,30 @@ export type LinkedDeviceRecord = {
   claimed_at?: string | null;
 };
 
+export type DeviceLedState = {
+  espacio: "sala" | "cocina" | "comedor" | "dormitorio" | string;
+  label: string;
+  state: "ON" | "OFF" | string;
+  gpio?: string | null;
+  updated_at?: string | null;
+  source_command_id?: string | null;
+};
+
+export type DeviceLedStatesResponse = {
+  ok?: boolean;
+  device?: LinkedDeviceRecord;
+  device_id: string;
+  device_status?: string;
+  device_status_label?: string;
+  states: DeviceLedState[];
+  summary: {
+    total: number;
+    on: number;
+    off: number;
+    last_updated_at?: string | null;
+  };
+};
+
 export type PairingTokenResponse = {
   ok: boolean;
   device_id: string;
@@ -354,6 +378,22 @@ export async function listDevices() {
     ok?: boolean;
     devices?: LinkedDeviceRecord[];
   };
+}
+
+export async function getDeviceLedStates(deviceId: string) {
+  const response = await fetch(
+    `${API_BASE_URL}/devices/${encodeURIComponent(deviceId)}/led-states`,
+    {
+      cache: "no-store",
+      headers: await authenticatedHeaders(),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  return (await response.json()) as DeviceLedStatesResponse;
 }
 
 export async function deleteLinkedDevice(deviceId: string) {

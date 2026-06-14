@@ -186,6 +186,17 @@ ESPACIOS_DESCRIPCION = {
     "dormitorio": "Dormitorio",
 }
 ESP32_MULTIROOM_ESPACIOS = ("sala", "cocina", "comedor", "dormitorio")
+ESP32_ROOM_GPIO_LABELS = {
+    "sala": "GPIO 16",
+    "cocina": "GPIO 17",
+    "comedor": "GPIO 18",
+    "dormitorio": "GPIO 19",
+}
+LED_STATE_INITIAL = "OFF"
+LED_STATE_BY_COMMAND_ACTION = {
+    "turn_on": "ON",
+    "turn_off": "OFF",
+}
 LIGHT_ACTION_ALIASES = {
     "ON": ("prende", "prender", "prenda", "prendas", "enciende", "encender", "activar", "activa", "ilumina", "iluminar", "sube", "subir", "pon", "poner"),
     "OFF": ("apaga", "apagar", "apague", "apagues", "desactiva", "desactivar", "quita", "quitar", "baja", "bajar"),
@@ -762,6 +773,25 @@ def init_devices_db():
             ON device_commands(device_id, status, created_at)
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS device_led_states (
+                device_id TEXT NOT NULL,
+                espacio TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('ON', 'OFF')),
+                updated_at TEXT NOT NULL,
+                source_command_id TEXT,
+                PRIMARY KEY (device_id, espacio),
+                FOREIGN KEY (device_id) REFERENCES devices(device_id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_device_led_states_device
+            ON device_led_states(device_id)
+            """
+        )
         conn.commit()
 
 
@@ -1046,6 +1076,223 @@ def build_polled_command_response(commands: list[sqlite3.Row | dict]) -> dict:
         "expires_at": min(item["expires_at"] for item in command_items if item.get("expires_at")),
         "commands": command_items,
     }
+
+
+def normalize_led_state(value: str | None) -> str:
+    state = str(value or LED_STATE_INITIAL).strip().upper()
+    return state if state in {"ON", "OFF"} else LED_STATE_INITIAL
+
+
+def default_led_state_row(device: dict, espacio: str, updated_at: str | None = None) -> dict:
+    return {
+        "device_id": device["device_id"],
+        "organization_id": device.get("organization_id"),
+        "espacio": espacio,
+        "status": LED_STATE_INITIAL,
+        "updated_at": updated_at,
+        "source_command_id": None,
+    }
+
+
+def build_led_states_response(device: dict, rows: list[sqlite3.Row | dict]) -> dict:
+    row_map = {
+        normalize_espacio(str(dict(row).get("espacio", ""))): dict(row)
+        for row in rows
+    }
+    states = []
+
+    for espacio in ESP32_MULTIROOM_ESPACIOS:
+        row = row_map.get(espacio) or default_led_state_row(device, espacio)
+        state = normalize_led_state(str(row.get("status") or LED_STATE_INITIAL))
+        states.append({
+            "espacio": espacio,
+            "label": ESPACIOS_DESCRIPCION.get(espacio, espacio),
+            "state": state,
+            "gpio": ESP32_ROOM_GPIO_LABELS.get(espacio),
+            "updated_at": row.get("updated_at"),
+            "source_command_id": row.get("source_command_id"),
+        })
+
+    on_count = sum(1 for item in states if item["state"] == "ON")
+    off_count = sum(1 for item in states if item["state"] == "OFF")
+    updated_values = [
+        str(item["updated_at"])
+        for item in states
+        if item.get("updated_at") and item.get("source_command_id")
+    ]
+
+    return {
+        "ok": True,
+        "device": device,
+        "device_id": device["device_id"],
+        "device_status": device.get("status", "offline"),
+        "device_status_label": device.get("status_label", "Offline"),
+        "states": states,
+        "summary": {
+            "total": len(states),
+            "on": on_count,
+            "off": off_count,
+            "last_updated_at": max(updated_values) if updated_values else None,
+        },
+    }
+
+
+def fetch_sqlite_device_led_state_rows(
+    conn: sqlite3.Connection,
+    device_id: str,
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT *
+        FROM device_led_states
+        WHERE device_id = ?
+        ORDER BY espacio ASC
+        """,
+        (device_id,),
+    ).fetchall()
+
+
+def initialize_sqlite_device_led_states(conn: sqlite3.Connection, device_id: str) -> None:
+    now = to_iso(utc_now())
+    conn.executemany(
+        """
+        INSERT OR IGNORE INTO device_led_states (
+            device_id, espacio, status, updated_at, source_command_id
+        )
+        VALUES (?, ?, 'OFF', ?, NULL)
+        """,
+        [(device_id, espacio, now) for espacio in ESP32_MULTIROOM_ESPACIOS],
+    )
+
+
+def upsert_sqlite_led_states_from_commands(
+    conn: sqlite3.Connection,
+    commands: list[sqlite3.Row | dict],
+) -> None:
+    updates = []
+    now = to_iso(utc_now())
+
+    for command in commands:
+        command_dict = dict(command)
+        state = LED_STATE_BY_COMMAND_ACTION.get(str(command_dict.get("action", "")))
+        espacio = normalize_espacio(str(command_dict.get("espacio", "")))
+        if state is None or espacio not in ESPACIOS_VALIDOS:
+            continue
+
+        updates.append((
+            command_dict["device_id"],
+            espacio,
+            state,
+            now,
+            command_dict.get("command_id"),
+        ))
+
+    if not updates:
+        return
+
+    conn.executemany(
+        """
+        INSERT INTO device_led_states (
+            device_id, espacio, status, updated_at, source_command_id
+        )
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(device_id, espacio) DO UPDATE SET
+            status = excluded.status,
+            updated_at = excluded.updated_at,
+            source_command_id = excluded.source_command_id
+        """,
+        updates,
+    )
+
+
+def fetch_supabase_device_led_state_rows(device: dict) -> list[dict]:
+    organization_id = str(device.get("organization_id") or "").strip()
+    if not organization_id:
+        return []
+
+    query = (
+        "device_led_states?select=device_id,organization_id,espacio,status,"
+        "updated_at,source_command_id"
+        f"&device_id=eq.{urllib.parse.quote(str(device['device_id']))}"
+        f"&organization_id=eq.{urllib.parse.quote(organization_id)}"
+        "&order=espacio.asc"
+    )
+    try:
+        rows = supabase_rest("GET", query, service_role=True)
+    except HTTPException as error:
+        print("SUPABASE LED STATE READ SKIPPED:", error.detail)
+        return []
+
+    return rows if isinstance(rows, list) else []
+
+
+def ensure_supabase_device_led_states(device: dict, rows: list[dict] | None = None) -> list[dict]:
+    organization_id = str(device.get("organization_id") or "").strip()
+    if not organization_id:
+        return rows or []
+
+    existing_rows = rows if rows is not None else fetch_supabase_device_led_state_rows(device)
+    existing_spaces = {
+        normalize_espacio(str(row.get("espacio", "")))
+        for row in existing_rows
+    }
+    now = to_iso(utc_now())
+    missing_rows = [
+        default_led_state_row(device, espacio, now)
+        for espacio in ESP32_MULTIROOM_ESPACIOS
+        if espacio not in existing_spaces
+    ]
+
+    if not missing_rows:
+        return existing_rows
+
+    try:
+        supabase_http_request(
+            "POST",
+            "/rest/v1/device_led_states",
+            service_role=True,
+            payload=missing_rows,
+            headers={"Prefer": "return=minimal"},
+        )
+    except HTTPException as error:
+        print("SUPABASE LED STATE INIT SKIPPED:", error.detail)
+
+    return [*existing_rows, *missing_rows]
+
+
+def upsert_supabase_led_states_from_commands(commands: list[dict]) -> None:
+    now = to_iso(utc_now())
+    payload = []
+
+    for command in commands:
+        state = LED_STATE_BY_COMMAND_ACTION.get(str(command.get("action", "")))
+        espacio = normalize_espacio(str(command.get("espacio", "")))
+        organization_id = str(command.get("organization_id") or "").strip()
+        if state is None or espacio not in ESPACIOS_VALIDOS or not organization_id:
+            continue
+
+        payload.append({
+            "device_id": command["device_id"],
+            "organization_id": organization_id,
+            "espacio": espacio,
+            "status": state,
+            "updated_at": now,
+            "source_command_id": command.get("command_id"),
+        })
+
+    if not payload:
+        return
+
+    try:
+        supabase_http_request(
+            "POST",
+            "/rest/v1/device_led_states?on_conflict=device_id,espacio",
+            service_role=True,
+            payload=payload,
+            headers={"Prefer": "resolution=merge-duplicates,return=minimal"},
+        )
+    except HTTPException as error:
+        print("SUPABASE LED STATE UPSERT SKIPPED:", error.detail)
 
 
 def verify_supabase_http_device(device_id: str, device_api_key_hash: str) -> dict:
@@ -1389,6 +1636,11 @@ def create_pairing_token(
                 "pairing_expires_at": to_iso(expires_at),
             },
         )
+        if device_type == "ESP32":
+            ensure_supabase_device_led_states({
+                "device_id": device_id,
+                "organization_id": context["organization_id"],
+            })
     else:
         with get_db_connection() as conn:
             conn.execute(
@@ -1413,6 +1665,8 @@ def create_pairing_token(
                     None,
                 )
             )
+            if device_type == "ESP32":
+                initialize_sqlite_device_led_states(conn, device_id)
             conn.commit()
 
     return {
@@ -1454,6 +1708,8 @@ def claim_device(payload: ClaimDeviceRequest):
             raise HTTPException(status_code=404, detail="Token invalido, expirado o ya usado")
         if normalize_device_type(str(device.get("type", ""))) != "ESP32":
             device_api_key = None
+        else:
+            ensure_supabase_device_led_states(device)
         return {
             "ok": True,
             "device": device_row_to_dict(device),
@@ -1499,6 +1755,10 @@ def claim_device(payload: ClaimDeviceRequest):
         conn.commit()
 
     device = get_device(row["device_id"])
+    if device and normalize_device_type(str(device.get("type", ""))) == "ESP32":
+        with get_db_connection() as conn:
+            initialize_sqlite_device_led_states(conn, row["device_id"])
+            conn.commit()
 
     return {
         "ok": True,
@@ -1532,6 +1792,54 @@ def list_devices(authorization: str | None = Header(default=None)):
         "ok": True,
         "devices": [device_row_to_dict(row) for row in rows],
     }
+
+
+@app.get("/devices/{device_id}/led-states")
+def get_device_led_states(
+    device_id: str,
+    authorization: str | None = Header(default=None),
+):
+    safe_device_id = device_id.strip()
+    if not safe_device_id:
+        raise HTTPException(status_code=400, detail="device_id es obligatorio")
+
+    if using_supabase():
+        context = authenticated_context(authorization)
+        query = (
+            f"devices?select={SUPABASE_DEVICE_SAFE_COLUMNS}"
+            f"&device_id=eq.{urllib.parse.quote(safe_device_id)}"
+            f"&organization_id=eq.{urllib.parse.quote(context['organization_id'])}"
+            "&limit=1"
+        )
+        rows = supabase_rest("GET", query, access_token=context["token"])
+        if not isinstance(rows, list) or not rows:
+            raise HTTPException(status_code=404, detail="Dispositivo no encontrado")
+
+        device = device_row_to_dict(rows[0])
+        if normalize_device_type(str(device.get("type", ""))) != "ESP32":
+            raise HTTPException(status_code=400, detail="El dispositivo no es ESP32")
+
+        state_rows = fetch_supabase_device_led_state_rows(device)
+        state_rows = ensure_supabase_device_led_states(device, state_rows)
+        return build_led_states_response(device, state_rows)
+
+    with get_db_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM devices WHERE device_id = ?",
+            (safe_device_id,),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Dispositivo no encontrado")
+
+        device = device_row_to_dict(row)
+        if normalize_device_type(str(device.get("type", ""))) != "ESP32":
+            raise HTTPException(status_code=400, detail="El dispositivo no es ESP32")
+
+        initialize_sqlite_device_led_states(conn, safe_device_id)
+        conn.commit()
+        state_rows = fetch_sqlite_device_led_state_rows(conn, safe_device_id)
+
+    return build_led_states_response(device, state_rows)
 
 
 @app.delete("/devices/{device_id}")
@@ -1606,6 +1914,10 @@ def delete_device(
             "DELETE FROM device_commands WHERE device_id = ?",
             (device_id.strip(),),
         ).rowcount
+        conn.execute(
+            "DELETE FROM device_led_states WHERE device_id = ?",
+            (device_id.strip(),),
+        )
         conn.execute(
             "DELETE FROM devices WHERE device_id = ?",
             (device_id.strip(),),
@@ -1769,6 +2081,9 @@ def acknowledge_device_command(
             """,
             tuple(command_ids)
         ).fetchall()
+        if status == "executed":
+            upsert_sqlite_led_states_from_commands(conn, updated)
+            conn.commit()
 
     deliveries = [command_row_to_dict(command) for command in updated]
     return {
@@ -1837,6 +2152,9 @@ def acknowledge_supabase_device_command(
     )
     updated = supabase_rest("GET", fetch_query, service_role=True)
     deliveries = [command_row_to_dict(command) for command in updated] if isinstance(updated, list) else []
+    if status == "executed":
+        state_source_rows = updated if isinstance(updated, list) and updated else commands
+        upsert_supabase_led_states_from_commands(state_source_rows)
     if not deliveries:
         deliveries = [command_row_to_dict(command) for command in commands]
     return {
