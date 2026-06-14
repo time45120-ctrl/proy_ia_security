@@ -6,12 +6,16 @@ import {
   API_BASE_URL,
   confirmVoiceIntentPlan,
   getDeviceCommandStatus,
+  getDeviceLedStates,
   getVoiceIntentUserReplyAudio,
+  listDevices,
   listRecentVoiceIntents,
   pingBackend,
   sendVoiceIntentPreview,
   type BackendConnectionState,
   type DeviceCommandDelivery,
+  type DeviceLedStatesResponse,
+  type LinkedDeviceRecord,
   type MqttLightPayload,
   type VoiceIntentAuditRecord,
   type VoiceIntentConfirmResponse,
@@ -49,6 +53,12 @@ type LightCommandView = {
 
 const SILENT_AUDIO_MIN_BYTES = 1500;
 const SILENT_AUDIO_PEAK_THRESHOLD = 0.03;
+const esp32LightRooms = [
+  { espacio: "sala", label: "Sala", gpio: "GPIO 16" },
+  { espacio: "cocina", label: "Cocina", gpio: "GPIO 17" },
+  { espacio: "comedor", label: "Comedor", gpio: "GPIO 18" },
+  { espacio: "dormitorio", label: "Dormitorio", gpio: "GPIO 19" },
+] as const;
 
 type DetailDashboardConfig = {
   id: DeviceDetailId;
@@ -240,6 +250,10 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
   const [debugLogs, setDebugLogs] = useState<DebugLogEntry[]>([]);
   const [aiSpeechStatus, setAiSpeechStatus] = useState<AiSpeechStatus>("idle");
   const [aiSpeechError, setAiSpeechError] = useState<string | null>(null);
+  const [lightStates, setLightStates] = useState<DeviceLedStatesResponse | null>(null);
+  const [isLoadingLightStates, setIsLoadingLightStates] = useState(false);
+  const [lightStateError, setLightStateError] = useState<string | null>(null);
+  const [lightStateRefreshToken, setLightStateRefreshToken] = useState(0);
   const confirmationDeliveryKey = buildDeliveryKey(getConfirmationDeliveries(confirmation));
 
   useEffect(() => {
@@ -346,6 +360,9 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
         });
         setStatusText(formatDeliveryListStatus(mergedDeliveries));
         setConnection(hasDeliveryFailure(mergedDeliveries) ? "error" : "online");
+        if (mergedDeliveries.some((delivery) => delivery.status === "executed")) {
+          setLightStateRefreshToken((current) => current + 1);
+        }
       } catch {
         if (!isCancelled) {
           setStatusText("Esperando el estado del ESP32. La API no respondio a la consulta.");
@@ -363,6 +380,21 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
       window.clearInterval(intervalId);
     };
   }, [confirmationDeliveryKey]);
+
+  useEffect(() => {
+    if (activeDetail !== "lights") {
+      return;
+    }
+
+    void refreshLightStates();
+    const intervalId = window.setInterval(() => {
+      void refreshLightStates();
+    }, 5000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [activeDetail, lightStateRefreshToken]);
 
   function appendDebugLog(
     level: DebugLogLevel,
@@ -524,6 +556,28 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
       setRecentIntents(payload.items ?? []);
     } catch {
       setRecentIntents([]);
+    }
+  }
+
+  async function refreshLightStates() {
+    setIsLoadingLightStates(true);
+    setLightStateError(null);
+
+    try {
+      const devicesPayload = await listDevices();
+      const esp32 = findLatestEsp32Device(devicesPayload.devices ?? []);
+      if (!esp32) {
+        setLightStates(null);
+        setLightStateError("No hay un ESP32 enlazado para consultar LEDs.");
+        return;
+      }
+
+      const statesPayload = await getDeviceLedStates(esp32.device_id);
+      setLightStates(statesPayload);
+    } catch (error) {
+      setLightStateError(getErrorMessage(error));
+    } finally {
+      setIsLoadingLightStates(false);
     }
   }
 
@@ -918,7 +972,11 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
             {activeDetail !== "ia" ? (
               <DeviceDetailDashboard
                 config={detailDashboards[activeDetail]}
+                isLoadingLightStates={isLoadingLightStates}
+                lightStateError={lightStateError}
+                lightStates={lightStates}
                 onBack={() => setActiveDetail("ia")}
+                onRefreshLightStates={() => void refreshLightStates()}
               />
             ) : null}
           </section>
@@ -996,6 +1054,83 @@ function formatAuditDate(value: string) {
     dateStyle: "short",
     timeStyle: "short",
   }).format(new Date(value));
+}
+
+function findLatestEsp32Device(devices: LinkedDeviceRecord[]) {
+  return devices
+    .filter((device) =>
+      !device.is_demo &&
+      Boolean(device.claimed_at) &&
+      (device.type === "ESP32" ||
+        device.model === "ESP32" ||
+        device.transport === "http_polling"),
+    )
+    .sort((left, right) =>
+      parseDateMs(right.claimed_at ?? right.created_at) -
+      parseDateMs(left.claimed_at ?? left.created_at),
+    )[0] ?? null;
+}
+
+function parseDateMs(value?: string | null) {
+  const timestamp = value ? Date.parse(value) : 0;
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function buildVisibleLightStates(states: DeviceLedStatesResponse | null) {
+  const stateMap = new Map(
+    (states?.states ?? []).map((item) => [item.espacio, item]),
+  );
+
+  return esp32LightRooms.map((room) => {
+    const item = stateMap.get(room.espacio);
+    return {
+      espacio: room.espacio,
+      label: item?.label ?? room.label,
+      state: normalizeVisibleLedState(item?.state),
+      gpio: item?.gpio ?? room.gpio,
+      updated_at: item?.updated_at ?? null,
+      source_command_id: item?.source_command_id ?? null,
+    };
+  });
+}
+
+function normalizeVisibleLedState(value?: string | null) {
+  return value === "ON" ? "ON" : "OFF";
+}
+
+function formatLedStateTimestamp(value?: string | null, sourceCommandId?: string | null) {
+  if (!value || !sourceCommandId) {
+    return "Inicial";
+  }
+
+  return new Intl.DateTimeFormat("es", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function getLedStateCardTone(state: string) {
+  if (state === "ON") {
+    return "border-[#f6c563]/35 bg-[#f6c563]/10 shadow-[0_0_24px_rgba(246,197,99,0.10)]";
+  }
+
+  return "border-white/10 bg-[#050c16]/70";
+}
+
+function getLedBulbTone(state: string) {
+  if (state === "ON") {
+    return "border-[#f6c563]/50 bg-[#f6c563]/20 text-[#ffe0a3] shadow-[0_0_22px_rgba(246,197,99,0.22)]";
+  }
+
+  return "border-white/15 bg-white/[0.04] text-slate-500";
+}
+
+function getLedStatePillTone(state: string) {
+  if (state === "ON") {
+    return "border-[#f6c563]/35 bg-[#f6c563]/10 text-[#ffe0a3]";
+  }
+
+  return "border-white/10 bg-white/[0.04] text-slate-300";
 }
 
 function AiCommandCard({
@@ -1240,11 +1375,32 @@ function AiCommandCard({
 
 function DeviceDetailDashboard({
   config,
+  isLoadingLightStates,
+  lightStateError,
+  lightStates,
   onBack,
+  onRefreshLightStates,
 }: {
   config: DetailDashboardConfig;
+  isLoadingLightStates: boolean;
+  lightStateError: string | null;
+  lightStates: DeviceLedStatesResponse | null;
   onBack: () => void;
+  onRefreshLightStates: () => void;
 }) {
+  if (config.id === "lights") {
+    return (
+      <LightStatesDashboard
+        config={config}
+        error={lightStateError}
+        isLoading={isLoadingLightStates}
+        onBack={onBack}
+        onRefresh={onRefreshLightStates}
+        states={lightStates}
+      />
+    );
+  }
+
   return (
     <div className="mt-5 grid gap-5 border-t border-white/10 pt-5">
       <div className="grid gap-3 sm:flex sm:items-start sm:justify-between">
@@ -1318,6 +1474,126 @@ function DeviceDetailDashboard({
         ))}
       </section>
     </div>
+  );
+}
+
+function LightStatesDashboard({
+  config,
+  error,
+  isLoading,
+  onBack,
+  onRefresh,
+  states,
+}: {
+  config: DetailDashboardConfig;
+  error: string | null;
+  isLoading: boolean;
+  onBack: () => void;
+  onRefresh: () => void;
+  states: DeviceLedStatesResponse | null;
+}) {
+  const rooms = buildVisibleLightStates(states);
+  const summary = states?.summary ?? {
+    total: rooms.length,
+    on: rooms.filter((room) => room.state === "ON").length,
+    off: rooms.filter((room) => room.state === "OFF").length,
+    last_updated_at: null,
+  };
+  const deviceStatus = states?.device_status_label ?? "Sin ESP32";
+
+  return (
+    <div className="mt-5 grid gap-5 border-t border-white/10 pt-5">
+      <div className="grid gap-3 sm:flex sm:items-start sm:justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+            {config.eyebrow}
+          </p>
+          <h2 className="mt-2 font-display text-2xl font-semibold text-white sm:text-3xl">
+            {config.title}
+          </h2>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
+            {states?.device?.name ?? "ESP32 multiambiente"} / {deviceStatus}
+          </p>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={isLoading}
+            className="min-h-10 rounded-lg border border-[#44c7f4]/25 bg-[#44c7f4]/10 px-4 py-2 text-sm font-semibold text-[#b7ebff] transition hover:bg-[#44c7f4]/15 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {isLoading ? "Actualizando..." : "Actualizar"}
+          </button>
+          <button
+            type="button"
+            onClick={onBack}
+            className="min-h-10 rounded-lg border border-white/15 bg-white/5 px-4 py-2 text-sm text-white transition hover:bg-white/10"
+          >
+            Volver a Guia IA
+          </button>
+        </div>
+      </div>
+
+      <section className="grid gap-3 sm:grid-cols-4">
+        <MetricTile label="Ambientes" value={String(summary.total)} />
+        <MetricTile label="Encendidas" value={String(summary.on)} />
+        <MetricTile label="Apagadas" value={String(summary.off)} />
+        <MetricTile
+          label="Actualizado"
+          value={formatLedStateTimestamp(summary.last_updated_at, summary.last_updated_at)}
+        />
+      </section>
+
+      {error ? (
+        <p className="rounded-lg border border-[#f6c563]/30 bg-[#f6c563]/10 px-4 py-3 text-sm leading-6 text-[#ffe0a3]">
+          {error}
+        </p>
+      ) : null}
+
+      <section className="grid gap-3 sm:grid-cols-2">
+        {rooms.map((room) => (
+          <article
+            key={room.espacio}
+            className={`rounded-lg border p-4 transition ${getLedStateCardTone(room.state)}`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-display text-lg font-semibold text-white">
+                  {room.label}
+                </h3>
+                <p className="mt-1 text-sm leading-6 text-slate-400">
+                  {room.gpio}
+                </p>
+              </div>
+              <span className={`flex h-12 w-12 items-center justify-center rounded-full border ${getLedBulbTone(room.state)}`}>
+                <LightIcon className="h-6 w-6" />
+              </span>
+            </div>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+              <span className={`rounded-full border px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] ${getLedStatePillTone(room.state)}`}>
+                {room.state}
+              </span>
+              <span className="text-xs text-slate-500">
+                {formatLedStateTimestamp(room.updated_at, room.source_command_id)}
+              </span>
+            </div>
+          </article>
+        ))}
+      </section>
+    </div>
+  );
+}
+
+function MetricTile({ label, value }: { label: string; value: string }) {
+  return (
+    <article className="rounded-lg border border-white/10 bg-white/[0.04] p-4">
+      <p className="text-xs uppercase tracking-[0.16em] text-slate-400">
+        {label}
+      </p>
+      <p className="mt-2 font-display text-3xl font-semibold text-white">
+        {value}
+      </p>
+    </article>
   );
 }
 
@@ -1968,7 +2244,7 @@ function buildDashboardStatusReply(
   if (connection === "online") {
     return (
       `Aun no he recibido una pregunta por voz en ${activeContext}. ` +
-      "El dashboard esta conectado al backend y por ahora muestra dispositivos de prueba; cuando hables, la respuesta IA para el usuario se ajustara exactamente a lo que preguntes."
+      "El dashboard esta conectado al backend; cuando hables, la respuesta IA para el usuario se ajustara exactamente a lo que preguntes."
     );
   }
 
