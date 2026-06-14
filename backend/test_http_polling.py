@@ -153,6 +153,40 @@ class HttpPollingDeviceTests(unittest.TestCase):
         idle = api.poll_device_commands(pairing["device_id"], authorization)
         self.assertEqual(idle["status"], "idle")
 
+    def test_led_states_rebuild_from_executed_commands_when_state_rows_are_missing(self):
+        pairing, claimed = self.pair_esp32("ESP32 multiambiente")
+        plan = self.compound_light_plan("prende cocina y sala")
+        api.confirm_voice_intent(
+            api.VoiceIntentConfirmRequest(request_id=plan["request_id"])
+        )
+
+        authorization = f"Bearer {claimed['device_api_key']}"
+        batch = api.poll_device_commands(pairing["device_id"], authorization)
+        api.acknowledge_device_command(
+            batch["command_id"],
+            api.DeviceCommandAckRequest(
+                device_id=pairing["device_id"],
+                status="executed",
+                detail="batch LED listo",
+            ),
+            authorization,
+        )
+
+        with api.get_db_connection() as conn:
+            conn.execute(
+                "DELETE FROM device_led_states WHERE device_id = ?",
+                (pairing["device_id"],),
+            )
+            conn.commit()
+
+        states = api.get_device_led_states(pairing["device_id"], authorization=None)
+        state_by_room = {item["espacio"]: item["state"] for item in states["states"]}
+        self.assertEqual(state_by_room["cocina"], "ON")
+        self.assertEqual(state_by_room["sala"], "ON")
+        self.assertEqual(state_by_room["comedor"], "OFF")
+        self.assertEqual(state_by_room["dormitorio"], "OFF")
+        self.assertEqual(states["summary"]["on"], 2)
+
     def test_failed_ack_does_not_change_led_state(self):
         pairing, claimed = self.pair_esp32()
         delivery = api.send_device_command(

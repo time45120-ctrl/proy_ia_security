@@ -1205,6 +1205,69 @@ def upsert_sqlite_led_states_from_commands(
     )
 
 
+def led_state_rows_from_executed_commands(
+    device: dict,
+    commands: list[sqlite3.Row | dict],
+) -> list[dict]:
+    latest_by_space: dict[str, dict] = {}
+
+    for command in commands:
+        command_dict = dict(command)
+        if str(command_dict.get("status", "")) != "executed":
+            continue
+
+        state = LED_STATE_BY_COMMAND_ACTION.get(str(command_dict.get("action", "")))
+        espacio = normalize_espacio(str(command_dict.get("espacio", "")))
+        if state is None or espacio not in ESPACIOS_VALIDOS:
+            continue
+
+        if espacio in latest_by_space:
+            continue
+
+        latest_by_space[espacio] = {
+            "device_id": command_dict.get("device_id") or device["device_id"],
+            "organization_id": command_dict.get("organization_id") or device.get("organization_id"),
+            "espacio": espacio,
+            "status": state,
+            "updated_at": (
+                command_dict.get("ack_at")
+                or command_dict.get("delivered_at")
+                or command_dict.get("created_at")
+            ),
+            "source_command_id": command_dict.get("command_id"),
+        }
+
+    return list(latest_by_space.values())
+
+
+def merge_led_state_rows_with_command_history(
+    device: dict,
+    state_rows: list[sqlite3.Row | dict],
+    command_rows: list[sqlite3.Row | dict],
+) -> list[dict]:
+    merged_rows = [dict(row) for row in state_rows]
+    command_state_rows = led_state_rows_from_executed_commands(device, command_rows)
+    return [*merged_rows, *command_state_rows]
+
+
+def fetch_sqlite_led_state_rows_from_executed_commands(
+    conn: sqlite3.Connection,
+    device_id: str,
+) -> list[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT *
+        FROM device_commands
+        WHERE device_id = ?
+          AND target = 'led'
+          AND status = 'executed'
+        ORDER BY COALESCE(ack_at, delivered_at, created_at) DESC, created_at DESC
+        LIMIT 100
+        """,
+        (device_id,),
+    ).fetchall()
+
+
 def fetch_supabase_device_led_state_rows(device: dict) -> list[dict]:
     organization_id = str(device.get("organization_id") or "").strip()
     if not organization_id:
@@ -1221,6 +1284,29 @@ def fetch_supabase_device_led_state_rows(device: dict) -> list[dict]:
         rows = supabase_rest("GET", query, service_role=True)
     except HTTPException as error:
         print("SUPABASE LED STATE READ SKIPPED:", error.detail)
+        return []
+
+    return rows if isinstance(rows, list) else []
+
+
+def fetch_supabase_led_state_rows_from_executed_commands(device: dict) -> list[dict]:
+    organization_id = str(device.get("organization_id") or "").strip()
+    if not organization_id:
+        return []
+
+    query = (
+        "device_commands?select=command_id,device_id,organization_id,target,action,"
+        "espacio,status,created_at,delivered_at,ack_at"
+        f"&device_id=eq.{urllib.parse.quote(str(device['device_id']))}"
+        f"&organization_id=eq.{urllib.parse.quote(organization_id)}"
+        "&target=eq.led&status=eq.executed"
+        "&order=created_at.desc"
+        "&limit=100"
+    )
+    try:
+        rows = supabase_rest("GET", query, service_role=True)
+    except HTTPException as error:
+        print("SUPABASE LED STATE HISTORY READ SKIPPED:", error.detail)
         return []
 
     return rows if isinstance(rows, list) else []
@@ -1821,6 +1907,8 @@ def get_device_led_states(
 
         state_rows = fetch_supabase_device_led_state_rows(device)
         state_rows = ensure_supabase_device_led_states(device, state_rows)
+        command_rows = fetch_supabase_led_state_rows_from_executed_commands(device)
+        state_rows = merge_led_state_rows_with_command_history(device, state_rows, command_rows)
         return build_led_states_response(device, state_rows)
 
     with get_db_connection() as conn:
@@ -1838,6 +1926,8 @@ def get_device_led_states(
         initialize_sqlite_device_led_states(conn, safe_device_id)
         conn.commit()
         state_rows = fetch_sqlite_device_led_state_rows(conn, safe_device_id)
+        command_rows = fetch_sqlite_led_state_rows_from_executed_commands(conn, safe_device_id)
+        state_rows = merge_led_state_rows_with_command_history(device, state_rows, command_rows)
 
     return build_led_states_response(device, state_rows)
 
