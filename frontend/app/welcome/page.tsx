@@ -37,6 +37,7 @@ const initialForm = {
   companyName: "",
   email: "",
   password: "",
+  confirmPassword: "",
   phone: "",
 };
 
@@ -86,7 +87,10 @@ export default function WelcomePage() {
         (form.companyName.trim().length > 1 &&
           form.phone.trim().length > 5)) &&
       form.email.includes("@") &&
-      form.password.length >= 8,
+      form.password.length >= 8 &&
+      (authMode !== "register" ||
+        (form.confirmPassword.length >= 8 &&
+          form.password === form.confirmPassword)),
     [authMode, form],
   );
 
@@ -113,6 +117,11 @@ export default function WelcomePage() {
       nextErrors.password = "Usa una contrasena de al menos 8 caracteres.";
     }
 
+    if (requireCompany && form.confirmPassword.length < 8) {
+      nextErrors.confirmPassword = "Confirma tu contrasena.";
+    } else if (requireCompany && form.password !== form.confirmPassword) {
+      nextErrors.confirmPassword = "Las contrasenas no coinciden.";
+    }
     if (requireCompany && form.phone.trim().length < 6) {
       nextErrors.phone = "Ingresa un telefono de contacto.";
     }
@@ -527,6 +536,18 @@ export default function WelcomePage() {
               />
               {authMode === "register" ? (
                 <>
+                  <TextField
+                    label="Confirmar contrasena"
+                    type="password"
+                    value={form.confirmPassword}
+                    error={
+                      form.confirmPassword.length > 0 &&
+                      form.password !== form.confirmPassword
+                        ? "Las contrasenas no coinciden."
+                        : errors.confirmPassword
+                    }
+                    onChange={(value) => updateForm("confirmPassword", value)}
+                  />
                   <TextField
                     label="Telefono"
                     value={form.phone}
