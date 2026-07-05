@@ -14,7 +14,7 @@ export type LightCommand = {
 
 export type VoiceIntentJson = {
   texto?: string;
-  intencion?: "control_luces" | "otra" | string;
+  intencion?: "control_luces" | "consulta_estado_luces" | "otra" | string;
   detalle?: string;
   espacio?: "sala" | "comedor" | "cocina" | "dormitorio" | "cuarto_principal" | "desconocido" | string;
   accion?: "ON" | "OFF" | "NONE" | string;
@@ -81,6 +81,7 @@ export type VoiceIntentPlan = {
   delivery_mode?: "batch_http_polling" | "http_polling" | "mqtt" | string | null;
   respuesta_ia_audio?: VoiceIntentAudio | null;
   comandos_luces?: LightCommand[];
+  estado_ambientes?: LightStateQueryResult | null;
   batch?: boolean;
   expires_at?: string;
 };
@@ -179,6 +180,22 @@ export type DeviceLedState = {
   source_command_id?: string | null;
 };
 
+export type DeviceLedStatesSummary = {
+  total: number;
+  on: number;
+  off: number;
+  last_updated_at?: string | null;
+};
+
+export type LightStateQueryResult = {
+  scope?: "all" | "specific" | string;
+  target_state?: "ON" | "OFF" | null;
+  device_id?: string | null;
+  device_status?: string | null;
+  states?: DeviceLedState[];
+  summary?: DeviceLedStatesSummary | null;
+};
+
 export type DeviceLedStatesResponse = {
   ok?: boolean;
   device?: LinkedDeviceRecord;
@@ -186,12 +203,7 @@ export type DeviceLedStatesResponse = {
   device_status?: string;
   device_status_label?: string;
   states: DeviceLedState[];
-  summary: {
-    total: number;
-    on: number;
-    off: number;
-    last_updated_at?: string | null;
-  };
+  summary: DeviceLedStatesSummary;
 };
 
 export type PairingTokenResponse = {
