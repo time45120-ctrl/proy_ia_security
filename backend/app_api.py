@@ -198,8 +198,8 @@ LED_STATE_BY_COMMAND_ACTION = {
     "turn_off": "OFF",
 }
 LIGHT_ACTION_ALIASES = {
-    "ON": ("prende", "prender", "prenda", "prendas", "enciende", "encender", "activar", "activa", "ilumina", "iluminar", "sube", "subir", "pon", "poner"),
-    "OFF": ("apaga", "apagar", "apague", "apagues", "desactiva", "desactivar", "quita", "quitar", "baja", "bajar"),
+    "ON": ("prende", "prender", "prenda", "prendas", "prendela", "prendelo", "enciende", "encender", "enciendela", "enciendelo", "activar", "activa", "ilumina", "iluminar", "sube", "subir", "pon", "poner"),
+    "OFF": ("apaga", "apagar", "apague", "apagues", "apagala", "apagalo", "desactiva", "desactivar", "quita", "quitar", "baja", "bajar"),
 }
 LIGHT_ACTION_WORDS = {
     alias: action
@@ -225,6 +225,16 @@ LIGHT_SPACE_ALIASES = {
     ),
 }
 LIGHT_WORD_ALIASES = ("luz", "luces", "led", "leds", "foco", "focos", "lampara", "lamparas")
+LIGHT_STATE_QUERY_INTENT = "consulta_estado_luces"
+LIGHT_STATE_ON_WORDS = ("prendida", "prendido", "prendidas", "prendidos", "encendida", "encendido", "encendidas", "encendidos", "activada", "activado", "activadas", "activados")
+LIGHT_STATE_OFF_WORDS = ("apagada", "apagado", "apagadas", "apagados", "desactivada", "desactivado", "desactivadas", "desactivados")
+LIGHT_ENVIRONMENT_WORDS = ("ambiente", "ambientes", "habitacion", "habitaciones", "area", "areas")
+LIGHT_SPACE_GENDER = {
+    "sala": "f",
+    "cocina": "f",
+    "comedor": "m",
+    "dormitorio": "m",
+}
 
 # --- Planes de voz pendientes de confirmacion ---
 VOICE_PLAN_TTL_SECONDS = int(os.getenv("VOICE_PLAN_TTL_SECONDS", "300"))
@@ -2830,6 +2840,221 @@ def public_delivery_preview(preview: dict | None) -> dict | None:
     }
 
 
+def mentions_environment_words(text: str) -> bool:
+    plain = normalize_rule_text(text)
+    return any(re.search(rf"\b{re.escape(word)}\b", plain) for word in LIGHT_ENVIRONMENT_WORDS)
+
+
+def has_explicit_light_order(text: str) -> bool:
+    plain = normalize_rule_text(text)
+    return bool(LIGHT_ACTION_PATTERN.search(plain))
+
+
+def detect_light_state_query(texto_transcrito: str) -> dict | None:
+    plain = normalize_rule_text(texto_transcrito)
+    if not plain:
+        return None
+
+    if has_explicit_light_order(plain):
+        return None
+
+    words = set(plain.split())
+    spaces = detect_spaces_in_text(plain)
+    has_light_scope = (
+        mentions_light_words(plain)
+        or mentions_environment_words(plain)
+        or mentions_all_lights(plain)
+        or bool(spaces)
+    )
+    if not has_light_scope:
+        return None
+
+    on_state = any(re.search(rf"\b{re.escape(word)}\b", plain) for word in LIGHT_STATE_ON_WORDS)
+    off_state = any(re.search(rf"\b{re.escape(word)}\b", plain) for word in LIGHT_STATE_OFF_WORDS)
+    has_state_word = on_state or off_state
+    status_words = {"estado", "estados", "situacion", "condicion"}
+    has_status_word = bool(words.intersection(status_words))
+    has_state_aux = bool(words.intersection({"esta", "estan", "encuentra", "encuentran", "quedo", "quedaron"}))
+    has_question_word = bool(words.intersection({"que", "cual", "cuales", "como", "dime", "saber", "consulta", "consultar", "revisa", "verifica"}))
+    state_phrase = has_state_word and (has_state_aux or has_question_word or bool(spaces))
+    status_phrase = has_status_word or "como esta" in plain or "como estan" in plain
+
+    if not (status_phrase or state_phrase):
+        return None
+
+    target_state = None
+    if on_state and not off_state:
+        target_state = "ON"
+    elif off_state and not on_state:
+        target_state = "OFF"
+
+    all_scope = mentions_all_lights(plain) or mentions_environment_words(plain) or not spaces
+    return {
+        "scope": "all" if all_scope else "specific",
+        "espacios": list(ESP32_MULTIROOM_ESPACIOS) if all_scope else spaces,
+        "target_state": target_state,
+    }
+
+
+def join_spanish(items: list[str]) -> str:
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} y {items[1]}"
+    return ", ".join(items[:-1]) + f" y {items[-1]}"
+
+
+def capitalize_sentence(value: str) -> str:
+    return value[:1].upper() + value[1:] if value else value
+
+
+def state_space_label(espacio: str) -> str:
+    return ESPACIOS_DESCRIPCION.get(espacio, espacio).lower()
+
+
+def state_adjective(state: str, espacios: list[str]) -> str:
+    normalized = normalize_led_state(state)
+    plural = len(espacios) != 1
+    feminine = all(LIGHT_SPACE_GENDER.get(espacio) == "f" for espacio in espacios)
+
+    if normalized == "ON":
+        if plural:
+            return "prendidas" if feminine else "prendidos"
+        return "prendida" if feminine else "prendido"
+
+    if plural:
+        return "apagadas" if feminine else "apagados"
+    return "apagada" if feminine else "apagado"
+
+
+def state_group_sentence(espacios: list[str], state: str) -> str:
+    labels = [state_space_label(espacio) for espacio in espacios]
+    subject = join_spanish(labels)
+    verb = "esta" if len(espacios) == 1 else "estan"
+    return f"{capitalize_sentence(subject)} {verb} {state_adjective(state, espacios)}"
+
+
+def format_light_state_reply(led_response: dict | None, state_query: dict) -> str:
+    if not led_response:
+        return "Todavia no hay un ESP32 enlazado para consultar el estado real de los ambientes."
+
+    requested_spaces = [
+        normalize_espacio(str(espacio))
+        for espacio in state_query.get("espacios", ESP32_MULTIROOM_ESPACIOS)
+    ]
+    requested_spaces = [espacio for espacio in requested_spaces if espacio in ESPACIOS_VALIDOS]
+    if not requested_spaces:
+        requested_spaces = list(ESP32_MULTIROOM_ESPACIOS)
+
+    state_by_space = {
+        normalize_espacio(str(item.get("espacio", ""))): normalize_led_state(str(item.get("state")))
+        for item in led_response.get("states", [])
+    }
+    selected = [
+        {"espacio": espacio, "state": state_by_space.get(espacio, LED_STATE_INITIAL)}
+        for espacio in requested_spaces
+    ]
+    target_state = state_query.get("target_state")
+
+    if len(selected) == 1:
+        espacio = selected[0]["espacio"]
+        state = selected[0]["state"]
+        article = "La" if LIGHT_SPACE_GENDER.get(espacio) == "f" else "El"
+        return f"{article} {state_space_label(espacio)} esta {state_adjective(state, [espacio])}."
+
+    on_spaces = [item["espacio"] for item in selected if item["state"] == "ON"]
+    off_spaces = [item["espacio"] for item in selected if item["state"] == "OFF"]
+    all_requested = set(requested_spaces) == set(ESP32_MULTIROOM_ESPACIOS)
+
+    if target_state == "ON":
+        if on_spaces:
+            if all_requested and len(on_spaces) == len(ESP32_MULTIROOM_ESPACIOS):
+                return "Estan prendidos todos los ambientes."
+            return f"Las luces de {join_spanish([state_space_label(espacio) for espacio in on_spaces])} estan prendidas."
+        return "No hay ambientes prendidos; todos los consultados se encuentran apagados."
+
+    if target_state == "OFF":
+        if off_spaces:
+            if all_requested and len(off_spaces) == len(ESP32_MULTIROOM_ESPACIOS):
+                return "Todos los ambientes se encuentran apagados."
+            return f"Las luces de {join_spanish([state_space_label(espacio) for espacio in off_spaces])} estan apagadas."
+        return "No hay ambientes apagados; todos los consultados se encuentran prendidos."
+
+    if off_spaces and not on_spaces:
+        if all_requested:
+            return "Todos los ambientes se encuentran apagados."
+        return state_group_sentence(off_spaces, "OFF") + "."
+
+    if on_spaces and not off_spaces:
+        if all_requested:
+            return "Estan prendidos todos los ambientes."
+        return state_group_sentence(on_spaces, "ON") + "."
+
+    return f"{state_group_sentence(on_spaces, 'ON')}; {state_group_sentence(off_spaces, 'OFF')}."
+
+
+def fetch_latest_http_esp32_led_state_response(
+    organization_id: str | None = None,
+    access_token: str | None = None,
+) -> dict | None:
+    device = find_latest_http_esp32(organization_id, access_token)
+    if device is None:
+        return None
+
+    if using_supabase():
+        state_rows = fetch_supabase_device_led_state_rows(device)
+        state_rows = ensure_supabase_device_led_states(device, state_rows)
+        command_rows = fetch_supabase_led_state_rows_from_executed_commands(device)
+        state_rows = merge_led_state_rows_with_command_history(device, state_rows, command_rows)
+        return build_led_states_response(device, state_rows)
+
+    with get_db_connection() as conn:
+        initialize_sqlite_device_led_states(conn, device["device_id"])
+        conn.commit()
+        state_rows = fetch_sqlite_device_led_state_rows(conn, device["device_id"])
+        command_rows = fetch_sqlite_led_state_rows_from_executed_commands(conn, device["device_id"])
+        state_rows = merge_led_state_rows_with_command_history(device, state_rows, command_rows)
+
+    return build_led_states_response(device, state_rows)
+
+
+def public_light_state_query_payload(led_response: dict | None, state_query: dict) -> dict:
+    requested_spaces = [
+        normalize_espacio(str(espacio))
+        for espacio in state_query.get("espacios", ESP32_MULTIROOM_ESPACIOS)
+    ]
+    requested_spaces = [espacio for espacio in requested_spaces if espacio in ESPACIOS_VALIDOS]
+    if not requested_spaces:
+        requested_spaces = list(ESP32_MULTIROOM_ESPACIOS)
+
+    states = []
+    if led_response:
+        state_by_space = {
+            normalize_espacio(str(item.get("espacio", ""))): item
+            for item in led_response.get("states", [])
+        }
+        for espacio in requested_spaces:
+            item = state_by_space.get(espacio, {})
+            states.append({
+                "espacio": espacio,
+                "label": ESPACIOS_DESCRIPCION.get(espacio, espacio),
+                "state": normalize_led_state(str(item.get("state"))),
+                "updated_at": item.get("updated_at"),
+                "source_command_id": item.get("source_command_id"),
+            })
+
+    return {
+        "scope": state_query.get("scope", "all"),
+        "target_state": state_query.get("target_state"),
+        "device_id": led_response.get("device_id") if led_response else None,
+        "device_status": led_response.get("device_status") if led_response else None,
+        "states": states,
+        "summary": led_response.get("summary") if led_response else None,
+    }
+
+
 def extract_json(text: str):
     """
     Intenta extraer un JSON válido desde la respuesta de la IA.
@@ -2859,6 +3084,19 @@ def fallback_rule_parser(texto_transcrito: str) -> dict:
     Esto mantiene la demo funcionando aunque OpenAI u Ollama no respondan.
     """
     t = normalize_text(texto_transcrito)
+    state_query = detect_light_state_query(texto_transcrito)
+    if state_query:
+        espacios = state_query.get("espacios") or []
+        return {
+            "texto": texto_transcrito,
+            "intencion": LIGHT_STATE_QUERY_INTENT,
+            "detalle": "consulta de estado de luces por reglas locales",
+            "espacio": espacios[0] if len(espacios) == 1 else "desconocido",
+            "accion": "NONE",
+            "comandos_luces": [],
+            "consulta_estado": state_query,
+        }
+
     commands, conflict = normalize_light_commands([], texto_transcrito)
 
     if conflict:
@@ -2943,7 +3181,29 @@ def sanitize_ai_json(
     if espacio not in ESPACIOS_VALIDOS:
         espacio = "desconocido"
 
-    if intencion not in {"control_luces", "otra"}:
+    state_query = detect_light_state_query(texto_transcrito)
+    if state_query is None and intencion == LIGHT_STATE_QUERY_INTENT and not has_explicit_light_order(texto_transcrito):
+        spaces = detect_spaces_in_text(texto_transcrito)
+        all_scope = mentions_all_lights(texto_transcrito) or mentions_environment_words(texto_transcrito) or not spaces
+        state_query = {
+            "scope": "all" if all_scope else "specific",
+            "espacios": list(ESP32_MULTIROOM_ESPACIOS) if all_scope else spaces,
+            "target_state": None,
+        }
+
+    if state_query:
+        espacios = state_query.get("espacios") or []
+        return {
+            "texto": texto or texto_transcrito,
+            "intencion": LIGHT_STATE_QUERY_INTENT,
+            "detalle": detalle or "consulta de estado de luces",
+            "espacio": espacios[0] if len(espacios) == 1 else "desconocido",
+            "accion": "NONE",
+            "comandos_luces": [],
+            "consulta_estado": state_query,
+        }
+
+    if intencion not in {"control_luces", LIGHT_STATE_QUERY_INTENT, "otra"}:
         intencion = "otra"
 
     saneado = {
@@ -3040,6 +3300,9 @@ def build_default_ai_reply(texto_transcrito: str, ia_json: dict) -> str:
             "que luz quieres encender o apagar para ejecutarlo con seguridad."
         )
 
+    if intencion == LIGHT_STATE_QUERY_INTENT:
+        return "Voy a revisar el ultimo estado confirmado de los ambientes."
+
     if intencion == "control_luces" and len(comandos_luces) > 1:
         return (
             f"Listo, entendi que quieres {describe_light_commands(comandos_luces)}. "
@@ -3081,8 +3344,8 @@ INTENT_JSON_SCHEMA = {
         },
         "intencion": {
             "type": "string",
-            "enum": ["control_luces", "otra"],
-            "description": "Intención detectada."
+            "enum": ["control_luces", "consulta_estado_luces", "otra"],
+            "description": "Intencion detectada: orden de luces, consulta de estado de luces u otra solicitud."
         },
         "detalle": {
             "type": "string",
@@ -3192,7 +3455,11 @@ def call_openai_intent(texto_transcrito: str) -> str:
     - Si menciona cocina, espacio = cocina.
     - Si menciona dormitorio, cuarto principal, habitacion principal, dormitorio principal o recamara principal, espacio = dormitorio.
     - Si no detectas ambiente, espacio = desconocido.
-    - Si quiere controlar luces, intencion = control_luces.
+    - Si quiere controlar luces con una orden de prender o apagar, intencion = control_luces.
+    - Si pregunta por el estado actual de luces o ambientes, intencion = consulta_estado_luces, accion = NONE y comandos_luces = [].
+    - Preguntas como "esta prendida la cocina", "como estan los ambientes" o "que luces estan apagadas" son consultas de estado, no ordenes.
+    - Ordenes como "prende cocina", "apaga dormitorio" o "prende todas las luces" son control_luces.
+    - Si una frase mezcla estado y una orden imperativa, por ejemplo "la cocina esta apagada, prendela", clasificala como control_luces.
     - Si habla de camaras, puertas, drones, seguridad general, preguntas o conversacion normal, intencion = otra.
     - Para un comando simple, llena espacio/accion legacy y usa comandos_luces = [].
     - Para varios ambientes o varias acciones en una frase, llena comandos_luces con cada orden y conserva espacio/accion con la primera orden por compatibilidad.
@@ -3205,6 +3472,7 @@ def call_openai_intent(texto_transcrito: str) -> str:
     Como escribir "respuesta_usuario":
     - Maximo dos frases.
     - Debe contestar la pregunta o comando real del usuario, usando el texto transcrito como fuente principal.
+    - Si es una consulta de estado, responde que vas a revisar el ultimo estado confirmado; el backend completara la respuesta real.
     - Si es un comando claro de luces, confirma lo entendido y recuerda que esperas confirmacion antes de ejecutar.
     - Si falta ambiente o accion, pide solo el dato que falta.
     - Si es camaras/puertas/drones, responde que puedes preparar el plan, pero que ese modulo aun no ejecuta hardware real.
@@ -3257,7 +3525,7 @@ def build_local_ai_prompt(texto_transcrito: str) -> str:
         "{texto_transcrito}"
 
         Tu tarea es:
-        1. Entender si el usuario quiere encender o apagar una luz.
+        1. Entender si el usuario quiere encender/apagar una luz o consultar su estado.
         2. Detectar el ambiente mencionado.
         3. Separar la salida en JSON tecnico para dispositivos y respuesta natural para el usuario.
         4. Devolver SOLO un JSON válido.
@@ -3267,7 +3535,7 @@ def build_local_ai_prompt(texto_transcrito: str) -> str:
         {{
           "intencion_json": {{
             "texto": "texto transcrito del usuario",
-            "intencion": "control_luces o otra",
+            "intencion": "control_luces, consulta_estado_luces u otra",
             "detalle": "detalle tecnico breve",
             "espacio": "sala, comedor, cocina, dormitorio o desconocido",
             "accion": "ON, OFF o NONE",
@@ -3291,11 +3559,16 @@ def build_local_ai_prompt(texto_transcrito: str) -> str:
 
         Para el campo "intencion":
         - Si quiere encender o apagar una luz de un ambiente, usa "control_luces".
+        - Si pregunta por el estado actual de una luz, un ambiente o todos los ambientes, usa "consulta_estado_luces".
+        - "esta prendida la cocina", "como estan los ambientes" y "que luces estan apagadas" son consultas de estado.
+        - "prende cocina", "apaga dormitorio" y "prende todas las luces" son ordenes de control_luces.
+        - Si mezcla estado y orden imperativa, como "la cocina esta apagada, prendela", usa "control_luces".
         - Si no corresponde, usa "otra".
 
         Para el campo "accion":
         - Si el usuario pide prender, encender, activar la luz o foco, usa "ON".
         - Si el usuario pide apagar, desactivar la luz o foco, usa "OFF".
+        - Si solo pregunta por estado, usa "NONE".
         - Si no está claro, usa "NONE".
 
         Para el campo "espacio":
@@ -3312,13 +3585,16 @@ def build_local_ai_prompt(texto_transcrito: str) -> str:
         - "prende todas las luces" significa sala, cocina, comedor y dormitorio ON.
         - "apaga todas las luces" significa sala, cocina, comedor y dormitorio OFF.
         - "prende cocina y apaga comedor" significa cocina ON y comedor OFF.
+        - Si es consulta de estado, usa comandos_luces [].
         - Si hay contradicción sobre el mismo ambiente, no ejecutes: accion NONE, espacio desconocido y comandos_luces [].
 
         Ejemplos:
         - "prende luz cocina" -> {{"intencion_json":{{"texto":"prende luz cocina","intencion":"control_luces","detalle":"encender luz de cocina","espacio":"cocina","accion":"ON"}},"respuesta_usuario":"Entendi: quieres encender la luz de cocina. Lo dejo listo y espero tu confirmacion para ejecutarlo."}}
         - "apaga la luz de la sala" -> {{"intencion_json":{{"texto":"apaga la luz de la sala","intencion":"control_luces","detalle":"apagar luz de sala","espacio":"sala","accion":"OFF"}},"respuesta_usuario":"Perfecto, preparo el apagado de la luz de sala y no lo ejecuto hasta que confirmes."}}
         - "enciende la luz del comedor" -> {{"intencion_json":{{"texto":"enciende la luz del comedor","intencion":"control_luces","detalle":"encender luz de comedor","espacio":"comedor","accion":"ON"}},"respuesta_usuario":"Claro, puedo encender la luz del comedor; primero te muestro el plan para confirmarlo."}}
-        - "apaga dormitorio" -> {{"intencion_json":{{"texto":"apaga dormitorio","intencion":"control_luces","detalle":"apagar luz de dormitorio","espacio":"dormitorio","accion":"OFF"}},"respuesta_usuario":"Entendido, preparo apagar la luz del dormitorio y quedo esperando tu confirmacion."}}
+        - "apaga dormitorio" -> {{"intencion_json":{{"texto":"apaga dormitorio","intencion":"control_luces","detalle":"apagar luz de dormitorio","espacio":"dormitorio","accion":"OFF","comandos_luces":[]}},"respuesta_usuario":"Entendido, preparo apagar la luz del dormitorio y quedo esperando tu confirmacion."}}
+        - "esta prendida la cocina" -> {{"intencion_json":{{"texto":"esta prendida la cocina","intencion":"consulta_estado_luces","detalle":"consultar estado de cocina","espacio":"cocina","accion":"NONE","comandos_luces":[]}},"respuesta_usuario":"Reviso el ultimo estado confirmado de cocina."}}
+        - "la cocina esta apagada, prendela" -> {{"intencion_json":{{"texto":"la cocina esta apagada, prendela","intencion":"control_luces","detalle":"encender luz de cocina","espacio":"cocina","accion":"ON","comandos_luces":[]}},"respuesta_usuario":"Entendido, preparo encender la luz de cocina y espero tu confirmacion."}}
     """)
 
 
@@ -3411,7 +3687,7 @@ def infer_command_module(texto_transcrito: str, ia_json: dict) -> str:
     """
     Detecta a que modulo pertenece el comando.
     """
-    if ia_json.get("intencion") == "control_luces":
+    if ia_json.get("intencion") in {"control_luces", LIGHT_STATE_QUERY_INTENT}:
         return "lights"
 
     text = normalize_text(texto_transcrito)
@@ -3529,6 +3805,44 @@ def build_voice_intent_plan(
     cleanup_expired_voice_plans()
 
     request_id = secrets.token_urlsafe(16)
+    state_query = ia_json.get("consulta_estado") if isinstance(ia_json.get("consulta_estado"), dict) else None
+    if ia_json.get("intencion") == LIGHT_STATE_QUERY_INTENT and not state_query:
+        state_query = detect_light_state_query(texto_transcrito)
+    if state_query:
+        led_response = fetch_latest_http_esp32_led_state_response(organization_id, access_token)
+        respuesta = format_light_state_reply(led_response, state_query)
+        espacios = state_query.get("espacios") or []
+        public_space = (
+            "Todas"
+            if state_query.get("scope") == "all" or len(espacios) != 1
+            else light_space_label(str(espacios[0]))
+        )
+        plan = {
+            "request_id": request_id,
+            "respuesta": respuesta,
+            "steps": [
+                "Detectar que la frase es una consulta de estado, no una orden.",
+                "Leer el ultimo estado confirmado por ACK del ESP32.",
+                "Responder sin preparar ejecucion fisica.",
+            ],
+            "can_execute": False,
+            "module": "lights",
+            "action": "NONE",
+            "espacio": public_space,
+            "mqtt_preview": None,
+            "delivery_preview": None,
+            "delivery_previews": None,
+            "delivery_mode": None,
+            "estado_ambientes": public_light_state_query_payload(led_response, state_query),
+            "expires_at": to_iso(utc_now() + timedelta(seconds=VOICE_PLAN_TTL_SECONDS)),
+        }
+        if not using_supabase():
+            PENDING_VOICE_PLANS[request_id] = {
+                "expires_at": utc_now() + timedelta(seconds=VOICE_PLAN_TTL_SECONDS),
+                "plan": plan,
+            }
+        return plan
+
     module = infer_command_module(texto_transcrito, ia_json)
     action = infer_module_action(module, texto_transcrito, ia_json)
     espacio = normalize_espacio(str(ia_json.get("espacio", "desconocido")))
