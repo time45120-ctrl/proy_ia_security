@@ -528,9 +528,19 @@ def authenticated_context(authorization: str | None) -> dict:
     if not isinstance(memberships, list) or not memberships:
         raise HTTPException(status_code=403, detail="La cuenta no tiene empresa asociada")
 
+    profile_query = (
+        "profiles?select=username"
+        f"&user_id=eq.{urllib.parse.quote(user_id)}&limit=1"
+    )
+    profiles = supabase_rest("GET", profile_query, access_token=token)
+    username = ""
+    if isinstance(profiles, list) and profiles:
+        username = str(profiles[0].get("username") or "").strip()
+
     return {
         "token": token,
         "user_id": user_id,
+        "username": username,
         "organization_id": memberships[0]["organization_id"],
         "role": memberships[0]["role"],
     }
@@ -1805,6 +1815,12 @@ def dashboard_welcome(authorization: str | None = Header(default=None)):
         "welcome": True,
         "ai_provider": AI_PROVIDER,
         "linked_devices_count": linked_devices_count,
+        "user": {
+            "id": context["user_id"],
+            "username": context.get("username") or "",
+            "organization_id": context["organization_id"],
+            "role": context["role"],
+        },
         "intencion_json": device_intent,
         "respuesta_usuario": DASHBOARD_WELCOME_MESSAGE,
         "respuesta_json_dispositivo": device_intent,
