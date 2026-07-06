@@ -206,6 +206,11 @@ export type DeviceLedStatesResponse = {
   summary: DeviceLedStatesSummary;
 };
 
+export type DashboardWelcomeResponse = VoiceIntentResponse & {
+  welcome?: boolean;
+  linked_devices_count?: number;
+};
+
 export type PairingTokenResponse = {
   ok: boolean;
   device_id: string;
@@ -303,6 +308,19 @@ export async function pingBackend() {
   }
 
   return (await response.json()) as { pong?: boolean };
+}
+
+export async function getDashboardWelcome() {
+  const response = await fetch(`${API_BASE_URL}/dashboard/welcome`, {
+    cache: "no-store",
+    headers: await authenticatedHeaders(),
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  return (await response.json()) as DashboardWelcomeResponse;
 }
 
 export async function sendVoiceIntentPreview(file: File) {
