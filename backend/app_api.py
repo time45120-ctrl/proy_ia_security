@@ -587,6 +587,11 @@ TTS_AUDIO_FORMATS = {
     "flac": ("audio/flac", ".flac"),
 }
 
+DASHBOARD_WELCOME_MESSAGE = (
+    "Bienvenido Usuario Administrador soy Lea tu asistente de Inteligencia "
+    "Artificial, que te acompañará para lo que necesites, estoy para servirte"
+)
+
 
 def tts_format_settings() -> tuple[str, str, str]:
     response_format = OPENAI_TTS_RESPONSE_FORMAT
@@ -598,6 +603,11 @@ def tts_format_settings() -> tuple[str, str, str]:
 
 def build_tts_audio_endpoint(request_id: str) -> str:
     return f"/voice-intents/{urllib.parse.quote(request_id)}/audio/respuesta-ia"
+
+
+def build_dashboard_welcome_audio_endpoint() -> str:
+    nonce = secrets.token_urlsafe(8)
+    return f"/dashboard/welcome/audio?nonce={urllib.parse.quote(nonce)}"
 
 
 def build_response_tts_audio_metadata(
@@ -624,6 +634,62 @@ def build_response_tts_audio_metadata(
     if error:
         metadata["error"] = error
     return metadata
+
+
+def build_dashboard_welcome_audio_metadata(available: bool, error: str | None = None) -> dict:
+    _, default_content_type, _ = tts_format_settings()
+    metadata = {
+        "available": available,
+        "content_type": default_content_type,
+        "endpoint": build_dashboard_welcome_audio_endpoint(),
+        "model": OPENAI_TTS_MODEL,
+        "voice": OPENAI_TTS_VOICE,
+    }
+    if error:
+        metadata["error"] = error
+    return metadata
+
+
+def synthesize_tts_audio_bytes(text: str) -> tuple[bytes, str]:
+    if not OPENAI_TTS_ENABLED:
+        raise HTTPException(status_code=503, detail="Texto a voz desactivado por OPENAI_TTS_ENABLED")
+
+    if openai_client is None:
+        raise HTTPException(status_code=503, detail="OpenAI no esta inicializado para generar voz")
+
+    text_to_speak = " ".join(str(text or "").split())[:4096]
+    if not text_to_speak:
+        raise HTTPException(status_code=400, detail="Texto vacio para voz IA")
+
+    response_format, content_type, suffix = tts_format_settings()
+    temporary_path = None
+
+    try:
+        temporary = tempfile.NamedTemporaryFile(prefix="afcr_tts_", suffix=suffix, delete=False)
+        temporary_path = temporary.name
+        temporary.close()
+
+        with openai_client.audio.speech.with_streaming_response.create(
+            model=OPENAI_TTS_MODEL,
+            voice=OPENAI_TTS_VOICE,
+            input=text_to_speak,
+            instructions=OPENAI_TTS_INSTRUCTIONS,
+            response_format=response_format,
+        ) as speech_response:
+            speech_response.stream_to_file(temporary_path)
+
+        return Path(temporary_path).read_bytes(), content_type
+    except HTTPException:
+        raise
+    except Exception as error:
+        print("OPENAI TTS ERROR:", error)
+        raise HTTPException(status_code=503, detail="No se pudo generar la voz IA") from error
+    finally:
+        if temporary_path:
+            try:
+                os.unlink(temporary_path)
+            except FileNotFoundError:
+                pass
 
 
 def generate_response_tts_audio(context: dict | None, request_id: str, respuesta_usuario: str) -> dict:
@@ -1683,6 +1749,100 @@ def root():
 @app.get("/ping")
 def ping():
     return {"pong": True}
+
+
+def ensure_dashboard_welcome_access(context: dict) -> int:
+    query = (
+        f"devices?select=device_id"
+        f"&organization_id=eq.{urllib.parse.quote(context['organization_id'])}"
+        "&claimed_at=not.is.null&limit=1"
+    )
+    rows = supabase_rest("GET", query, access_token=context["token"])
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(
+            status_code=403,
+            detail="Primero enlaza al menos un dispositivo para abrir el dashboard.",
+        )
+    return len(rows)
+
+
+@app.get("/dashboard/welcome")
+def dashboard_welcome(authorization: str | None = Header(default=None)):
+    ensure_supabase_configuration()
+    context = authenticated_context(authorization)
+    linked_devices_count = ensure_dashboard_welcome_access(context)
+    audio_metadata = build_dashboard_welcome_audio_metadata(
+        available=OPENAI_TTS_ENABLED and openai_client is not None,
+        error=None
+        if OPENAI_TTS_ENABLED and openai_client is not None
+        else "OpenAI TTS no esta disponible para generar la bienvenida.",
+    )
+    device_intent = {
+        "texto": DASHBOARD_WELCOME_MESSAGE,
+        "intencion": "dashboard_welcome",
+        "detalle": "Saludo automatico de Lea al entrar al dashboard con dispositivo sincronizado.",
+        "espacio": "dashboard",
+        "accion": "NONE",
+    }
+    request_id = f"dashboard-welcome-{secrets.token_urlsafe(8)}"
+    plan = {
+        "request_id": request_id,
+        "respuesta": DASHBOARD_WELCOME_MESSAGE,
+        "steps": ["Saludar al usuario administrador al entrar al dashboard."],
+        "can_execute": False,
+        "module": "general",
+        "action": "WELCOME",
+        "espacio": "dashboard",
+        "mqtt_preview": None,
+        "delivery_preview": None,
+        "delivery_previews": [],
+        "delivery_mode": "none",
+        "respuesta_ia_audio": audio_metadata,
+        "expires_at": to_iso(utc_now() + timedelta(minutes=5)),
+    }
+    return {
+        "ok": True,
+        "welcome": True,
+        "ai_provider": AI_PROVIDER,
+        "linked_devices_count": linked_devices_count,
+        "intencion_json": device_intent,
+        "respuesta_usuario": DASHBOARD_WELCOME_MESSAGE,
+        "respuesta_json_dispositivo": device_intent,
+        "respuesta_ia_usuario": DASHBOARD_WELCOME_MESSAGE,
+        "respuesta_ia_audio": audio_metadata,
+        "fase_2_transcripcion": {"texto_transcrito": "Entrada al dashboard"},
+        "fase_3_ia_json": {
+            "ia_json": device_intent,
+            "intencion_json": device_intent,
+            "respuesta_usuario": DASHBOARD_WELCOME_MESSAGE,
+            "respuesta_json_dispositivo": device_intent,
+            "respuesta_ia_usuario": DASHBOARD_WELCOME_MESSAGE,
+        },
+        "plan": plan,
+        "fase_4_mqtt": {
+            "accion_mqtt": "SIN_ACCION",
+            "mqtt_topic": None,
+            "mqtt_payload": None,
+        },
+        "delivery": None,
+        "delivery_previews": [],
+    }
+
+
+@app.get("/dashboard/welcome/audio")
+def dashboard_welcome_audio(authorization: str | None = Header(default=None)):
+    ensure_supabase_configuration()
+    context = authenticated_context(authorization)
+    ensure_dashboard_welcome_access(context)
+    content, media_type = synthesize_tts_audio_bytes(DASHBOARD_WELCOME_MESSAGE)
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": "inline; filename=lea-bienvenida.mp3",
+        },
+    )
 
 
 @app.post("/devices/pairing-token")

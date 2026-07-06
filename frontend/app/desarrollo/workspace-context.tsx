@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { listDevices, type LinkedDeviceRecord } from "@/lib/backend-api";
 import { createClient } from "@/lib/supabase/client";
@@ -16,6 +16,7 @@ type DevelopmentWorkspaceContextValue = {
   canOpenDashboard: boolean;
   isCheckingAccess: boolean;
   hasLaboratoryAccess: boolean;
+  hasCheckedDevices: boolean;
   refreshDevices: () => Promise<void>;
   navigateToView: (view: DevelopmentView) => void;
   openDashboard: () => void;
@@ -52,6 +53,7 @@ export function DevelopmentWorkspaceProvider({
   const [dashboardResetSignal, setDashboardResetSignal] = useState(0);
   const [isCheckingAccess, setIsCheckingAccess] = useState(true);
   const [hasLaboratoryAccess, setHasLaboratoryAccess] = useState(false);
+  const [hasCheckedDevices, setHasCheckedDevices] = useState(false);
 
   const linkedCount = linkedDevices.filter(
     (device) => !device.is_demo && device.claimed_at,
@@ -65,6 +67,8 @@ export function DevelopmentWorkspaceProvider({
     } catch (error) {
       setNotice(getErrorMessage(error));
       setLinkedDevices((current) => current);
+    } finally {
+      setHasCheckedDevices(true);
     }
   }
 
@@ -82,6 +86,7 @@ export function DevelopmentWorkspaceProvider({
         }
         if (!user) {
           router.replace("/welcome");
+          setHasCheckedDevices(true);
           setIsCheckingAccess(false);
           return;
         }
@@ -96,6 +101,7 @@ export function DevelopmentWorkspaceProvider({
 
         setNotice(getErrorMessage(error));
         setHasLaboratoryAccess(false);
+        setHasCheckedDevices(true);
         setIsCheckingAccess(false);
         router.replace("/welcome");
       }
@@ -108,6 +114,7 @@ export function DevelopmentWorkspaceProvider({
 
       setNotice(getErrorMessage(error));
       setHasLaboratoryAccess(false);
+      setHasCheckedDevices(true);
       setIsCheckingAccess(false);
       router.replace("/welcome");
     });
@@ -116,21 +123,24 @@ export function DevelopmentWorkspaceProvider({
     };
   }, [router]);
 
-  function navigateToView(nextView: DevelopmentView) {
-    if (nextView === "dashboard" && !canOpenDashboard) {
-      router.push(developmentRoutes.sync);
-      setNotice("Primero enlaza al menos un dispositivo para abrir el dashboard.");
-      return;
-    }
+  const navigateToView = useCallback(
+    (nextView: DevelopmentView) => {
+      if (nextView === "dashboard" && !canOpenDashboard) {
+        router.push(developmentRoutes.sync);
+        setNotice("Primero enlaza al menos un dispositivo para abrir el dashboard.");
+        return;
+      }
 
-    setNotice(null);
+      setNotice(null);
 
-    if (nextView === "dashboard") {
-      setDashboardResetSignal((current) => current + 1);
-    }
+      if (nextView === "dashboard") {
+        setDashboardResetSignal((current) => current + 1);
+      }
 
-    router.push(developmentRoutes[nextView]);
-  }
+      router.push(developmentRoutes[nextView]);
+    },
+    [canOpenDashboard, router],
+  );
 
   const contextValue = useMemo(
     () => ({
@@ -141,6 +151,7 @@ export function DevelopmentWorkspaceProvider({
       canOpenDashboard,
       isCheckingAccess,
       hasLaboratoryAccess,
+      hasCheckedDevices,
       refreshDevices,
       navigateToView,
       openDashboard: () => navigateToView("dashboard"),
@@ -153,6 +164,8 @@ export function DevelopmentWorkspaceProvider({
       canOpenDashboard,
       isCheckingAccess,
       hasLaboratoryAccess,
+      hasCheckedDevices,
+      navigateToView,
     ],
   );
 

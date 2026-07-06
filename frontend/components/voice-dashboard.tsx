@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   API_BASE_URL,
   confirmVoiceIntentPlan,
+  getDashboardWelcome,
   getDeviceCommandStatus,
   getDeviceLedStates,
   getVoiceIntentUserReplyAudio,
@@ -220,7 +221,13 @@ const detailDashboards: Record<DeviceDetailId, DetailDashboardConfig> = {
   },
 };
 
-export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
+export function VoiceDashboard({
+  resetSignal,
+  welcomeSignal,
+}: {
+  resetSignal?: number;
+  welcomeSignal?: number;
+}) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   const audioStreamRef = useRef<MediaStream | null>(null);
@@ -269,6 +276,14 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
   useEffect(() => {
     setActiveDetail("ia");
   }, [resetSignal]);
+
+  useEffect(() => {
+    if (welcomeSignal === undefined) {
+      return;
+    }
+
+    void loadDashboardWelcome();
+  }, [welcomeSignal]);
 
   useEffect(() => {
     if (!isRecording) {
@@ -556,6 +571,22 @@ export function VoiceDashboard({ resetSignal }: { resetSignal?: number }) {
       setRecentIntents(payload.items ?? []);
     } catch {
       setRecentIntents([]);
+    }
+  }
+
+  async function loadDashboardWelcome() {
+    try {
+      const payload = await getDashboardWelcome();
+      setResponse(payload);
+      setConfirmation(null);
+      setStatusText("Lea te dio la bienvenida. Puedes enviar un comando por voz cuando quieras.");
+      appendDebugLog("success", "Bienvenida IA cargada", {
+        tts_available: payload.respuesta_ia_audio?.available ?? false,
+        endpoint: payload.respuesta_ia_audio?.endpoint ?? "sin endpoint",
+        linked_devices_count: payload.linked_devices_count ?? 0,
+      });
+    } catch (error) {
+      appendDebugLog("warning", "No se pudo cargar la bienvenida IA", getErrorMessage(error));
     }
   }
 
