@@ -33,8 +33,13 @@ const processSteps = [
   "Soporte anual, mejoras y actualizaciones continuas",
 ];
 
+const USERNAME_PATTERN = /^[a-z0-9_]{3,30}$/;
+const USERNAME_ERROR =
+  "Usa 3 a 30 caracteres: letras minusculas, numeros o guion bajo.";
+
 const initialForm = {
   companyName: "",
+  username: "",
   email: "",
   password: "",
   confirmPassword: "",
@@ -85,6 +90,7 @@ export default function WelcomePage() {
     () =>
       (authMode === "login" ||
         (form.companyName.trim().length > 1 &&
+          USERNAME_PATTERN.test(form.username.trim()) &&
           form.phone.trim().length > 5)) &&
       form.email.includes("@") &&
       form.password.length >= 8 &&
@@ -107,6 +113,13 @@ export default function WelcomePage() {
 
     if (requireCompany && form.companyName.trim().length < 2) {
       nextErrors.companyName = "Ingresa el nombre de la empresa.";
+    }
+
+    if (
+      requireCompany &&
+      !USERNAME_PATTERN.test(form.username.trim().toLowerCase())
+    ) {
+      nextErrors.username = USERNAME_ERROR;
     }
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
@@ -145,6 +158,7 @@ export default function WelcomePage() {
     try {
       const supabase = createClient();
       const email = form.email.trim().toLowerCase();
+      const username = form.username.trim().toLowerCase();
 
       if (!isRegistration) {
         const { error } = await supabase.auth.signInWithPassword({
@@ -169,6 +183,7 @@ export default function WelcomePage() {
           emailRedirectTo: `${window.location.origin}/auth/confirm?next=/desarrollo/sync`,
           data: {
             company_name: form.companyName.trim(),
+            username,
             phone: form.phone.trim(),
             source: "afcr-welcome-supabase",
           },
@@ -176,7 +191,14 @@ export default function WelcomePage() {
       });
 
       if (error) {
-        setNotice(error.message);
+        if (isUsernameConflictMessage(error.message)) {
+          setErrors((current) => ({
+            ...current,
+            username: "Ese nombre de usuario ya esta en uso.",
+          }));
+        }
+
+        setNotice(getSignupErrorMessage(error.message));
         return;
       }
 
@@ -518,6 +540,14 @@ export default function WelcomePage() {
                     error={errors.companyName}
                     onChange={(value) => updateForm("companyName", value)}
                   />
+                  <TextField
+                    label="Nombre de usuario"
+                    value={form.username}
+                    error={errors.username}
+                    onChange={(value) =>
+                      updateForm("username", value.toLowerCase())
+                    }
+                  />
                 </>
               ) : null}
               <TextField
@@ -585,6 +615,24 @@ function Metric({ value, label }: { value: string; label: string }) {
       </p>
     </div>
   );
+}
+
+function isUsernameConflictMessage(message: string) {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("profiles_username_unique") ||
+    normalized.includes("profiles_username_key") ||
+    normalized.includes("duplicate key") ||
+    normalized.includes("username")
+  );
+}
+
+function getSignupErrorMessage(message: string) {
+  if (isUsernameConflictMessage(message)) {
+    return "Ese nombre de usuario ya esta en uso. Prueba con otro.";
+  }
+
+  return message;
 }
 
 function getErrorMessage(error: unknown) {
