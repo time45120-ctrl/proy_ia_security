@@ -206,9 +206,17 @@ export type DeviceLedStatesResponse = {
   summary: DeviceLedStatesSummary;
 };
 
+export type DashboardWelcomeUser = {
+  id: string;
+  username: string;
+  organization_id: string;
+  role: string;
+};
+
 export type DashboardWelcomeResponse = VoiceIntentResponse & {
   welcome?: boolean;
   linked_devices_count?: number;
+  user?: DashboardWelcomeUser;
 };
 
 export type PairingTokenResponse = {
