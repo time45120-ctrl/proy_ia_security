@@ -597,10 +597,12 @@ TTS_AUDIO_FORMATS = {
     "flac": ("audio/flac", ".flac"),
 }
 
-DASHBOARD_WELCOME_MESSAGE = (
-    "Bienvenido Usuario Administrador soy Lea tu asistente de Inteligencia "
-    "Artificial, que te acompañará para lo que necesites, estoy para servirte"
-)
+def build_dashboard_welcome_message(username: str | None) -> str:
+    display_username = (username or "").strip() or "usuario"
+    return (
+        f"Bienvenido, {display_username}, soy Lea, tu asistente de Inteligencia "
+        "Artificial, que te acompañará para lo que necesites. Estoy para servirte."
+    )
 
 
 def tts_format_settings() -> tuple[str, str, str]:
@@ -1787,8 +1789,9 @@ def dashboard_welcome(authorization: str | None = Header(default=None)):
         if OPENAI_TTS_ENABLED and openai_client is not None
         else "OpenAI TTS no esta disponible para generar la bienvenida.",
     )
+    welcome_message = build_dashboard_welcome_message(context.get("username"))
     device_intent = {
-        "texto": DASHBOARD_WELCOME_MESSAGE,
+        "texto": welcome_message,
         "intencion": "dashboard_welcome",
         "detalle": "Saludo automatico de Lea al entrar al dashboard con dispositivo sincronizado.",
         "espacio": "dashboard",
@@ -1797,8 +1800,8 @@ def dashboard_welcome(authorization: str | None = Header(default=None)):
     request_id = f"dashboard-welcome-{secrets.token_urlsafe(8)}"
     plan = {
         "request_id": request_id,
-        "respuesta": DASHBOARD_WELCOME_MESSAGE,
-        "steps": ["Saludar al usuario administrador al entrar al dashboard."],
+        "respuesta": welcome_message,
+        "steps": ["Saludar al usuario al entrar al dashboard."],
         "can_execute": False,
         "module": "general",
         "action": "WELCOME",
@@ -1822,17 +1825,17 @@ def dashboard_welcome(authorization: str | None = Header(default=None)):
             "role": context["role"],
         },
         "intencion_json": device_intent,
-        "respuesta_usuario": DASHBOARD_WELCOME_MESSAGE,
+        "respuesta_usuario": welcome_message,
         "respuesta_json_dispositivo": device_intent,
-        "respuesta_ia_usuario": DASHBOARD_WELCOME_MESSAGE,
+        "respuesta_ia_usuario": welcome_message,
         "respuesta_ia_audio": audio_metadata,
         "fase_2_transcripcion": {"texto_transcrito": "Entrada al dashboard"},
         "fase_3_ia_json": {
             "ia_json": device_intent,
             "intencion_json": device_intent,
-            "respuesta_usuario": DASHBOARD_WELCOME_MESSAGE,
+            "respuesta_usuario": welcome_message,
             "respuesta_json_dispositivo": device_intent,
-            "respuesta_ia_usuario": DASHBOARD_WELCOME_MESSAGE,
+            "respuesta_ia_usuario": welcome_message,
         },
         "plan": plan,
         "fase_4_mqtt": {
@@ -1850,7 +1853,8 @@ def dashboard_welcome_audio(authorization: str | None = Header(default=None)):
     ensure_supabase_configuration()
     context = authenticated_context(authorization)
     ensure_dashboard_welcome_access(context)
-    content, media_type = synthesize_tts_audio_bytes(DASHBOARD_WELCOME_MESSAGE)
+    welcome_message = build_dashboard_welcome_message(context.get("username"))
+    content, media_type = synthesize_tts_audio_bytes(welcome_message)
     return Response(
         content=content,
         media_type=media_type,
