@@ -36,6 +36,16 @@ const processSteps = [
 const USERNAME_PATTERN = /^[a-z0-9_]{3,30}$/;
 const USERNAME_ERROR =
   "Usa 3 a 30 caracteres: letras minusculas, numeros o guion bajo.";
+const OTP_LENGTH = 8;
+const OTP_RESEND_SECONDS = 60;
+
+type AuthMode =
+  | "register"
+  | "signupOtp"
+  | "login"
+  | "forgotPassword"
+  | "recoveryOtp"
+  | "newPassword";
 
 const initialForm = {
   companyName: "",
@@ -49,11 +59,16 @@ const initialForm = {
 export default function WelcomePage() {
   const router = useRouter();
   const [session, setSession] = useState<Session | null>(null);
-  const [authMode, setAuthMode] = useState<"register" | "login" | null>(null);
+  const [authMode, setAuthMode] = useState<AuthMode | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [form, setForm] = useState(initialForm);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [pendingEmail, setPendingEmail] = useState("");
+  const [otp, setOtp] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  const [resendSeconds, setResendSeconds] = useState(0);
 
   const isAuthenticated = Boolean(session);
   const laboratoryButtonLabel = isAuthenticated
@@ -86,18 +101,55 @@ export default function WelcomePage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (resendSeconds <= 0) {
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setResendSeconds((current) => Math.max(0, current - 1));
+    }, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [resendSeconds]);
+
   const formIsReady = useMemo(
-    () =>
-      (authMode === "login" ||
-        (form.companyName.trim().length > 1 &&
+    () => {
+      if (authMode === "register") {
+        return (
+          form.companyName.trim().length > 1 &&
           USERNAME_PATTERN.test(form.username.trim()) &&
-          form.phone.trim().length > 5)) &&
-      form.email.includes("@") &&
-      form.password.length >= 8 &&
-      (authMode !== "register" ||
-        (form.confirmPassword.length >= 8 &&
-          form.password === form.confirmPassword)),
-    [authMode, form],
+          form.phone.trim().length > 5 &&
+          isValidEmail(form.email) &&
+          form.password.length >= 8 &&
+          form.confirmPassword.length >= 8 &&
+          form.password === form.confirmPassword
+        );
+      }
+
+      if (authMode === "login") {
+        return isValidEmail(form.email) && form.password.length >= 8;
+      }
+
+      if (authMode === "forgotPassword") {
+        return isValidEmail(form.email);
+      }
+
+      if (authMode === "signupOtp" || authMode === "recoveryOtp") {
+        return otp.length === OTP_LENGTH;
+      }
+
+      if (authMode === "newPassword") {
+        return (
+          newPassword.length >= 8 &&
+          confirmNewPassword.length >= 8 &&
+          newPassword === confirmNewPassword
+        );
+      }
+
+      return false;
+    },
+    [authMode, confirmNewPassword, form, newPassword, otp],
   );
 
   function updateForm<Key extends keyof typeof form>(
@@ -108,7 +160,7 @@ export default function WelcomePage() {
     setErrors((current) => ({ ...current, [key]: "" }));
   }
 
-  function validateForm(requireCompany: boolean) {
+  function validateCredentials(requireCompany: boolean) {
     const nextErrors: Record<string, string> = {};
 
     if (requireCompany && form.companyName.trim().length < 2) {
@@ -143,14 +195,45 @@ export default function WelcomePage() {
     return Object.keys(nextErrors).length === 0;
   }
 
+  function openAuth(mode: "register" | "login") {
+    setErrors({});
+    setNotice(null);
+    setOtp("");
+    setNewPassword("");
+    setConfirmNewPassword("");
+    setResendSeconds(0);
+    setAuthMode(mode);
+  }
+
+  function closeAuthModal() {
+    setAuthMode(null);
+    setErrors({});
+    setOtp("");
+    setNewPassword("");
+    setConfirmNewPassword("");
+    setResendSeconds(0);
+    setForm((current) => ({
+      ...current,
+      password: "",
+      confirmPassword: "",
+    }));
+  }
+
+  async function handleCloseAuthModal() {
+    if (authMode === "newPassword") {
+      try {
+        await createClient().auth.signOut();
+      } finally {
+        setSession(null);
+      }
+    }
+
+    closeAuthModal();
+    setNotice(null);
+  }
+
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-
-    const isRegistration = authMode === "register";
-
-    if (!validateForm(isRegistration)) {
-      return;
-    }
 
     setIsSubmitting(true);
     setNotice(null);
@@ -160,54 +243,185 @@ export default function WelcomePage() {
       const email = form.email.trim().toLowerCase();
       const username = form.username.trim().toLowerCase();
 
-      if (!isRegistration) {
+      if (authMode === "login") {
+        if (!validateCredentials(false)) {
+          return;
+        }
+
         const { error } = await supabase.auth.signInWithPassword({
           email,
           password: form.password,
         });
 
         if (error) {
-          setNotice(error.message);
+          setNotice(getAuthErrorMessage(error.message));
           return;
         }
 
-        setAuthMode(null);
+        closeAuthModal();
         setNotice("Sesion iniciada. Ya puedes entrar al Laboratorio.");
         return;
       }
 
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password: form.password,
-        options: {
-          emailRedirectTo: `${window.location.origin}/auth/confirm?next=/desarrollo/sync`,
-          data: {
-            company_name: form.companyName.trim(),
-            username,
-            phone: form.phone.trim(),
-            source: "afcr-welcome-supabase",
-          },
-        },
-      });
-
-      if (error) {
-        if (isUsernameConflictMessage(error.message)) {
-          setErrors((current) => ({
-            ...current,
-            username: "Ese nombre de usuario ya esta en uso.",
-          }));
+      if (authMode === "register") {
+        if (!validateCredentials(true)) {
+          return;
         }
 
-        setNotice(getSignupErrorMessage(error.message));
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password: form.password,
+          options: {
+            emailRedirectTo: `${window.location.origin}/auth/confirm?next=/welcome`,
+            data: {
+              company_name: form.companyName.trim(),
+              username,
+              phone: form.phone.trim(),
+              source: "afcr-welcome-supabase",
+            },
+          },
+        });
+
+        if (error) {
+          if (isUsernameConflictMessage(error.message)) {
+            setErrors((current) => ({
+              ...current,
+              username: "Ese nombre de usuario ya esta en uso.",
+            }));
+          }
+
+          setNotice(getSignupErrorMessage(error.message));
+          return;
+        }
+
+        setForm((current) => ({
+          ...current,
+          password: "",
+          confirmPassword: "",
+        }));
+
+        if (data.session) {
+          setSession(data.session);
+          closeAuthModal();
+          setNotice("Registro completado. El Laboratorio ya esta habilitado.");
+          return;
+        }
+
+        setPendingEmail(email);
+        setOtp("");
+        setResendSeconds(OTP_RESEND_SECONDS);
+        setAuthMode("signupOtp");
+        setNotice(
+          `Enviamos un codigo de ${OTP_LENGTH} digitos a ${email}. Vigencia: 60 minutos.`,
+        );
         return;
       }
 
-      setAuthMode(null);
-      setNotice(
-        data.session
-          ? "Registro completado. Sesion iniciada y Laboratorio habilitado."
-          : "Registro recibido. Confirma tu correo para iniciar sesion.",
-      );
+      if (authMode === "signupOtp") {
+        if (otp.length !== OTP_LENGTH) {
+          setErrors({ otp: `Ingresa los ${OTP_LENGTH} digitos del codigo.` });
+          return;
+        }
+
+        const { data, error } = await supabase.auth.verifyOtp({
+          email: pendingEmail,
+          token: otp,
+          type: "email",
+        });
+
+        if (error) {
+          setNotice(getAuthErrorMessage(error.message));
+          return;
+        }
+
+        setSession(data.session);
+        setForm(initialForm);
+        closeAuthModal();
+        setNotice(
+          "Correo verificado. Tu sesion esta activa y el boton Laboratorio ya esta habilitado.",
+        );
+        return;
+      }
+
+      if (authMode === "forgotPassword") {
+        if (!isValidEmail(email)) {
+          setErrors({ email: "Ingresa un email valido." });
+          return;
+        }
+
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: `${window.location.origin}/auth/confirm?next=/welcome`,
+        });
+
+        if (error) {
+          setNotice(getAuthErrorMessage(error.message));
+          return;
+        }
+
+        setPendingEmail(email);
+        setOtp("");
+        setResendSeconds(OTP_RESEND_SECONDS);
+        setAuthMode("recoveryOtp");
+        setNotice(
+          `Si existe una cuenta para ${email}, recibiras un codigo de recuperacion de ${OTP_LENGTH} digitos.`,
+        );
+        return;
+      }
+
+      if (authMode === "recoveryOtp") {
+        if (otp.length !== OTP_LENGTH) {
+          setErrors({ otp: `Ingresa los ${OTP_LENGTH} digitos del codigo.` });
+          return;
+        }
+
+        const { data, error } = await supabase.auth.verifyOtp({
+          email: pendingEmail,
+          token: otp,
+          type: "recovery",
+        });
+
+        if (error) {
+          setNotice(getAuthErrorMessage(error.message));
+          return;
+        }
+
+        setSession(data.session);
+        setOtp("");
+        setAuthMode("newPassword");
+        setNotice("Codigo validado. Ahora crea una contrasena nueva.");
+        return;
+      }
+
+      if (authMode === "newPassword") {
+        const nextErrors: Record<string, string> = {};
+        if (newPassword.length < 8) {
+          nextErrors.newPassword = "Usa una contrasena de al menos 8 caracteres.";
+        }
+        if (confirmNewPassword !== newPassword) {
+          nextErrors.confirmNewPassword = "Las contrasenas no coinciden.";
+        }
+        if (Object.keys(nextErrors).length > 0) {
+          setErrors(nextErrors);
+          return;
+        }
+
+        const { error } = await supabase.auth.updateUser({
+          password: newPassword,
+        });
+
+        if (error) {
+          setNotice(getAuthErrorMessage(error.message));
+          return;
+        }
+
+        const { data } = await supabase.auth.getSession();
+        setSession(data.session);
+        setForm(initialForm);
+        closeAuthModal();
+        setNotice(
+          "Contrasena actualizada. Tu sesion sigue activa y el Laboratorio esta habilitado.",
+        );
+      }
     } catch (error) {
       setNotice(getErrorMessage(error));
     } finally {
@@ -216,9 +430,84 @@ export default function WelcomePage() {
   }
 
   function handleLogin() {
-    setErrors({});
+    openAuth("login");
+  }
+
+  async function handleResendOtp() {
+    if (
+      resendSeconds > 0 ||
+      (authMode !== "signupOtp" && authMode !== "recoveryOtp")
+    ) {
+      return;
+    }
+
+    setIsSubmitting(true);
     setNotice(null);
-    setAuthMode("login");
+
+    try {
+      const supabase = createClient();
+      const { error } =
+        authMode === "signupOtp"
+          ? await supabase.auth.resend({
+              type: "signup",
+              email: pendingEmail,
+              options: {
+                emailRedirectTo: `${window.location.origin}/auth/confirm?next=/welcome`,
+              },
+            })
+          : await supabase.auth.resetPasswordForEmail(pendingEmail, {
+              redirectTo: `${window.location.origin}/auth/confirm?next=/welcome`,
+            });
+
+      if (error) {
+        setNotice(getAuthErrorMessage(error.message));
+        return;
+      }
+
+      setOtp("");
+      setErrors({});
+      setResendSeconds(OTP_RESEND_SECONDS);
+      setNotice(`Enviamos un codigo nuevo a ${pendingEmail}.`);
+    } catch (error) {
+      setNotice(getErrorMessage(error));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleResendUnconfirmedEmail() {
+    const email = form.email.trim().toLowerCase();
+    if (!isValidEmail(email)) {
+      setErrors({ email: "Ingresa tu email para reenviar la confirmacion." });
+      return;
+    }
+
+    setIsSubmitting(true);
+    setNotice(null);
+    try {
+      const { error } = await createClient().auth.resend({
+        type: "signup",
+        email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/confirm?next=/welcome`,
+        },
+      });
+
+      if (error) {
+        setNotice(getAuthErrorMessage(error.message));
+        return;
+      }
+
+      setPendingEmail(email);
+      setOtp("");
+      setResendSeconds(OTP_RESEND_SECONDS);
+      setAuthMode("signupOtp");
+      setNotice(`Enviamos un codigo nuevo a ${email}.`);
+    } catch (error) {
+      setNotice(getErrorMessage(error));
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   async function handleLogout() {
@@ -256,11 +545,7 @@ export default function WelcomePage() {
           <div className="flex min-w-0 flex-1 flex-wrap items-center justify-end gap-2">
             <button
               type="button"
-              onClick={() => {
-                setErrors({});
-                setNotice(null);
-                setAuthMode("register");
-              }}
+              onClick={() => openAuth("register")}
               className={`min-h-10 rounded-lg px-3 py-2 text-xs font-bold uppercase tracking-[0.08em] transition sm:px-4 ${
                 isAuthenticated
                   ? "border border-white/15 bg-white/[0.04] text-slate-300 hover:bg-white/[0.08]"
@@ -337,7 +622,7 @@ export default function WelcomePage() {
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <button
                 type="button"
-                onClick={() => setAuthMode("register")}
+                onClick={() => openAuth("register")}
                 className="inline-flex min-h-12 items-center justify-center rounded-lg bg-[#6ee7b7] px-6 py-3 text-sm font-bold uppercase tracking-[0.1em] text-[#052018] transition hover:bg-[#8af0c9]"
               >
                 Registrate
@@ -491,7 +776,7 @@ export default function WelcomePage() {
           </div>
           <button
             type="button"
-            onClick={() => setAuthMode("register")}
+            onClick={() => openAuth("register")}
             className="mt-6 inline-flex min-h-12 w-full items-center justify-center rounded-lg bg-[#6ee7b7] px-6 py-3 text-sm font-bold uppercase tracking-[0.1em] text-[#052018] transition hover:bg-[#8af0c9] sm:w-auto lg:mt-0"
           >
             Registrate
@@ -508,17 +793,15 @@ export default function WelcomePage() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#6ee7b7]">
-                  {authMode === "register" ? "Registro empresarial" : "Acceso seguro"}
+                  {getAuthEyebrow(authMode)}
                 </p>
                 <h2 className="mt-2 font-display text-2xl font-semibold text-white">
-                  {authMode === "register"
-                    ? "Habilita el Laboratorio AFCR"
-                    : "Inicia sesion en AFCR"}
+                  {getAuthTitle(authMode)}
                 </h2>
               </div>
               <button
                 type="button"
-                onClick={() => setAuthMode(null)}
+                onClick={() => void handleCloseAuthModal()}
                 className="rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-300 transition hover:bg-white/[0.06]"
               >
                 Cerrar
@@ -528,6 +811,14 @@ export default function WelcomePage() {
             {notice ? (
               <p className="mt-5 rounded-lg border border-[#6ee7b7]/25 bg-[#6ee7b7]/10 px-4 py-3 text-sm leading-6 text-[#c6ffe8]">
                 {notice}
+              </p>
+            ) : null}
+
+            {authMode === "signupOtp" || authMode === "recoveryOtp" ? (
+              <p className="mt-4 text-sm leading-6 text-slate-300">
+                Escribe el codigo enviado a{" "}
+                <span className="font-semibold text-white">{pendingEmail}</span>.
+                El codigo tiene {OTP_LENGTH} digitos y vence en 60 minutos.
               </p>
             ) : null}
 
@@ -548,27 +839,26 @@ export default function WelcomePage() {
                       updateForm("username", value.toLowerCase())
                     }
                   />
-                </>
-              ) : null}
-              <TextField
-                label="Email"
-                type="email"
-                value={form.email}
-                error={errors.email}
-                onChange={(value) => updateForm("email", value)}
-              />
-              <TextField
-                label="Contrasena"
-                type="password"
-                value={form.password}
-                error={errors.password}
-                onChange={(value) => updateForm("password", value)}
-              />
-              {authMode === "register" ? (
-                <>
+                  <TextField
+                    label="Email"
+                    type="email"
+                    autoComplete="email"
+                    value={form.email}
+                    error={errors.email}
+                    onChange={(value) => updateForm("email", value)}
+                  />
+                  <TextField
+                    label="Contrasena"
+                    type="password"
+                    autoComplete="new-password"
+                    value={form.password}
+                    error={errors.password}
+                    onChange={(value) => updateForm("password", value)}
+                  />
                   <TextField
                     label="Confirmar contrasena"
                     type="password"
+                    autoComplete="new-password"
                     value={form.confirmPassword}
                     error={
                       form.confirmPassword.length > 0 &&
@@ -586,19 +876,162 @@ export default function WelcomePage() {
                   />
                 </>
               ) : null}
+
+              {authMode === "login" ? (
+                <>
+                  <TextField
+                    label="Email"
+                    type="email"
+                    autoComplete="email"
+                    value={form.email}
+                    error={errors.email}
+                    onChange={(value) => updateForm("email", value)}
+                  />
+                  <TextField
+                    label="Contrasena"
+                    type="password"
+                    autoComplete="current-password"
+                    value={form.password}
+                    error={errors.password}
+                    onChange={(value) => updateForm("password", value)}
+                  />
+                </>
+              ) : null}
+
+              {authMode === "forgotPassword" ? (
+                <div className="sm:col-span-2">
+                  <TextField
+                    label="Email de la cuenta"
+                    type="email"
+                    autoComplete="email"
+                    value={form.email}
+                    error={errors.email}
+                    onChange={(value) => updateForm("email", value)}
+                  />
+                </div>
+              ) : null}
+
+              {authMode === "signupOtp" || authMode === "recoveryOtp" ? (
+                <div className="sm:col-span-2">
+                  <TextField
+                    label="Codigo OTP"
+                    value={otp}
+                    error={errors.otp}
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={OTP_LENGTH}
+                    onChange={(value) => {
+                      setOtp(value.replace(/\D/g, "").slice(0, OTP_LENGTH));
+                      setErrors((current) => ({ ...current, otp: "" }));
+                    }}
+                  />
+                </div>
+              ) : null}
+
+              {authMode === "newPassword" ? (
+                <>
+                  <TextField
+                    label="Nueva contrasena"
+                    type="password"
+                    autoComplete="new-password"
+                    value={newPassword}
+                    error={errors.newPassword}
+                    onChange={(value) => {
+                      setNewPassword(value);
+                      setErrors((current) => ({ ...current, newPassword: "" }));
+                    }}
+                  />
+                  <TextField
+                    label="Confirmar nueva contrasena"
+                    type="password"
+                    autoComplete="new-password"
+                    value={confirmNewPassword}
+                    error={
+                      confirmNewPassword.length > 0 &&
+                      confirmNewPassword !== newPassword
+                        ? "Las contrasenas no coinciden."
+                        : errors.confirmNewPassword
+                    }
+                    onChange={(value) => {
+                      setConfirmNewPassword(value);
+                      setErrors((current) => ({
+                        ...current,
+                        confirmNewPassword: "",
+                      }));
+                    }}
+                  />
+                </>
+              ) : null}
             </div>
+
+            {authMode === "login" ? (
+              <div className="mt-4 flex flex-col items-start justify-between gap-3 text-sm sm:flex-row">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setErrors({});
+                    setNotice(null);
+                    setForm((current) => ({
+                      ...current,
+                      password: "",
+                      confirmPassword: "",
+                    }));
+                    setAuthMode("forgotPassword");
+                  }}
+                  className="font-semibold text-[#9edfff] transition hover:text-white"
+                >
+                  ¿Olvidaste tu contrasena?
+                </button>
+                <button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => void handleResendUnconfirmedEmail()}
+                  className="font-semibold text-[#6ee7b7] transition hover:text-white disabled:opacity-50"
+                >
+                  Reenviar codigo de confirmacion
+                </button>
+              </div>
+            ) : null}
 
             <button
               type="submit"
               disabled={!formIsReady || isSubmitting}
               className="mt-5 inline-flex min-h-12 w-full items-center justify-center rounded-lg bg-[#6ee7b7] px-5 py-3 text-sm font-bold uppercase tracking-[0.1em] text-[#052018] transition hover:bg-[#8af0c9] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {isSubmitting
-                ? "Procesando..."
-                : authMode === "register"
-                  ? "Registrate y entrar en sesion"
-                  : "Iniciar sesion"}
+              {isSubmitting ? "Procesando..." : getAuthSubmitLabel(authMode)}
             </button>
+
+            {authMode === "signupOtp" || authMode === "recoveryOtp" ? (
+              <div className="mt-4 flex flex-col items-center gap-3 text-sm sm:flex-row sm:justify-between">
+                <button
+                  type="button"
+                  disabled={isSubmitting || resendSeconds > 0}
+                  onClick={() => void handleResendOtp()}
+                  className="font-semibold text-[#6ee7b7] transition hover:text-white disabled:cursor-not-allowed disabled:text-slate-500"
+                >
+                  {resendSeconds > 0
+                    ? `Reenviar codigo en ${resendSeconds}s`
+                    : "Reenviar codigo"}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLogin}
+                  className="font-semibold text-[#9edfff] transition hover:text-white"
+                >
+                  Volver a iniciar sesion
+                </button>
+              </div>
+            ) : null}
+
+            {authMode === "forgotPassword" ? (
+              <button
+                type="button"
+                onClick={handleLogin}
+                className="mt-4 w-full text-sm font-semibold text-[#9edfff] transition hover:text-white"
+              >
+                Volver a iniciar sesion
+              </button>
+            ) : null}
           </form>
         </div>
       ) : null}
@@ -627,9 +1060,87 @@ function isUsernameConflictMessage(message: string) {
   );
 }
 
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+function getAuthEyebrow(mode: AuthMode) {
+  if (mode === "register" || mode === "signupOtp") {
+    return "Registro empresarial";
+  }
+  if (mode === "forgotPassword" || mode === "recoveryOtp" || mode === "newPassword") {
+    return "Recuperacion segura";
+  }
+  return "Acceso seguro";
+}
+
+function getAuthTitle(mode: AuthMode) {
+  const titles: Record<AuthMode, string> = {
+    register: "Habilita el Laboratorio AFCR",
+    signupOtp: "Verifica tu correo",
+    login: "Inicia sesion en AFCR",
+    forgotPassword: "Recupera tu contrasena",
+    recoveryOtp: "Valida el codigo de recuperacion",
+    newPassword: "Crea una contrasena nueva",
+  };
+  return titles[mode];
+}
+
+function getAuthSubmitLabel(mode: AuthMode) {
+  const labels: Record<AuthMode, string> = {
+    register: "Registrarme",
+    signupOtp: "Verificar correo",
+    login: "Iniciar sesion",
+    forgotPassword: "Enviar codigo OTP",
+    recoveryOtp: "Validar codigo",
+    newPassword: "Guardar nueva contrasena",
+  };
+  return labels[mode];
+}
+
 function getSignupErrorMessage(message: string) {
   if (isUsernameConflictMessage(message)) {
     return "Ese nombre de usuario ya esta en uso. Prueba con otro.";
+  }
+
+  return getAuthErrorMessage(message);
+}
+
+function getAuthErrorMessage(message: string) {
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes("expired") ||
+    normalized.includes("invalid token") ||
+    normalized.includes("otp_expired")
+  ) {
+    return "El codigo es invalido o vencio. Solicita uno nuevo.";
+  }
+  if (
+    normalized.includes("rate limit") ||
+    normalized.includes("email rate") ||
+    normalized.includes("over_email_send_rate_limit")
+  ) {
+    return "Se alcanzo el limite temporal de correos. Espera un momento e intenta de nuevo.";
+  }
+  if (
+    normalized.includes("invalid login credentials") ||
+    normalized.includes("invalid_credentials")
+  ) {
+    return "Correo o contrasena incorrectos.";
+  }
+  if (
+    normalized.includes("email not confirmed") ||
+    normalized.includes("email_not_confirmed")
+  ) {
+    return "Tu correo todavia no esta confirmado. Usa la opcion para reenviar el codigo.";
+  }
+  if (
+    normalized.includes("fetch") ||
+    normalized.includes("network") ||
+    normalized.includes("failed to")
+  ) {
+    return "No se pudo conectar con el servicio de autenticacion. Intenta nuevamente.";
   }
 
   return message;
@@ -656,12 +1167,18 @@ function TextField({
   value,
   error,
   type = "text",
+  inputMode,
+  maxLength,
+  autoComplete,
   onChange,
 }: {
   label: string;
   value: string;
   error?: string;
   type?: string;
+  inputMode?: "text" | "numeric" | "email" | "tel";
+  maxLength?: number;
+  autoComplete?: string;
   onChange: (value: string) => void;
 }) {
   return (
@@ -671,6 +1188,9 @@ function TextField({
       </span>
       <input
         type={type}
+        inputMode={inputMode}
+        maxLength={maxLength}
+        autoComplete={autoComplete}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         className="min-h-12 rounded-lg border border-white/10 bg-[#06101b] px-3 text-white outline-none transition placeholder:text-slate-600 focus:border-[#44c7f4]/60 focus:ring-2 focus:ring-[#44c7f4]/20"
