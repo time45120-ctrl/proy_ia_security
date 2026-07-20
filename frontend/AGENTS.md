@@ -13,7 +13,7 @@ Este directorio es el repo Git desplegable del frontend:
 Remoto:
 
 ```text
-https://github.com/time45120-ctrl/proy_ia_frontend.git
+https://github.com/abraham-development/proy_ia_frontend.git
 ```
 
 Rama activa: `main`.
