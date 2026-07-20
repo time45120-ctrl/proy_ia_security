@@ -35,7 +35,7 @@ type DeviceCard = {
   Icon: (props: { className?: string }) => ReactElement;
 };
 
-type DeviceDetailId = "lights" | "doors" | "cameras" | "drones";
+type DeviceDetailId = "lights" | "doors" | "cameras" | "sensors";
 type ActiveDetail = "ia" | DeviceDetailId;
 type DebugLogLevel = "info" | "success" | "warning" | "error";
 type AiSpeechStatus = "idle" | "loading" | "playing" | "paused" | "error" | "unavailable";
@@ -107,15 +107,15 @@ const devices: DeviceCard[] = [
     Icon: CameraIcon,
   },
   {
-    id: "drones",
-    title: "Drones",
-    buttonLabel: "Entrar drones",
-    count: 2,
-    description: "Unidades aereas listas para vigilancia y recorridos autonomos.",
-    status: "1 activo / 1 en carga",
-    items: ["Drone patio", "Drone perimetro"],
+    id: "sensors",
+    title: "Sensores y alarmas",
+    buttonLabel: "Entrar a Sensores y alarmas",
+    count: 4,
+    description: "Monitoreo residencial de movimiento, humo, apertura y alertas.",
+    status: "4 zonas protegidas",
+    items: ["Movimiento", "Humo", "Apertura", "Sirena"],
     tone: "text-[#d8c7ff] bg-[#9b7cff]/10 border-[#9b7cff]/20",
-    Icon: DroneIcon,
+    Icon: SensorIcon,
   },
 ];
 
@@ -140,7 +140,7 @@ const dashboardCards: Array<{
     className: "order-4 xl:order-none xl:col-start-2 xl:row-start-3",
   },
   {
-    detail: "drones",
+    detail: "sensors",
     device: devices[3],
     className: "order-5 xl:order-none xl:col-start-2 xl:row-start-4",
   },
@@ -202,22 +202,23 @@ const detailDashboards: Record<DeviceDetailId, DetailDashboardConfig> = {
     ],
     actions: ["Ver estado", "Bloquear"],
   },
-  drones: {
-    id: "drones",
-    eyebrow: "movilidad aerea",
-    title: "Dashboard de drones",
-    description: "Consulta unidades aereas, bateria y recorridos simulados.",
-    aiMessage: "La IA actua como orquestador de rutas y telemetria de drones.",
+  sensors: {
+    id: "sensors",
+    eyebrow: "proteccion residencial",
+    title: "Dashboard de sensores y alarmas",
+    description: "Consulta sensores del hogar, zonas protegidas y alertas simuladas.",
+    aiMessage: "La IA organiza eventos del hogar y prioriza alertas relevantes.",
     metrics: [
-      { label: "Activos", value: "1" },
-      { label: "En carga", value: "1" },
-      { label: "Bateria", value: "82%" },
+      { label: "Sensores", value: "4" },
+      { label: "Alertas", value: "0" },
+      { label: "Cobertura", value: "100%" },
     ],
     items: [
-      { name: "Drone patio", status: "Activo", meta: "Ruta corta disponible" },
-      { name: "Drone perimetro", status: "En carga", meta: "Bateria 64%" },
+      { name: "Sensor de movimiento", status: "Activo", meta: "Sala principal" },
+      { name: "Sensor de humo", status: "Normal", meta: "Cocina" },
+      { name: "Alarma de apertura", status: "Armada", meta: "Puerta principal" },
     ],
-    actions: ["Iniciar ruta", "Ver telemetria"],
+    actions: ["Ver eventos", "Armar alarma"],
   },
 };
 
@@ -957,7 +958,7 @@ export function VoiceDashboard({
             </h1>
             <p className="mt-3 max-w-xl text-sm leading-6 text-slate-300">
               Una vista simple para enviar voz a la IA y ver el estado base de
-              camaras, luces, puertas y drones conectados.
+              camaras, luces, puertas, sensores y alarmas del hogar.
             </p>
             <p className="mt-2 break-all text-xs text-slate-500">
               API activa: <span className="text-slate-300">{API_BASE_URL}</span>
@@ -2290,7 +2291,11 @@ function formatModuleLabel(module?: string) {
   }
 
   if (module === "drones") {
-    return "Drones";
+    return "Sensores y alarmas";
+  }
+
+  if (module === "sensors") {
+    return "Sensores y alarmas";
   }
 
   if (module === "general") {
@@ -2449,19 +2454,17 @@ function CameraIcon({ className }: { className?: string }) {
   );
 }
 
-function DroneIcon({ className }: { className?: string }) {
+function SensorIcon({ className }: { className?: string }) {
   return (
     <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
+      <path d="M12 4a8 8 0 0 1 8 8M12 8a4 4 0 0 1 4 4" stroke="currentColor" strokeLinecap="round" strokeWidth="1.7" />
       <path
-        d="M9 12h6M12 9v6M7 7l2 2M17 7l-2 2M7 17l2-2M17 17l-2-2"
+        d="M12 12v6M9 21h6"
         stroke="currentColor"
         strokeLinecap="round"
         strokeWidth="1.7"
       />
-      <circle cx="5.5" cy="5.5" r="2.5" stroke="currentColor" strokeWidth="1.7" />
-      <circle cx="18.5" cy="5.5" r="2.5" stroke="currentColor" strokeWidth="1.7" />
-      <circle cx="5.5" cy="18.5" r="2.5" stroke="currentColor" strokeWidth="1.7" />
-      <circle cx="18.5" cy="18.5" r="2.5" stroke="currentColor" strokeWidth="1.7" />
+      <circle cx="12" cy="12" r="1.8" stroke="currentColor" strokeWidth="1.7" />
     </svg>
   );
 }

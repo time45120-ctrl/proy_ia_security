@@ -12,9 +12,9 @@ import {
 import { useDevelopmentWorkspace } from "../workspace-context";
 import { ESP32_DIRECT_SKETCH } from "./esp32-direct-sketch";
 
-type DeviceType = "Luces" | "Camaras" | "Puertas" | "Drones" | "ESP32";
+type DeviceType = "Luces" | "Camaras" | "Puertas" | "Sensores" | "ESP32";
 
-const deviceTypes: DeviceType[] = ["Luces", "Camaras", "Puertas", "Drones", "ESP32"];
+const deviceTypes: DeviceType[] = ["Luces", "Camaras", "Puertas", "Sensores", "ESP32"];
 const deviceModelOptions = [{ value: "ESP32", label: "ESP32 GENERICO" }];
 const legacyDeviceNameOptions = [
   "Luz cocina",

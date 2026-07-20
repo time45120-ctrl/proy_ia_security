@@ -1,6 +1,6 @@
 # AGENTS.md - Frontend
 
-Ultima revision: 2026-05-28.
+Ultima revision: 2026-07-20.
 
 ## Contexto
 
@@ -18,7 +18,7 @@ https://github.com/time45120-ctrl/proy_ia_frontend.git
 
 Rama activa: `main`.
 
-Ultimo commit operativo conocido: `f.37`.
+Ultimo commit operativo conocido: `f.46`.
 
 ## Estado De Trabajo Actual
 
@@ -28,7 +28,9 @@ Ultimo commit operativo conocido: `f.37`.
 - `frontend/.env.local` apunta a `http://localhost:8000` para la API local; no
   modificar ese archivo sin solicitud explicita.
 - La API publica ya refleja el flujo ESP32 directo y el backend operativo
-  conocido es `b.17`.
+  conocido es `b.24`.
+- La experiencia publica es de domotica residencial: hogares, casa inteligente,
+  sensores y alarmas. No existe campo empresa en registro, perfil ni metadata.
 
 ## Despliegue Hostinger
 
@@ -69,7 +71,7 @@ La configuracion final que funciono localmente y se dejo para Hostinger:
   - Usa `process.env.PORT || 3000`.
   - Log esperado al arrancar: `AFCR_FRONTEND_READY=http://0.0.0.0:<port>`.
 - `scripts/print-deploy-info.js`
-  - Imprime `AFCR_FRONTEND_BUILD=f.37`.
+  - Imprime `AFCR_FRONTEND_BUILD=f.46`.
   - Imprime `AFCR_FRONTEND_MODE=next-server`.
 
 Lecciones aprendidas:
@@ -135,6 +137,18 @@ El cliente normaliza URLs para evitar:
 - `next.config.js`: config Next.
 - `scripts/print-deploy-info.js`: marca visible en logs Hostinger.
 
+## Autenticacion
+
+- Registro e inicio de sesion mantienen correo + contrasena.
+- Registro nuevo se confirma con OTP manual de 8 digitos y permite reenvio con
+  espera visual.
+- Recuperacion solicita correo, valida OTP de tipo `recovery` y permite
+  establecer una contrasena nueva.
+- `/auth/confirm` permanece para enlaces emitidos antes del flujo OTP.
+- El perfil editable contiene solo nombre de usuario y telefono. El frontend
+  no solicita, consulta ni envia empresa, `company_name` o identificadores
+  internos del hogar.
+
 ## Tarjeta de IA
 
 En `components/voice-dashboard.tsx`, la tarjeta de IA incluye tambien una card
@@ -171,14 +185,15 @@ Reglas:
 - Usa `echoCancellation`, `noiseSuppression` y `autoGainControl`; mide volumen
   con Web Audio y bloquea audio silencioso o menor a `SILENT_AUDIO_MIN_BYTES = 1500`.
 - Envia audio a `POST /voice-intent`.
-- El alta email/password dirige el correo de confirmacion a `/auth/confirm`;
-  registrar esa URL para local y produccion en las Redirect URLs de Supabase.
+- El alta email/password usa OTP manual; `/auth/confirm` sigue registrado para
+  compatibilidad con enlaces historicos.
 - Todas las rutas de inventario, voz y estado incluyen el JWT de la sesion
-  Supabase; el backend aplica aislamiento por organizacion.
+  Supabase; el backend aplica aislamiento por hogar sin devolver
+  `household_id` al navegador.
 - Los audios nuevos quedan en el bucket privado `voice-audio` y el dashboard
   solo presenta metadatos del historial, no reproduccion publica.
 - Muestra preview/plan.
-- Si el usuario dice `prende el LED`, el backend `b.17` puede devolver un plan
+- Si el usuario dice `prende el LED`, el backend `b.24` puede devolver un plan
   ejecutable usando el ESP32 enlazado mas reciente cuando no hay ambiente explicito.
 - Ejecuta hardware solo tras `POST /voice-intent/confirm`.
 - Los ESP32 enlazados reciben comandos por polling HTTP(S) y el dashboard sigue
@@ -193,7 +208,8 @@ Reglas:
   desde un celular en la misma WiFi. En produccion debe ser
   `https://api.afcrseguridad.com`.
 - Luces legacy pueden ejecutar MQTT real.
-- Camaras, puertas y drones son visuales/plan hasta conectar hardware real.
+- Camaras, puertas, sensores y alarmas son visuales/plan hasta conectar
+  hardware real.
 - El problema de transcripcion falsa del 2026-05-28 fue microfono desactivado;
   si vuelve a pasar revisar primero la card de logs antes de cambiar OpenAI.
 
