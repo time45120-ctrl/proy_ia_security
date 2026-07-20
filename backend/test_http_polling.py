@@ -94,6 +94,49 @@ class HttpPollingDeviceTests(unittest.TestCase):
         )
         self.assertEqual(idle["status"], "idle")
 
+    def test_sqlite_records_use_local_household_scope(self):
+        pairing, claimed = self.pair_esp32("ESP32 hogar")
+        delivery = api.send_device_command(
+            pairing["device_id"],
+            api.DeviceCommandRequest(accion="ON", espacio="sala"),
+        )["delivery"]
+
+        with api.get_db_connection() as conn:
+            device = conn.execute(
+                "SELECT household_id FROM devices WHERE device_id = ?",
+                (pairing["device_id"],),
+            ).fetchone()
+            command = conn.execute(
+                "SELECT household_id FROM device_commands WHERE command_id = ?",
+                (delivery["command_id"],),
+            ).fetchone()
+            state_scopes = {
+                row["household_id"]
+                for row in conn.execute(
+                    "SELECT household_id FROM device_led_states WHERE device_id = ?",
+                    (pairing["device_id"],),
+                ).fetchall()
+            }
+
+        self.assertEqual(device["household_id"], api.LOCAL_HOUSEHOLD_ID)
+        self.assertEqual(command["household_id"], api.LOCAL_HOUSEHOLD_ID)
+        self.assertEqual(state_scopes, {api.LOCAL_HOUSEHOLD_ID})
+        self.assertNotIn("household_id", claimed["device"])
+
+    def test_public_payloads_hide_household_id(self):
+        pairing, claimed = self.pair_esp32("ESP32 privado")
+        listed = api.list_devices()
+        states = api.get_device_led_states(pairing["device_id"], authorization=None)
+        delivery = api.send_device_command(
+            pairing["device_id"],
+            api.DeviceCommandRequest(accion="OFF", espacio="cocina"),
+        )["delivery"]
+
+        self.assertNotIn("household_id", claimed["device"])
+        self.assertNotIn("household_id", listed["devices"][0])
+        self.assertNotIn("household_id", states["device"])
+        self.assertNotIn("household_id", delivery)
+
     def test_new_esp32_led_states_start_off(self):
         pairing, _claimed = self.pair_esp32("ESP32 multiambiente")
 
