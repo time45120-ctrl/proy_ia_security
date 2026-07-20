@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AFCRseguridad | Seguridad empresarial con IA",
+  title: "AFCRseguridad | Domotica residencial con IA",
   description:
-    "Sistema integral B2B de seguridad con mini PC, inteligencia artificial, dispositivos IoT y soporte anual.",
+    "Sistema de domotica residencial con mini PC, inteligencia artificial, seguridad, dispositivos IoT y soporte continuo.",
 };
 
 export default function RootLayout({

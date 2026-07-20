@@ -21,13 +21,13 @@ const modules = [
     copy: "Automatizacion por zonas, horarios, voz y eventos de seguridad.",
   },
   {
-    title: "Drones de vigilancia",
-    copy: "Rutas de inspeccion y telemetria para perimetros empresariales.",
+    title: "Sensores y alarmas",
+    copy: "Alertas para movimiento, humo, puertas y eventos importantes del hogar.",
   },
 ];
 
 const processSteps = [
-  "Diagnostico de la empresa y zonas criticas",
+  "Diagnostico del hogar y sus ambientes",
   "Instalacion de mini PC, dispositivos y red segura",
   "Configuracion del cerebro IA local o en nube",
   "Soporte anual, mejoras y actualizaciones continuas",
@@ -48,7 +48,6 @@ type AuthMode =
   | "newPassword";
 
 const initialForm = {
-  companyName: "",
   username: "",
   email: "",
   password: "",
@@ -117,7 +116,6 @@ export default function WelcomePage() {
     () => {
       if (authMode === "register") {
         return (
-          form.companyName.trim().length > 1 &&
           USERNAME_PATTERN.test(form.username.trim()) &&
           form.phone.trim().length > 5 &&
           isValidEmail(form.email) &&
@@ -160,15 +158,11 @@ export default function WelcomePage() {
     setErrors((current) => ({ ...current, [key]: "" }));
   }
 
-  function validateCredentials(requireCompany: boolean) {
+  function validateCredentials(isRegistration: boolean) {
     const nextErrors: Record<string, string> = {};
 
-    if (requireCompany && form.companyName.trim().length < 2) {
-      nextErrors.companyName = "Ingresa el nombre de la empresa.";
-    }
-
     if (
-      requireCompany &&
+      isRegistration &&
       !USERNAME_PATTERN.test(form.username.trim().toLowerCase())
     ) {
       nextErrors.username = USERNAME_ERROR;
@@ -182,12 +176,12 @@ export default function WelcomePage() {
       nextErrors.password = "Usa una contrasena de al menos 8 caracteres.";
     }
 
-    if (requireCompany && form.confirmPassword.length < 8) {
+    if (isRegistration && form.confirmPassword.length < 8) {
       nextErrors.confirmPassword = "Confirma tu contrasena.";
-    } else if (requireCompany && form.password !== form.confirmPassword) {
+    } else if (isRegistration && form.password !== form.confirmPassword) {
       nextErrors.confirmPassword = "Las contrasenas no coinciden.";
     }
-    if (requireCompany && form.phone.trim().length < 6) {
+    if (isRegistration && form.phone.trim().length < 6) {
       nextErrors.phone = "Ingresa un telefono de contacto.";
     }
 
@@ -274,7 +268,6 @@ export default function WelcomePage() {
           options: {
             emailRedirectTo: `${window.location.origin}/auth/confirm?next=/welcome`,
             data: {
-              company_name: form.companyName.trim(),
               username,
               phone: form.phone.trim(),
               source: "afcr-welcome-supabase",
@@ -596,8 +589,8 @@ export default function WelcomePage() {
 
       <section className="relative isolate overflow-hidden px-4 pb-16 pt-28 sm:px-6 sm:pb-20 lg:px-10 lg:pt-32">
         <Image
-          src="/landing/hero-security-ops.png"
-          alt="Centro empresarial de seguridad con IA, mini PC y monitoreo de dispositivos"
+          src="/landing/hero-smart-home.png"
+          alt="Hogar inteligente con seguridad, iluminacion y dispositivos conectados"
           fill
           priority
           sizes="100vw"
@@ -609,14 +602,14 @@ export default function WelcomePage() {
         <div className="mx-auto grid max-w-7xl gap-10 lg:grid-cols-[minmax(0,0.95fr)_minmax(22rem,0.55fr)] lg:items-end">
           <div className="max-w-3xl">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#6ee7b7]">
-              Seguridad empresarial B2B con IA
+              Domotica residencial con IA
             </p>
             <h1 className="mt-5 font-display text-4xl font-bold leading-[1.05] text-white sm:text-5xl lg:text-6xl">
-              Seguridad empresarial dirigida por inteligencia artificial
+              Tu hogar inteligente, seguro y conectado
             </h1>
             <p className="mt-6 max-w-2xl text-base leading-8 text-slate-200 sm:text-lg">
-              Instalamos en tu empresa una mini PC potente con nuestro codigo y
-              un cerebro IA capaz de gestionar camaras, puertas, luces y drones
+              Instalamos en tu hogar una mini PC potente con nuestro codigo y
+              un cerebro IA capaz de gestionar camaras, accesos, luces y sensores
               desde una arquitectura local, en nube o hibrida.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
@@ -659,7 +652,7 @@ export default function WelcomePage() {
         <div className="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#9edfff]">
-              Cerebro IA instalado en tu empresa
+              Cerebro IA instalado en tu hogar
             </p>
             <h2 className="mt-3 font-display text-3xl font-semibold leading-tight text-white sm:text-4xl">
               La mini PC se convierte en el nucleo que coordina todo el sistema.
@@ -669,14 +662,14 @@ export default function WelcomePage() {
               los dispositivos y deja el sistema listo para operar con IA. La
               inteligencia puede trabajar con servicios en la nube o con
               procesamiento local segun el nivel de privacidad y continuidad que
-              requiera la empresa.
+              requiera tu hogar.
             </p>
           </div>
 
           <div className="overflow-hidden rounded-lg border border-white/10 bg-white/[0.04]">
             <Image
-              src="/landing/ai-mini-pc-brain.png"
-              alt="Mini PC como cerebro IA conectado a dispositivos de seguridad"
+              src="/landing/home-ai-hub.png"
+              alt="Mini PC como cerebro privado de automatizacion del hogar"
               width={1200}
               height={900}
               sizes="(min-width: 1024px) 50vw, 100vw"
@@ -720,8 +713,8 @@ export default function WelcomePage() {
         <div className="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
           <div className="overflow-hidden rounded-lg border border-white/10 bg-white/[0.04] lg:order-2">
             <Image
-              src="/landing/enterprise-installation-support.png"
-              alt="Tecnicos configurando sistema de seguridad empresarial con soporte anual"
+              src="/landing/home-installation-support.png"
+              alt="Tecnico configurando sensores y accesos inteligentes en una vivienda"
               width={1200}
               height={900}
               sizes="(min-width: 1024px) 50vw, 100vw"
@@ -737,7 +730,7 @@ export default function WelcomePage() {
               No vendemos solo dispositivos. Entregamos operacion continua.
             </h2>
             <p className="mt-5 text-sm leading-7 text-slate-300 sm:text-base">
-              AFCRseguridad acompana a la empresa despues de la instalacion:
+              AFCRseguridad acompana tu hogar despues de la instalacion:
               mantenimiento, actualizaciones, soporte tecnico y mejora del
               sistema para que la seguridad no se degrade con el tiempo.
             </p>
@@ -767,7 +760,7 @@ export default function WelcomePage() {
               MVP funcional conectado a tu laboratorio
             </p>
             <h2 className="mt-3 font-display text-3xl font-semibold leading-tight text-white">
-              Registra tu empresa y prueba el flujo de laboratorio.
+              Crea tu cuenta y prueba la domotica del hogar.
             </h2>
             <p className="mt-4 text-sm leading-7 text-slate-300">
               El backend real vive en AWS y el frontend queda preparado para
@@ -825,12 +818,6 @@ export default function WelcomePage() {
             <div className="mt-6 grid gap-4 sm:grid-cols-2">
               {authMode === "register" ? (
                 <>
-                  <TextField
-                    label="Empresa"
-                    value={form.companyName}
-                    error={errors.companyName}
-                    onChange={(value) => updateForm("companyName", value)}
-                  />
                   <TextField
                     label="Nombre de usuario"
                     value={form.username}
@@ -1066,7 +1053,7 @@ function isValidEmail(value: string) {
 
 function getAuthEyebrow(mode: AuthMode) {
   if (mode === "register" || mode === "signupOtp") {
-    return "Registro empresarial";
+    return "Registro del hogar";
   }
   if (mode === "forgotPassword" || mode === "recoveryOtp" || mode === "newPassword") {
     return "Recuperacion segura";

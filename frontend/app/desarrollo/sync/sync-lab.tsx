@@ -58,7 +58,6 @@ export function SyncLab() {
   const isEsp32 = deviceType === "ESP32";
   const nextEsp32DeviceName = getNextEsp32DeviceName(linkedDevices);
   const selectedDeviceName = isEsp32 ? nextEsp32DeviceName : deviceName;
-  const organizationName = currentUser?.organizationName ?? "tu empresa";
   const pendingCount = linkedDevices.filter(
     (device) => device.status === "pending",
   ).length;
@@ -197,7 +196,7 @@ export function SyncLab() {
                 enlace de dispositivos
               </p>
               <h2 className="mt-2 font-display text-2xl font-semibold leading-tight text-white sm:text-3xl lg:text-4xl">
-                Sincronizacion de dispositivos {organizationName}
+                Sincronizacion de dispositivos del hogar
               </h2>
               <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-300">
                 Registra el ESP32 del cliente, genera el enlace y confirma

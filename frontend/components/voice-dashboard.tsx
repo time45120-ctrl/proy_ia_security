@@ -1053,7 +1053,7 @@ export function VoiceDashboard({
 
           {recentIntents.length === 0 ? (
             <p className="mt-4 rounded-lg border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-400">
-              Aun no hay solicitudes de voz registradas para esta empresa.
+              Aun no hay solicitudes de voz registradas para este hogar.
             </p>
           ) : (
             <div className="mt-4 grid gap-3">

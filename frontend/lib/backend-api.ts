@@ -209,7 +209,6 @@ export type DeviceLedStatesResponse = {
 export type DashboardWelcomeUser = {
   id: string;
   username: string;
-  organization_id: string;
   role: string;
 };
 
