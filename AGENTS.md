@@ -1,6 +1,6 @@
 # AGENTS.md - Memoria compacta de Codex
 
-Ultima revision: 2026-05-28.
+Ultima revision: 2026-07-20.
 
 ## Contexto rapido
 
@@ -22,34 +22,37 @@ No recrear la copia legacy anidada `proy_ia_security/`.
 - Backend local de prueba debe correr en `http://localhost:8000`; para el
   ESP32 fisico debe anunciar una URL LAN accesible, no `localhost`.
 - El flujo ESP32 por HTTP(S) polling ya esta publicado en backend AWS. El
-  backend operativo conocido es `b.17`.
-- El frontend operativo conocido es `f.37`; Hostinger debe mostrar
-  `AFCR_FRONTEND_BUILD=f.37` y `AFCR_FRONTEND_MODE=next-server`.
+  backend operativo conocido es `b.24`.
+- El frontend operativo conocido es `f.46`; Hostinger debe mostrar
+  `AFCR_FRONTEND_BUILD=f.46` y `AFCR_FRONTEND_MODE=next-server`.
 - OpenAI esta funcionando: se probo transcripcion con audio sintetico
   "prende el LED". El modelo principal es `gpt-4o-mini-transcribe` y el
   fallback remoto es `whisper-1`.
 - El problema de transcripcion falsa observado el 2026-05-28 fue microfono
   desactivado o capturando silencio, no fallo de la API de OpenAI.
-- Supabase MCP esta enlazado al proyecto `proy_ia_security`, referencia
-  `omkbowrspgbuwpifksfk`. El 2026-05-25 se aplico la migracion
-  `initial_platform` con Auth multiempresa, RLS, dispositivos, comandos,
-  auditoria de voz, Storage privado y retencion.
+- Supabase CLI/MCP esta enlazado al proyecto `proy_ia_security`, referencia
+  `omkbowrspgbuwpifksfk`. El 2026-07-20 se completo la migracion a hogares:
+  `households`, `household_members` y `household_id` reemplazan totalmente
+  la arquitectura de organizaciones. RLS aisla cada hogar y no quedan tablas,
+  columnas ni metadata empresariales.
+- Conteos verificados despues de la migracion y QA: 8 usuarios, 8 hogares,
+  8 perfiles, 8 membresias, 2 dispositivos, 194 intenciones y 255 comandos.
 
 ## Repos Git activos
 
 Hay repos Git separados. Usar el repo correcto para commits y push:
 
 - Raiz/documentacion: `/home/abraham/proy_ia_security`
-  - Remoto: `time45120-ctrl/proy_ia_security`
+  - Remoto: `abraham-development/proy_ia_security`
   - Rama observada: `new1`
 - Frontend: `/home/abraham/proy_ia_security/frontend`
-  - Remoto: `time45120-ctrl/proy_ia_frontend`
+  - Remoto: `abraham-development/proy_ia_frontend`
   - Rama: `main`
-  - Ultimo cambio operativo conocido: `f.37`
+  - Ultimo cambio operativo conocido: `f.46`
 - Backend: `/home/abraham/proy_ia_security/backend`
-  - Remoto: `time45120-ctrl/proy_ia_backend`
+  - Remoto: `abraham-development/proy_ia_backend`
   - Rama: `main`
-  - Ultimo cambio operativo conocido: `b.17`
+  - Ultimo cambio operativo conocido: `b.24`
   - Automatizacion AWS GitHub Actions + SSM activa para despliegue autorizado
     desde `main`.
 
@@ -158,7 +161,7 @@ para evitar contenido mixto.
 - En los logs correctos debe verse:
 
 ```text
-AFCR_FRONTEND_BUILD=f.37
+AFCR_FRONTEND_BUILD=f.46
 AFCR_FRONTEND_MODE=next-server
 ```
 
@@ -202,6 +205,14 @@ Vistas principales:
 - `/desarrollo/sync`: `frontend/app/desarrollo/sync/sync-lab.tsx`.
 - `/desarrollo/dashboard`: `frontend/components/voice-dashboard.tsx`.
 
+Autenticacion:
+
+- Mantiene correo + contrasena para registro e inicio de sesion.
+- Confirmacion de registro y recuperacion usan OTP manual de 8 digitos.
+- El perfil editable contiene solo nombre de usuario y telefono; no existe
+  campo empresa ni se envia `company_name`.
+- `/auth/confirm` se conserva para enlaces historicos.
+
 La vista `sync`:
 
 - Llama `GET /devices`.
@@ -243,8 +254,8 @@ El dashboard de voz en `frontend/components/voice-dashboard.tsx`:
 - Comandos cortos como "prende el LED" deben habilitar confirmacion si existe
   un ESP32 enlazado. Si no se dijo ambiente, el backend usa el ESP32 reclamado
   mas reciente y su `assigned_space`.
-- Luces legacy conservan MQTT; camaras, puertas y drones son planes o acciones
-  simuladas en UI.
+- Luces legacy conservan MQTT; camaras, puertas, sensores y alarmas son planes
+  o acciones simuladas en UI hasta conectar hardware real.
 
 API client:
 
@@ -285,8 +296,9 @@ Responsabilidades:
 - Inicializar cliente MQTT.
 - Inicializar OpenAI si `AI_PROVIDER=openai`.
 - Inicializar Whisper local solo si no se usa OpenAI.
-- Usar Supabase para empresas, dispositivos, planes y comandos si esta
-  configurado; SQLite solo queda como fallback sin variables Supabase.
+- Usar Supabase para hogares, dispositivos, planes y comandos si esta
+  configurado; SQLite usa el hogar tecnico `local-household` como fallback
+  sin variables Supabase.
 - Guardar audio nuevo en Storage privado `voice-audio` cuando Supabase esta
   configurado; la purga diaria elimina objetos vencidos a los 30 dias.
 - Transcribir audio.
@@ -299,6 +311,8 @@ Responsabilidades:
 - Confirmar y encolar HTTP para ESP32 por ambiente; mantener MQTT para luces
   legacy.
 - Gestionar pairing, claim, polling autenticado, ACK, heartbeat y comandos.
+- Autorizar con `household_members/household_id` y omitir identificadores
+  internos del hogar en las respuestas publicas.
 
 Variables relevantes:
 
