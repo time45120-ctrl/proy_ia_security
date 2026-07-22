@@ -136,7 +136,6 @@ function ProfileModal({
   onSave: (input: DevelopmentProfileInput) => Promise<void>;
 }) {
   const [form, setForm] = useState({
-    organizationName: currentUser?.organizationName ?? "",
     phone: currentUser?.phone ?? "",
     username: currentUser?.username ?? "",
   });
@@ -145,7 +144,6 @@ function ProfileModal({
 
   useEffect(() => {
     setForm({
-      organizationName: currentUser?.organizationName ?? "",
       phone: currentUser?.phone ?? "",
       username: currentUser?.username ?? "",
     });
@@ -160,13 +158,6 @@ function ProfileModal({
 
   function validateForm() {
     const nextErrors: Record<string, string> = {};
-
-    if (
-      currentUser?.canEditOrganization &&
-      form.organizationName.trim().length < 2
-    ) {
-      nextErrors.organizationName = "Ingresa el nombre de la empresa.";
-    }
 
     if (form.phone.trim().length < 6) {
       nextErrors.phone = "Ingresa un telefono de contacto.";
@@ -191,9 +182,6 @@ function ProfileModal({
 
     try {
       await onSave({
-        organizationName: currentUser?.canEditOrganization
-          ? form.organizationName.trim()
-          : currentUser?.organizationName ?? form.organizationName.trim(),
         phone: form.phone.trim(),
         username: form.username.trim().toLowerCase(),
       });
@@ -234,18 +222,6 @@ function ProfileModal({
         ) : null}
 
         <div className="mt-6 grid gap-4">
-          <ProfileField
-            label="Empresa"
-            value={form.organizationName}
-            error={errors.organizationName}
-            disabled={!currentUser?.canEditOrganization}
-            onChange={(value) => updateField("organizationName", value)}
-          />
-          {!currentUser?.canEditOrganization ? (
-            <p className="-mt-2 text-xs leading-5 text-slate-500">
-              Solo el propietario puede cambiar el nombre de la empresa.
-            </p>
-          ) : null}
           <ProfileField
             label="Telefono"
             value={form.phone}

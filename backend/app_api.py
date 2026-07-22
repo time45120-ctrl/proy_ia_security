@@ -91,6 +91,7 @@ DB_PATH = os.getenv(
     "DEVICES_DB_PATH",
     str(Path(__file__).resolve().parent / "devices.db")
 )
+LOCAL_HOUSEHOLD_ID = "local-household"
 PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "https://api.afcrseguridad.com").rstrip("/")
 PAIRING_TOKEN_MINUTES = int(os.getenv("PAIRING_TOKEN_MINUTES", "60"))
 DEVICE_ONLINE_WINDOW_SECONDS = int(os.getenv("DEVICE_ONLINE_WINDOW_SECONDS", "120"))
@@ -106,7 +107,7 @@ SUPABASE_AUDIO_BUCKET = os.getenv("SUPABASE_AUDIO_BUCKET", "voice-audio").strip(
 VOICE_AUDIO_RETENTION_DAYS = int(os.getenv("VOICE_AUDIO_RETENTION_DAYS", "30"))
 VOICE_AUDIO_MIN_BYTES = int(os.getenv("VOICE_AUDIO_MIN_BYTES", "1500"))
 SUPABASE_DEVICE_SAFE_COLUMNS = (
-    "device_id,organization_id,created_by,name,type,model,assigned_space,status,"
+    "device_id,household_id,created_by,name,type,model,assigned_space,status,"
     "mqtt_topic,last_seen,created_at,pairing_expires_at,claimed_at"
 )
 
@@ -521,12 +522,12 @@ def authenticated_context(authorization: str | None) -> dict:
 
     user_id = str(user["id"])
     query = (
-        "organization_members?select=organization_id,role"
+        "household_members?select=household_id,role"
         f"&user_id=eq.{urllib.parse.quote(user_id)}&limit=1"
     )
     memberships = supabase_rest("GET", query, access_token=token)
     if not isinstance(memberships, list) or not memberships:
-        raise HTTPException(status_code=403, detail="La cuenta no tiene empresa asociada")
+        raise HTTPException(status_code=403, detail="La cuenta no tiene hogar asociado")
 
     profile_query = (
         "profiles?select=username"
@@ -541,7 +542,7 @@ def authenticated_context(authorization: str | None) -> dict:
         "token": token,
         "user_id": user_id,
         "username": username,
-        "organization_id": memberships[0]["organization_id"],
+        "household_id": memberships[0]["household_id"],
         "role": memberships[0]["role"],
     }
 
@@ -813,6 +814,7 @@ def init_devices_db():
             """
             CREATE TABLE IF NOT EXISTS devices (
                 device_id TEXT PRIMARY KEY,
+                household_id TEXT NOT NULL DEFAULT 'local-household',
                 name TEXT NOT NULL,
                 type TEXT NOT NULL,
                 model TEXT NOT NULL,
@@ -833,6 +835,10 @@ def init_devices_db():
         }
         if "device_api_key_hash" not in columns:
             conn.execute("ALTER TABLE devices ADD COLUMN device_api_key_hash TEXT")
+        if "household_id" not in columns:
+            conn.execute(
+                "ALTER TABLE devices ADD COLUMN household_id TEXT NOT NULL DEFAULT 'local-household'"
+            )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_devices_pairing_token_hash ON devices(pairing_token_hash)"
         )
@@ -840,6 +846,7 @@ def init_devices_db():
             """
             CREATE TABLE IF NOT EXISTS device_commands (
                 command_id TEXT PRIMARY KEY,
+                household_id TEXT NOT NULL DEFAULT 'local-household',
                 device_id TEXT NOT NULL,
                 target TEXT NOT NULL,
                 action TEXT NOT NULL,
@@ -855,6 +862,14 @@ def init_devices_db():
             )
             """
         )
+        command_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(device_commands)").fetchall()
+        }
+        if "household_id" not in command_columns:
+            conn.execute(
+                "ALTER TABLE device_commands ADD COLUMN household_id TEXT NOT NULL DEFAULT 'local-household'"
+            )
         conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_device_commands_delivery
@@ -864,6 +879,7 @@ def init_devices_db():
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS device_led_states (
+                household_id TEXT NOT NULL DEFAULT 'local-household',
                 device_id TEXT NOT NULL,
                 espacio TEXT NOT NULL,
                 status TEXT NOT NULL CHECK (status IN ('ON', 'OFF')),
@@ -874,6 +890,14 @@ def init_devices_db():
             )
             """
         )
+        led_state_columns = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(device_led_states)").fetchall()
+        }
+        if "household_id" not in led_state_columns:
+            conn.execute(
+                "ALTER TABLE device_led_states ADD COLUMN household_id TEXT NOT NULL DEFAULT 'local-household'"
+            )
         conn.execute(
             """
             CREATE INDEX IF NOT EXISTS idx_device_led_states_device
@@ -949,6 +973,12 @@ def device_row_to_dict(row: sqlite3.Row | dict) -> dict:
     return device
 
 
+def public_device_row(row: sqlite3.Row | dict) -> dict:
+    device = device_row_to_dict(row)
+    device.pop("household_id", None)
+    return device
+
+
 def get_device(device_id: str, access_token: str | None = None) -> dict | None:
     if using_supabase():
         if not access_token:
@@ -976,19 +1006,19 @@ def get_device(device_id: str, access_token: str | None = None) -> dict | None:
 
 def find_light_device_for_space(
     espacio: str,
-    organization_id: str | None = None,
+    household_id: str | None = None,
     access_token: str | None = None,
 ) -> dict | None:
     normalized_space = normalize_espacio(espacio)
     space_text = normalized_space.replace("_", " ")
 
     if using_supabase():
-        if not organization_id or not access_token:
+        if not household_id or not access_token:
             return None
         query = (
             f"devices?select={SUPABASE_DEVICE_SAFE_COLUMNS}&claimed_at=not.is.null"
             "&type=in.(Luces,luz,light,lights)"
-            f"&organization_id=eq.{urllib.parse.quote(organization_id)}"
+            f"&household_id=eq.{urllib.parse.quote(household_id)}"
             "&order=claimed_at.desc"
         )
         rows = supabase_rest("GET", query, access_token=access_token)
@@ -1031,15 +1061,15 @@ def find_light_device_for_space(
 
 
 def find_latest_http_esp32(
-    organization_id: str | None = None,
+    household_id: str | None = None,
     access_token: str | None = None,
 ) -> dict | None:
     if using_supabase():
-        if not organization_id or not access_token:
+        if not household_id or not access_token:
             return None
         query = (
             f"devices?select={SUPABASE_DEVICE_SAFE_COLUMNS}&claimed_at=not.is.null&type=eq.ESP32"
-            f"&organization_id=eq.{urllib.parse.quote(organization_id)}"
+            f"&household_id=eq.{urllib.parse.quote(household_id)}"
             "&order=claimed_at.desc&limit=1"
         )
         rows = supabase_rest("GET", query, access_token=access_token)
@@ -1063,14 +1093,14 @@ def find_latest_http_esp32(
 
 def find_http_esp32_for_space(
     espacio: str,
-    organization_id: str | None = None,
+    household_id: str | None = None,
     access_token: str | None = None,
 ) -> dict | None:
     normalized_space = normalize_espacio(espacio)
     if normalized_space not in ESPACIOS_VALIDOS:
         return None
 
-    return find_latest_http_esp32(organization_id, access_token)
+    return find_latest_http_esp32(household_id, access_token)
 
 
 def infer_device_space(device: dict) -> str:
@@ -1089,15 +1119,15 @@ def infer_device_space(device: dict) -> str:
 
 
 def cleanup_expired_device_commands(
-    organization_id: str | None = None,
+    household_id: str | None = None,
     access_token: str | None = None,
 ) -> None:
     if using_supabase():
-        if not organization_id or not access_token:
+        if not household_id or not access_token:
             return
         query = (
             "device_commands?status=in.(queued,delivered)"
-            f"&organization_id=eq.{urllib.parse.quote(organization_id)}"
+            f"&household_id=eq.{urllib.parse.quote(household_id)}"
             f"&expires_at=lt.{urllib.parse.quote(to_iso(utc_now()))}"
         )
         supabase_rest(
@@ -1123,6 +1153,7 @@ def cleanup_expired_device_commands(
 
 def command_row_to_dict(row: sqlite3.Row | dict) -> dict:
     command = dict(row)
+    command.pop("household_id", None)
     command["transport"] = "http_polling"
     command["commands_url"] = "/device/commands"
     return command
@@ -1174,7 +1205,7 @@ def normalize_led_state(value: str | None) -> str:
 def default_led_state_row(device: dict, espacio: str, updated_at: str | None = None) -> dict:
     return {
         "device_id": device["device_id"],
-        "organization_id": device.get("organization_id"),
+        "household_id": device.get("household_id"),
         "espacio": espacio,
         "status": LED_STATE_INITIAL,
         "updated_at": updated_at,
@@ -1211,7 +1242,7 @@ def build_led_states_response(device: dict, rows: list[sqlite3.Row | dict]) -> d
 
     return {
         "ok": True,
-        "device": device,
+        "device": public_device_row(device),
         "device_id": device["device_id"],
         "device_status": device.get("status", "offline"),
         "device_status_label": device.get("status_label", "Offline"),
@@ -1245,11 +1276,14 @@ def initialize_sqlite_device_led_states(conn: sqlite3.Connection, device_id: str
     conn.executemany(
         """
         INSERT OR IGNORE INTO device_led_states (
-            device_id, espacio, status, updated_at, source_command_id
+            household_id, device_id, espacio, status, updated_at, source_command_id
         )
-        VALUES (?, ?, 'OFF', ?, NULL)
+        VALUES (?, ?, ?, 'OFF', ?, NULL)
         """,
-        [(device_id, espacio, now) for espacio in ESP32_MULTIROOM_ESPACIOS],
+        [
+            (LOCAL_HOUSEHOLD_ID, device_id, espacio, now)
+            for espacio in ESP32_MULTIROOM_ESPACIOS
+        ],
     )
 
 
@@ -1268,6 +1302,7 @@ def upsert_sqlite_led_states_from_commands(
             continue
 
         updates.append((
+            LOCAL_HOUSEHOLD_ID,
             command_dict["device_id"],
             espacio,
             state,
@@ -1281,9 +1316,9 @@ def upsert_sqlite_led_states_from_commands(
     conn.executemany(
         """
         INSERT INTO device_led_states (
-            device_id, espacio, status, updated_at, source_command_id
+            household_id, device_id, espacio, status, updated_at, source_command_id
         )
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?)
         ON CONFLICT(device_id, espacio) DO UPDATE SET
             status = excluded.status,
             updated_at = excluded.updated_at,
@@ -1314,7 +1349,7 @@ def led_state_rows_from_executed_commands(
 
         latest_by_space[espacio] = {
             "device_id": command_dict.get("device_id") or device["device_id"],
-            "organization_id": command_dict.get("organization_id") or device.get("organization_id"),
+            "household_id": command_dict.get("household_id") or device.get("household_id"),
             "espacio": espacio,
             "status": state,
             "updated_at": (
@@ -1357,15 +1392,15 @@ def fetch_sqlite_led_state_rows_from_executed_commands(
 
 
 def fetch_supabase_device_led_state_rows(device: dict) -> list[dict]:
-    organization_id = str(device.get("organization_id") or "").strip()
-    if not organization_id:
+    household_id = str(device.get("household_id") or "").strip()
+    if not household_id:
         return []
 
     query = (
-        "device_led_states?select=device_id,organization_id,espacio,status,"
+        "device_led_states?select=device_id,household_id,espacio,status,"
         "updated_at,source_command_id"
         f"&device_id=eq.{urllib.parse.quote(str(device['device_id']))}"
-        f"&organization_id=eq.{urllib.parse.quote(organization_id)}"
+        f"&household_id=eq.{urllib.parse.quote(household_id)}"
         "&order=espacio.asc"
     )
     try:
@@ -1378,15 +1413,15 @@ def fetch_supabase_device_led_state_rows(device: dict) -> list[dict]:
 
 
 def fetch_supabase_led_state_rows_from_executed_commands(device: dict) -> list[dict]:
-    organization_id = str(device.get("organization_id") or "").strip()
-    if not organization_id:
+    household_id = str(device.get("household_id") or "").strip()
+    if not household_id:
         return []
 
     query = (
-        "device_commands?select=command_id,device_id,organization_id,target,action,"
+        "device_commands?select=command_id,device_id,household_id,target,action,"
         "espacio,status,created_at,delivered_at,ack_at"
         f"&device_id=eq.{urllib.parse.quote(str(device['device_id']))}"
-        f"&organization_id=eq.{urllib.parse.quote(organization_id)}"
+        f"&household_id=eq.{urllib.parse.quote(household_id)}"
         "&target=eq.led&status=eq.executed"
         "&order=created_at.desc"
         "&limit=100"
@@ -1401,8 +1436,8 @@ def fetch_supabase_led_state_rows_from_executed_commands(device: dict) -> list[d
 
 
 def ensure_supabase_device_led_states(device: dict, rows: list[dict] | None = None) -> list[dict]:
-    organization_id = str(device.get("organization_id") or "").strip()
-    if not organization_id:
+    household_id = str(device.get("household_id") or "").strip()
+    if not household_id:
         return rows or []
 
     existing_rows = rows if rows is not None else fetch_supabase_device_led_state_rows(device)
@@ -1441,13 +1476,13 @@ def upsert_supabase_led_states_from_commands(commands: list[dict]) -> None:
     for command in commands:
         state = LED_STATE_BY_COMMAND_ACTION.get(str(command.get("action", "")))
         espacio = normalize_espacio(str(command.get("espacio", "")))
-        organization_id = str(command.get("organization_id") or "").strip()
-        if state is None or espacio not in ESPACIOS_VALIDOS or not organization_id:
+        household_id = str(command.get("household_id") or "").strip()
+        if state is None or espacio not in ESPACIOS_VALIDOS or not household_id:
             continue
 
         payload.append({
             "device_id": command["device_id"],
-            "organization_id": organization_id,
+            "household_id": household_id,
             "espacio": espacio,
             "status": state,
             "updated_at": now,
@@ -1658,7 +1693,7 @@ def enqueue_http_led_command(
             service_role=True,
             payload={
                 "command_id": command_id,
-                "organization_id": context["organization_id"],
+                "household_id": context["household_id"],
                 "device_id": device["device_id"],
                 "created_by": context["user_id"],
                 "target": "led",
@@ -1675,13 +1710,14 @@ def enqueue_http_led_command(
             conn.execute(
                 """
                 INSERT INTO device_commands (
-                    command_id, device_id, target, action, espacio, status,
+                    command_id, household_id, device_id, target, action, espacio, status,
                     source_request_id, created_at, expires_at
                 )
-                VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)
                 """,
                 (
                     command_id,
+                    LOCAL_HOUSEHOLD_ID,
                     device["device_id"],
                     "led",
                     action,
@@ -1766,7 +1802,7 @@ def ping():
 def ensure_dashboard_welcome_access(context: dict) -> int:
     query = (
         f"devices?select=device_id"
-        f"&organization_id=eq.{urllib.parse.quote(context['organization_id'])}"
+        f"&household_id=eq.{urllib.parse.quote(context['household_id'])}"
         "&claimed_at=not.is.null&limit=1"
     )
     rows = supabase_rest("GET", query, access_token=context["token"])
@@ -1821,7 +1857,6 @@ def dashboard_welcome(authorization: str | None = Header(default=None)):
         "user": {
             "id": context["user_id"],
             "username": context.get("username") or "",
-            "organization_id": context["organization_id"],
             "role": context["role"],
         },
         "intencion_json": device_intent,
@@ -1899,7 +1934,7 @@ def create_pairing_token(
             service_role=True,
             payload={
                 "device_id": device_id,
-                "organization_id": context["organization_id"],
+                "household_id": context["household_id"],
                 "created_by": context["user_id"],
                 "name": name,
                 "type": device_type,
@@ -1915,20 +1950,21 @@ def create_pairing_token(
         if device_type == "ESP32":
             ensure_supabase_device_led_states({
                 "device_id": device_id,
-                "organization_id": context["organization_id"],
+                "household_id": context["household_id"],
             })
     else:
         with get_db_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO devices (
-                    device_id, name, type, model, status, mqtt_topic, last_seen,
+                    device_id, household_id, name, type, model, status, mqtt_topic, last_seen,
                     created_at, pairing_token_hash, pairing_expires_at, claimed_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     device_id,
+                    LOCAL_HOUSEHOLD_ID,
                     name,
                     device_type,
                     model,
@@ -1988,7 +2024,7 @@ def claim_device(payload: ClaimDeviceRequest):
             ensure_supabase_device_led_states(device)
         return {
             "ok": True,
-            "device": device_row_to_dict(device),
+            "device": public_device_row(device),
             "device_api_key": device_api_key,
             "commands_url": "/device/commands" if device_api_key else None,
         }
@@ -2038,7 +2074,7 @@ def claim_device(payload: ClaimDeviceRequest):
 
     return {
         "ok": True,
-        "device": device,
+        "device": public_device_row(device),
         "device_api_key": device_api_key,
         "commands_url": "/device/commands" if device_api_key else None,
     }
@@ -2050,13 +2086,13 @@ def list_devices(authorization: str | None = Header(default=None)):
         context = authenticated_context(authorization)
         query = (
             f"devices?select={SUPABASE_DEVICE_SAFE_COLUMNS}"
-            f"&organization_id=eq.{urllib.parse.quote(context['organization_id'])}"
+            f"&household_id=eq.{urllib.parse.quote(context['household_id'])}"
             "&order=created_at.desc"
         )
         rows = supabase_rest("GET", query, access_token=context["token"])
         return {
             "ok": True,
-            "devices": [device_row_to_dict(row) for row in (rows or [])],
+            "devices": [public_device_row(row) for row in (rows or [])],
         }
 
     with get_db_connection() as conn:
@@ -2066,7 +2102,7 @@ def list_devices(authorization: str | None = Header(default=None)):
 
     return {
         "ok": True,
-        "devices": [device_row_to_dict(row) for row in rows],
+        "devices": [public_device_row(row) for row in rows],
     }
 
 
@@ -2084,7 +2120,7 @@ def get_device_led_states(
         query = (
             f"devices?select={SUPABASE_DEVICE_SAFE_COLUMNS}"
             f"&device_id=eq.{urllib.parse.quote(safe_device_id)}"
-            f"&organization_id=eq.{urllib.parse.quote(context['organization_id'])}"
+            f"&household_id=eq.{urllib.parse.quote(context['household_id'])}"
             "&limit=1"
         )
         rows = supabase_rest("GET", query, access_token=context["token"])
@@ -2133,11 +2169,11 @@ def delete_device(
 
     if using_supabase():
         context = authenticated_context(authorization)
-        safe_organization_id = urllib.parse.quote(context["organization_id"], safe="")
+        safe_household_id = urllib.parse.quote(context["household_id"], safe="")
         device_query = (
             f"devices?select={SUPABASE_DEVICE_SAFE_COLUMNS}"
             f"&device_id=eq.{safe_device_id}"
-            f"&organization_id=eq.{safe_organization_id}"
+            f"&household_id=eq.{safe_household_id}"
             "&limit=1"
         )
         rows = supabase_rest("GET", device_query, service_role=True)
@@ -2152,7 +2188,7 @@ def delete_device(
         command_query = (
             "device_commands?select=command_id"
             f"&device_id=eq.{safe_device_id}"
-            f"&organization_id=eq.{safe_organization_id}"
+            f"&household_id=eq.{safe_household_id}"
         )
         deleted_commands = supabase_rest(
             "DELETE",
@@ -2163,7 +2199,7 @@ def delete_device(
         device_delete_query = (
             "devices?select=device_id"
             f"&device_id=eq.{safe_device_id}"
-            f"&organization_id=eq.{safe_organization_id}"
+            f"&household_id=eq.{safe_household_id}"
         )
         deleted_devices = supabase_rest(
             "DELETE",
@@ -2255,7 +2291,7 @@ def device_heartbeat(
 
     return {
         "ok": True,
-        "device": get_device(device_id),
+        "device": public_device_row(get_device(device_id) or {}),
     }
 
 
@@ -2451,7 +2487,7 @@ def get_device_command_status(
 ):
     if using_supabase():
         context = authenticated_context(authorization)
-        cleanup_expired_device_commands(context["organization_id"], context["token"])
+        cleanup_expired_device_commands(context["household_id"], context["token"])
         query = f"device_commands?select=*&command_id=eq.{urllib.parse.quote(command_id)}&limit=1"
         rows = supabase_rest("GET", query, access_token=context["token"])
         if not isinstance(rows, list) or not rows:
@@ -3176,10 +3212,10 @@ def format_light_state_reply(led_response: dict | None, state_query: dict) -> st
 
 
 def fetch_latest_http_esp32_led_state_response(
-    organization_id: str | None = None,
+    household_id: str | None = None,
     access_token: str | None = None,
 ) -> dict | None:
-    device = find_latest_http_esp32(organization_id, access_token)
+    device = find_latest_http_esp32(household_id, access_token)
     if device is None:
         return None
 
@@ -3916,7 +3952,7 @@ def infer_module_action(module: str, texto_transcrito: str, ia_json: dict) -> st
 def build_light_mqtt_preview(
     espacio: str,
     accion: str,
-    organization_id: str | None = None,
+    household_id: str | None = None,
     access_token: str | None = None,
 ) -> tuple[dict | None, str]:
     """
@@ -3933,7 +3969,7 @@ def build_light_mqtt_preview(
         "accion": accion
     }
 
-    device = find_light_device_for_space(espacio, organization_id, access_token)
+    device = find_light_device_for_space(espacio, household_id, access_token)
     topic = device["mqtt_topic"] if device else MQTT_TOPIC_LUCES
 
     if device:
@@ -3945,7 +3981,7 @@ def build_light_mqtt_preview(
 def build_http_delivery_preview(
     espacio: str,
     accion: str,
-    organization_id: str | None = None,
+    household_id: str | None = None,
     access_token: str | None = None,
 ) -> dict | None:
     espacio = normalize_espacio(espacio)
@@ -3957,7 +3993,7 @@ def build_http_delivery_preview(
     if espacio not in ESPACIOS_VALIDOS:
         return None
 
-    device = find_http_esp32_for_space(espacio, organization_id, access_token)
+    device = find_http_esp32_for_space(espacio, household_id, access_token)
     if device is None:
         return None
 
@@ -3976,7 +4012,7 @@ def build_voice_intent_plan(
     texto_transcrito: str,
     ia_json: dict,
     respuesta_usuario: str = "",
-    organization_id: str | None = None,
+    household_id: str | None = None,
     access_token: str | None = None,
 ) -> dict:
     """
@@ -3989,7 +4025,7 @@ def build_voice_intent_plan(
     if ia_json.get("intencion") == LIGHT_STATE_QUERY_INTENT and not state_query:
         state_query = detect_light_state_query(texto_transcrito)
     if state_query:
-        led_response = fetch_latest_http_esp32_led_state_response(organization_id, access_token)
+        led_response = fetch_latest_http_esp32_led_state_response(household_id, access_token)
         respuesta = format_light_state_reply(led_response, state_query)
         espacios = state_query.get("espacios") or []
         public_space = (
@@ -4045,7 +4081,7 @@ def build_voice_intent_plan(
     elif module == "lights" and len(light_commands) > 1:
         for command in light_commands:
             preview = build_http_delivery_preview(
-                command["espacio"], command["accion"], organization_id, access_token
+                command["espacio"], command["accion"], household_id, access_token
             )
             if preview is not None:
                 delivery_previews.append(preview)
@@ -4062,14 +4098,14 @@ def build_voice_intent_plan(
             espacio = light_commands[0]["espacio"]
 
         delivery_preview = build_http_delivery_preview(
-            espacio, action, organization_id, access_token
+            espacio, action, household_id, access_token
         )
         if delivery_preview is not None:
             espacio = delivery_preview.get("espacio", espacio)
             can_execute = True
         else:
             payload, topic = build_light_mqtt_preview(
-                espacio, action, organization_id, access_token
+                espacio, action, household_id, access_token
             )
         if delivery_preview is None and payload is not None:
             mqtt_preview = {
@@ -4197,7 +4233,7 @@ def build_voice_intent_plan(
 def send_mqtt_luz(
     espacio: str,
     accion: str,
-    organization_id: str | None = None,
+    household_id: str | None = None,
     access_token: str | None = None,
 ) -> tuple[bool, dict | None, str]:
     """
@@ -4224,7 +4260,7 @@ def send_mqtt_luz(
             "accion": accion
         }
 
-        device = find_light_device_for_space(espacio, organization_id, access_token)
+        device = find_light_device_for_space(espacio, household_id, access_token)
         topic = device["mqtt_topic"] if device else MQTT_TOPIC_LUCES
 
         if device:
@@ -4317,7 +4353,7 @@ async def voice_intent(
             texto_transcrito,
             ia_json,
             respuesta_usuario,
-            context["organization_id"] if context else None,
+            context["household_id"] if context else None,
             context["token"] if context else None,
         )
         respuesta_usuario_final = str(plan.get("respuesta") or respuesta_usuario).strip()
@@ -4338,7 +4374,7 @@ async def voice_intent(
                 service_role=True,
                 payload={
                     "request_id": plan["request_id"],
-                    "organization_id": context["organization_id"],
+                    "household_id": context["household_id"],
                     "user_id": context["user_id"],
                     "filename": fase_1["filename"],
                     "content_type": fase_1["content_type"],
@@ -4419,12 +4455,12 @@ def voice_intent_user_reply_audio(
     if not safe_request_id:
         raise HTTPException(status_code=404, detail="Audio IA no encontrado")
 
-    safe_organization_id = urllib.parse.quote(context["organization_id"])
+    safe_household_id = urllib.parse.quote(context["household_id"])
     safe_request_id_query = urllib.parse.quote(safe_request_id)
     query = (
-        "voice_intents?select=request_id,user_id,organization_id,plan"
+        "voice_intents?select=request_id,user_id,household_id,plan"
         f"&request_id=eq.{safe_request_id_query}"
-        f"&organization_id=eq.{safe_organization_id}"
+        f"&household_id=eq.{safe_household_id}"
         "&limit=1"
     )
     rows = supabase_rest("GET", query, access_token=context["token"])
@@ -4543,7 +4579,7 @@ def confirm_voice_intent(
         for command in plan_commands:
             http_device = find_http_esp32_for_space(
                 command["espacio"],
-                context["organization_id"] if context else None,
+                context["household_id"] if context else None,
                 context["token"] if context else None,
             )
             if http_device is None:
@@ -4585,7 +4621,7 @@ def confirm_voice_intent(
 
     http_device = find_http_esp32_for_space(
         espacio,
-        context["organization_id"] if context else None,
+        context["household_id"] if context else None,
         context["token"] if context else None,
     )
     if http_device is not None:
@@ -4620,7 +4656,7 @@ def confirm_voice_intent(
     ok, mqtt_payload, mqtt_topic = send_mqtt_luz(
         espacio,
         action,
-        context["organization_id"] if context else None,
+        context["household_id"] if context else None,
         context["token"] if context else None,
     )
     if context:
@@ -4661,7 +4697,7 @@ def recent_voice_intents(authorization: str | None = Header(default=None)):
     query = (
         "voice_intents?select=request_id,transcription,response_for_user,device_intent,"
         "status,created_at,confirmed_at,audio_expires_at,audio_purged_at"
-        f"&organization_id=eq.{urllib.parse.quote(context['organization_id'])}"
+        f"&household_id=eq.{urllib.parse.quote(context['household_id'])}"
         "&order=created_at.desc&limit=12"
     )
     items = supabase_rest("GET", query, access_token=context["token"])

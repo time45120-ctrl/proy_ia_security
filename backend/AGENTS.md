@@ -1,6 +1,6 @@
 # AGENTS.md - Backend
 
-Ultima revision: 2026-05-28.
+Ultima revision: 2026-07-20.
 
 ## Contexto
 
@@ -13,12 +13,12 @@ Este directorio es el repo Git desplegable del backend:
 Remoto:
 
 ```text
-https://github.com/time45120-ctrl/proy_ia_backend.git
+https://github.com/abraham-development/proy_ia_backend.git
 ```
 
 Rama activa: `main`.
 
-Ultimo commit operativo conocido: `b.17`.
+Ultimo commit operativo conocido: `b.24`.
 
 Backend publico:
 
@@ -39,9 +39,15 @@ IP AWS:
 - Produccion objetivo: frontend Hostinger `https://afcrseguridad.com`,
   backend AWS `https://api.afcrseguridad.com` (`3.132.192.3`) y Supabase
   `omkbowrspgbuwpifksfk`.
-- El 2026-05-25 se aplico por MCP la migracion `initial_platform`: RLS
-  multiempresa, dispositivos, comandos, voz, bucket privado y purga diaria.
-  SQLite permanece solo como fallback cuando Supabase no esta configurado.
+- El 2026-07-20 se completo en Supabase la arquitectura residencial:
+  `households`, `household_members` y `household_id`; se eliminaron
+  definitivamente tablas, columnas, funciones, politicas y metadata de
+  organizaciones. Los conteos productivos quedaron preservados.
+- La autorizacion remota usa membresia del hogar con roles `owner/member`.
+  Los payloads publicos omiten `household_id`; SQLite usa
+  `local-household` como hogar tecnico de fallback.
+- La prueba QA temporal confirmo trigger de registro, RLS, login, `GET /devices`,
+  ocultacion de IDs, revocacion y limpieza completa.
 - La API publica ya expone el flujo ESP32 directo por Arduino IDE, claim,
   polling HTTP(S), ACK y confirmacion. No reintroducir `esp32_portal_url`.
 
@@ -61,8 +67,8 @@ Responsabilidades:
   el modelo principal devuelve texto vacio.
 - Inicializa Whisper local solo como respaldo cuando no se usa OpenAI.
 - Inicializa MQTT con `paho-mqtt`.
-- Gestiona dispositivos y comandos en Supabase bajo RLS; mantiene SQLite como
-  fallback para pruebas locales sin variables Supabase.
+- Gestiona dispositivos y comandos en Supabase bajo RLS por hogar; mantiene
+  SQLite como fallback para pruebas locales sin variables Supabase.
 - Recibe audio, lo guarda en Storage privado si Supabase esta activo, transcribe
   e interpreta; el audio vence a los 30 dias.
 - Rechaza audios demasiado pequenos con `VOICE_AUDIO_MIN_BYTES = 1500` para
@@ -71,6 +77,8 @@ Responsabilidades:
 - Encola comandos HTTP(S) para ESP32 reales solo despues de confirmacion.
 - Conserva MQTT para luces legacy.
 - Gestiona pairing/claim/polling/ACK/heartbeat de ESP32.
+- No exponer `household_id` ni identificadores internos de aislamiento en
+  respuestas para navegador o dispositivos.
 
 ## IA: dos canales obligatorios
 
@@ -254,6 +262,9 @@ Acciones validas:
 - El workflow objetivo esta en `.github/workflows/deploy-aws.yml` y usa GitHub
   OIDC mas AWS Systems Manager; no debe almacenar `.ppk` ni claves AWS
   permanentes.
+- Tras transferir el repo a `abraham-development`, AWS confia en el sujeto
+  OIDC inmutable
+  `repo:abraham-development@260437753/proy_ia_backend@1227907633:environment:production`.
 - La preparacion de EC2, variables GitHub, rol OIDC y SSM se documentan en
   `deploy/README.md`.
 - En AWS se confirmo el checkout `/home/ubuntu/proy_ia_backend`, el entorno
@@ -301,6 +312,15 @@ Health check:
 ```bash
 curl https://api.afcrseguridad.com/ping
 ```
+
+Pruebas:
+
+```bash
+cd /home/abraham/proy_ia_security/backend
+venv/bin/python test_http_polling.py
+```
+
+La suite verificada para `b.24` contiene 25 pruebas.
 
 Deploy por Git:
 

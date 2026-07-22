@@ -20,14 +20,9 @@ export type DevelopmentCurrentUser = {
   email: string | null;
   username: string | null;
   phone: string;
-  organizationId: string | null;
-  organizationName: string | null;
-  role: string | null;
-  canEditOrganization: boolean;
 };
 
 export type DevelopmentProfileInput = {
-  organizationName: string;
   phone: string;
   username: string;
 };
@@ -174,15 +169,8 @@ export function DevelopmentWorkspaceProvider({
         throw new Error("Sesion no disponible.");
       }
 
-      const organizationName = input.organizationName.trim();
       const phone = input.phone.trim();
       const username = input.username.trim().toLowerCase();
-      const organizationChanged =
-        organizationName !== (currentUser.organizationName ?? "");
-
-      if (organizationChanged && !currentUser.canEditOrganization) {
-        throw new Error("Solo el propietario puede editar el nombre de la empresa.");
-      }
 
       const supabase = createClient();
       setIsSavingProfile(true);
@@ -202,24 +190,12 @@ export function DevelopmentWorkspaceProvider({
           throw profileError;
         }
 
-        if (organizationChanged && currentUser.organizationId) {
-          const { error: organizationError } = await supabase
-            .from("organizations")
-            .update({ name: organizationName })
-            .eq("id", currentUser.organizationId);
-
-          if (organizationError) {
-            throw organizationError;
-          }
-        }
-
         setCurrentUser((current) =>
           current
             ? {
                 ...current,
                 username,
                 phone,
-                organizationName,
               }
             : current,
         );
@@ -298,14 +274,14 @@ async function fetchCurrentProfile(
 ): Promise<Omit<DevelopmentCurrentUser, "id" | "email">> {
   let { data: profile, error: profileError } = await supabase
     .from("profiles")
-    .select("username, phone, organization_id")
+    .select("username, phone")
     .eq("user_id", userId)
     .maybeSingle();
 
   if (profileError && isMissingUsernameColumnError(profileError)) {
     const fallback = await supabase
       .from("profiles")
-      .select("phone, organization_id")
+      .select("phone")
       .eq("user_id", userId)
       .maybeSingle();
 
@@ -317,38 +293,9 @@ async function fetchCurrentProfile(
     return emptyProfile();
   }
 
-  const organizationId = textOrNull(profile.organization_id);
-  let organizationName: string | null = null;
-  let canEditOrganization = false;
-  let role: string | null = null;
-
-  if (organizationId) {
-    const { data: organization } = await supabase
-      .from("organizations")
-      .select("name, created_by")
-      .eq("id", organizationId)
-      .maybeSingle();
-
-    organizationName = textOrNull(organization?.name);
-    canEditOrganization = organization?.created_by === userId;
-
-    const { data: membership } = await supabase
-      .from("organization_members")
-      .select("role")
-      .eq("organization_id", organizationId)
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    role = textOrNull(membership?.role);
-  }
-
   return {
     username: textOrNull(profile.username),
     phone: textOrEmpty(profile.phone),
-    organizationId,
-    organizationName,
-    role,
-    canEditOrganization,
   };
 }
 
@@ -356,10 +303,6 @@ function emptyProfile(): Omit<DevelopmentCurrentUser, "id" | "email"> {
   return {
     username: null,
     phone: "",
-    organizationId: null,
-    organizationName: null,
-    role: null,
-    canEditOrganization: false,
   };
 }
 
