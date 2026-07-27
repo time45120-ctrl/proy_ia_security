@@ -8,7 +8,10 @@ const handle = app.getRequestHandler();
 
 app.prepare().then(() => {
   createServer((request, response) => {
-    const requestHost = String(request.headers.host || "")
+    const forwardedHost = String(request.headers["x-forwarded-host"] || "")
+      .split(",")[0]
+      .trim();
+    const requestHost = String(forwardedHost || request.headers.host || "")
       .split(":")[0]
       .toLowerCase();
 
