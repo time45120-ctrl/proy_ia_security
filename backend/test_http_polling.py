@@ -61,7 +61,12 @@ class HttpPollingDeviceTests(unittest.TestCase):
         self.assertEqual(api.PUBLIC_API_URL, "https://api.afcrtecnologia.com")
         self.assertIn("https://afcrtecnologia.com", api.CORS_ALLOW_ORIGINS)
         self.assertIn("https://www.afcrtecnologia.com", api.CORS_ALLOW_ORIGINS)
-        self.assertNotIn("https://afcrseguridad.com", api.CORS_ALLOW_ORIGINS)
+        if os.getenv("AFCR_LEGACY_ORIGINS_ENABLED", "false") == "true":
+            self.assertIn("https://afcrseguridad.com", api.CORS_ALLOW_ORIGINS)
+            self.assertIn("https://www.afcrseguridad.com", api.CORS_ALLOW_ORIGINS)
+        else:
+            self.assertNotIn("https://afcrseguridad.com", api.CORS_ALLOW_ORIGINS)
+            self.assertNotIn("https://www.afcrseguridad.com", api.CORS_ALLOW_ORIGINS)
 
         pairing = api.create_pairing_token(
             api.PairingTokenRequest(name="ESP32 dominio nuevo", type="ESP32", model="ESP32")
