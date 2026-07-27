@@ -34,18 +34,35 @@ PY_ENV
 }
 
 ensure_production_domain_config() {
-  run_as_app_user python3 - <<'PY_ENV'
+  local cors_origins=(
+    "https://afcrtecnologia.com"
+    "https://www.afcrtecnologia.com"
+  )
+  if [[ "${AFCR_LEGACY_ORIGINS_ENABLED:-false}" == "true" ]]; then
+    cors_origins+=(
+      "https://afcrseguridad.com"
+      "https://www.afcrseguridad.com"
+    )
+  fi
+  cors_origins+=(
+    "http://localhost:3000"
+    "http://127.0.0.1:3000"
+    "http://localhost:3001"
+    "http://127.0.0.1:3001"
+    "http://localhost:3002"
+    "http://127.0.0.1:3002"
+  )
+  local cors_csv
+  cors_csv="$(IFS=,; printf '%s' "${cors_origins[*]}")"
+
+  run_as_app_user python3 - "${cors_csv}" <<'PY_ENV'
+import sys
 from pathlib import Path
 
 path = Path('.env')
 updates = {
     'PUBLIC_API_URL': 'https://api.afcrtecnologia.com',
-    'CORS_ALLOW_ORIGINS': (
-        'https://afcrtecnologia.com,https://www.afcrtecnologia.com,'
-        'http://localhost:3000,http://127.0.0.1:3000,'
-        'http://localhost:3001,http://127.0.0.1:3001,'
-        'http://localhost:3002,http://127.0.0.1:3002'
-    ),
+    'CORS_ALLOW_ORIGINS': sys.argv[1],
 }
 lines = path.read_text().splitlines()
 for key, value in updates.items():
