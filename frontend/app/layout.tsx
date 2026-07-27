@@ -2,9 +2,12 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AFCRseguridad | Domótica residencial con IA",
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_SITE_URL ?? "https://afcrtecnologia.com",
+  ),
+  title: "AFCR Tecnología | Domótica residencial con IA",
   description:
-    "Sistema de domótica residencial con mini PC, inteligencia artificial, seguridad, dispositivos IoT y soporte continuo.",
+    "Sistema de domótica residencial con mini PC, inteligencia artificial, tecnología, dispositivos IoT y soporte continuo.",
 };
 
 export default function RootLayout({

@@ -42,7 +42,7 @@ const char* WIFI_PASSWORD = "TU_PASSWORD";
 const char* PAIRING_TOKEN = "PEGA_AQUI_TU_TOKEN";
 
 // La web reemplaza esta URL por la API activa al copiar el sketch.
-const char* API_URL = "https://api.afcrseguridad.com";
+const char* API_URL = "https://api.afcrtecnologia.com";
 
 // Valores de ejemplo usados solo para validar que el usuario edito la seccion anterior.
 const char* DEFAULT_WIFI_SSID = "TU_WIFI";
@@ -69,7 +69,7 @@ unsigned long lastPollAt = 0;
 unsigned long lastLinkAttemptAt = 0;
 unsigned long lastSerialHeartbeatAt = 0;
 
-// ISRG Root X1: valida la cadena Let's Encrypt de api.afcrseguridad.com.
+// ISRG Root X1: valida la cadena Let's Encrypt de api.afcrtecnologia.com.
 const char ISRG_ROOT_X1[] PROGMEM = R"EOF(
 -----BEGIN CERTIFICATE-----
 MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw

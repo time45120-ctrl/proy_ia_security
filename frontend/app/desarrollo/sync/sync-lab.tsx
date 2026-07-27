@@ -774,7 +774,7 @@ function formatDateTime(value: string) {
 
 function withActiveApiUrl(sketch: string, apiUrl: string) {
   return sketch.replace(
-    'const char* API_URL = "https://api.afcrseguridad.com";',
+    'const char* API_URL = "https://api.afcrtecnologia.com";',
     `const char* API_URL = "${apiUrl}";`,
   );
 }

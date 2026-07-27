@@ -589,9 +589,9 @@ export default function WelcomePage() {
             type="button"
             onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
             className="shrink-0 font-display text-base font-semibold tracking-[0.02em] text-white transition hover:text-[#d7fff0] sm:text-xl"
-            aria-label="AFCRseguridad inicio"
+            aria-label="AFCR Tecnología inicio"
           >
-            AFCR<span className="text-[#6ee7b7]">seguridad</span>
+            AFCR<span className="text-[#6ee7b7]"> Tecnología</span>
           </button>
 
           <div className="hidden items-center gap-7 text-sm text-slate-300 lg:flex">
@@ -886,7 +886,7 @@ export default function WelcomePage() {
       <footer className="px-4 py-8 text-sm text-slate-500 sm:px-6 lg:px-10">
         <div className="mx-auto flex max-w-7xl flex-col gap-3 border-t border-white/10 pt-8 sm:flex-row sm:items-center sm:justify-between">
           <p className="font-display text-slate-300">
-            AFCR<span className="text-[#6ee7b7]">seguridad</span>
+            AFCR<span className="text-[#6ee7b7]"> Tecnología</span>
           </p>
           <p>Domótica residencial con control, contexto y privacidad.</p>
         </div>
@@ -907,7 +907,7 @@ export default function WelcomePage() {
               <div className="absolute -bottom-20 -right-20 h-72 w-72 rounded-full bg-[#6ee7b7]/15 blur-3xl" />
               <div className="relative">
                 <p className="font-display text-xl font-semibold text-white">
-                  AFCR<span className="text-[#6ee7b7]">seguridad</span>
+                  AFCR<span className="text-[#6ee7b7]"> Tecnología</span>
                 </p>
                 <div className="mt-14 inline-flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 bg-white/10 text-[#a9f6d7]">
                   <LandingIcon name={getAuthContextIcon(authMode)} compact />
@@ -1377,9 +1377,9 @@ function getAuthEyebrow(mode: AuthMode) {
 
 function getAuthTitle(mode: AuthMode) {
   const titles: Record<AuthMode, string> = {
-    register: "Habilita el Laboratorio AFCR",
+    register: "Habilita el Laboratorio AFCR Tecnología",
     signupOtp: "Verifica tu correo",
-    login: "Inicia sesión en AFCR",
+    login: "Inicia sesión en AFCR Tecnología",
     forgotPassword: "Recupera tu contraseña",
     recoveryOtp: "Valida el código de recuperación",
     newPassword: "Crea una contraseña nueva",

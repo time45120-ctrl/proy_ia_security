@@ -17,7 +17,7 @@ export default function DesarrolloError({
     <main className="grid min-h-screen place-items-center bg-[#050b14] px-5 py-10 text-slate-100">
       <section className="w-full max-w-lg rounded-lg border border-cyan-300/20 bg-slate-950/80 p-6 text-center shadow-2xl shadow-cyan-950/20">
         <p className="text-xs font-semibold uppercase tracking-[0.22em] text-cyan-200">
-          AFCR Seguridad
+          AFCR Tecnología
         </p>
         <h1 className="mt-3 text-2xl font-semibold text-white">
           No se pudo cargar el laboratorio.

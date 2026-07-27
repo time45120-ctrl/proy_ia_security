@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 
-const DEFAULT_PRODUCTION_ORIGIN = "https://afcrseguridad.com";
+const DEFAULT_PRODUCTION_ORIGIN = "https://afcrtecnologia.com";
 
 export function createPublicRedirectUrl(request: NextRequest, pathname: string) {
   if (request.nextUrl.hostname !== "0.0.0.0") {

@@ -67,7 +67,7 @@ function DevelopmentShell({ children }: { children: ReactNode }) {
         <div className="flex items-center justify-between gap-4 lg:block">
           <div>
             <p className="text-xs uppercase tracking-[0.2em] text-[#9edfff]">
-              AFCR Seguridad
+              AFCR Tecnología
             </p>
             <h1 className="mt-2 font-display text-xl font-semibold text-white">
               Desarrollo
