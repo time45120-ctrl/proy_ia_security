@@ -629,7 +629,7 @@ export default function WelcomePage() {
                 <button
                   type="button"
                   onClick={handleLogin}
-                  className="min-h-10 rounded-xl px-1.5 py-2 text-[10px] font-semibold text-slate-200 transition hover:bg-white/[0.07] sm:px-3 sm:text-xs"
+                  className="inline-flex min-h-10 items-center rounded-xl bg-[#6ee7b7] px-1.5 py-2 text-[10px] font-semibold text-[#052018] transition hover:bg-[#90f3ce] sm:px-3 sm:text-xs"
                 >
                   Iniciar sesión
                 </button>
