@@ -94,6 +94,10 @@ run_as_app_user "${VENV_DIR}/bin/python" -m pip install --requirement requiremen
 run_as_app_user "${VENV_DIR}/bin/python" -c "import ast, pathlib; ast.parse(pathlib.Path('app_api.py').read_text()); print('app_api.py syntax OK')"
 run_as_app_user "${VENV_DIR}/bin/python" -B -m unittest -v test_http_polling.py
 
+if [[ "${AFCR_INSPECT_LEGACY_API_DOMAIN:-false}" == "true" ]]; then
+  bash "${APP_DIR}/scripts/inspect-legacy-api-domain.sh"
+fi
+
 if [[ "${AFCR_CONFIGURE_API_DOMAIN:-false}" == "true" ]]; then
   AFCR_API_DOMAIN="${AFCR_API_DOMAIN:-api.afcrtecnologia.com}" \
   AFCR_API_EXPECTED_IPV4="${AFCR_API_EXPECTED_IPV4:-3.132.192.3}" \
