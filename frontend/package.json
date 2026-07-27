@@ -6,9 +6,7 @@
     "predev": "node scripts/clean-dev-cache.js",
     "dev": "next dev",
     "prebuild": "node scripts/print-deploy-info.js",
-    "build": "next build",
-    "postbuild": "node scripts/prepare-standalone.js",
-    "start": "node dist/hostinger-entry.js"
+    "build": "next build"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.3",
