@@ -18,10 +18,10 @@ valida del proyecto es esta raiz.
 
 - Frontend Next.js en `frontend/`
 - Backend FastAPI en `backend/app_api.py`
-- Frontend desplegado en Hostinger: `https://afcrseguridad.com`
+- Frontend desplegado en Hostinger: `https://afcrtecnologia.com`
 - Backend desplegado en AWS: `3.132.192.3`
-- API publica: `https://api.afcrseguridad.com`
-- DNS Hostinger: `api.afcrseguridad.com` apunta a `3.132.192.3`
+- API publica: `https://api.afcrtecnologia.com`
+- DNS Hostinger: `api.afcrtecnologia.com` apunta a `3.132.192.3`
 - Endpoint de salud: `GET /ping`
 - Endpoint principal: `POST /voice-intent`
 - Endpoint ESP32: `GET /device/commands?device_id=...`
@@ -106,7 +106,7 @@ NEXT_PUBLIC_API_BASE_URL=http://192.168.0.220:8000
 Produccion en Hostinger:
 
 ```bash
-NEXT_PUBLIC_API_BASE_URL=https://api.afcrseguridad.com
+NEXT_PUBLIC_API_BASE_URL=https://api.afcrtecnologia.com
 NEXT_PUBLIC_SUPABASE_URL=https://omkbowrspgbuwpifksfk.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<clave_publishable>
 ```
@@ -120,7 +120,7 @@ configurar como URLs de redireccion permitidas:
 ```text
 http://localhost:3000/auth/confirm
 http://localhost:3001/auth/confirm
-https://afcrseguridad.com/auth/confirm
+https://afcrtecnologia.com/auth/confirm
 ```
 
 La ruta Next.js `GET /auth/confirm` intercambia el token del email por la
@@ -189,11 +189,11 @@ El CORS del backend se configura con `CORS_ALLOW_ORIGINS`, separado por comas.
 Por defecto permite produccion y desarrollo local:
 
 ```bash
-CORS_ALLOW_ORIGINS=https://afcrseguridad.com,https://www.afcrseguridad.com,http://localhost:3000,http://127.0.0.1:3000
+CORS_ALLOW_ORIGINS=https://afcrtecnologia.com,https://www.afcrtecnologia.com,http://localhost:3000,http://127.0.0.1:3000
 ```
 
 El frontend publico usa HTTPS, asi que la API publica tambien debe responder por
-HTTPS en `https://api.afcrseguridad.com` para evitar bloqueo por contenido mixto.
+HTTPS en `https://api.afcrtecnologia.com` para evitar bloqueo por contenido mixto.
 
 La parte quirurgica esta en esta linea:
 
@@ -289,7 +289,7 @@ polling autenticado:
    password WiFi y token temporal en las tres constantes editables.
 3. Usuario carga el sketch por USB a un `ESP32 Dev Module`.
 4. ESP32 se conecta directamente al WiFi y llama `POST /devices/claim` contra
-   `https://api.afcrseguridad.com`.
+   `https://api.afcrtecnologia.com`.
 5. Backend guarda el dispositivo en Supabase y entrega una `device_api_key`
    una sola vez; en base solo persiste su hash.
 6. Al confirmar un comando, el backend lo guarda en `device_commands` bajo la
@@ -309,7 +309,7 @@ PUBLIC_API_URL=http://<IP-LAN-Windows>:8000 uvicorn app_api:app --host 0.0.0.0 -
 
 La web inserta esa `API URL` en el sketch copiado. Las conexiones HTTP se usan
 solo en la red local de prueba; al publicar se vuelve a
-`https://api.afcrseguridad.com`, validado por la CA incluida en el firmware.
+`https://api.afcrtecnologia.com`, validado por la CA incluida en el firmware.
 Antes de cargar el ESP32, abrir `http://<IP-LAN-Windows>:8000/ping` desde otro
 equipo conectado al mismo WiFi; si no responde, corregir `portproxy` o firewall.
 
@@ -332,18 +332,18 @@ Firmware base:
 firmware/esp32_pairing_portal/esp32_pairing_portal.ino
 ```
 
-El firmware ESP32 incluido valida `https://api.afcrseguridad.com` con
+El firmware ESP32 incluido valida `https://api.afcrtecnologia.com` con
 `ISRG Root X1`, la raiz de la cadena Let's Encrypt actualmente publicada. MQTT
 queda como transporte legacy configurable mediante:
 
 ```bash
-MQTT_SERVER=mqtt.afcrseguridad.com
+MQTT_SERVER=mqtt.afcrtecnologia.com
 MQTT_PORT=8883
 MQTT_TLS=true
 MQTT_USERNAME=...
 MQTT_PASSWORD=...
 MQTT_DEVICE_TOPIC_PREFIX=afcr/devices
-PUBLIC_API_URL=https://api.afcrseguridad.com
+PUBLIC_API_URL=https://api.afcrtecnologia.com
 ```
 
 ## Comandos de voz esperados
@@ -406,12 +406,12 @@ Revisar:
 
 En produccion:
 
-1. Que Hostinger tenga `NEXT_PUBLIC_API_BASE_URL=https://api.afcrseguridad.com`.
-2. Que `api.afcrseguridad.com` resuelva hacia `3.132.192.3`.
+1. Que Hostinger tenga `NEXT_PUBLIC_API_BASE_URL=https://api.afcrtecnologia.com`.
+2. Que `api.afcrtecnologia.com` resuelva hacia `3.132.192.3`.
 3. Que AWS permita trafico entrante hacia HTTPS o el puerto publicado.
-4. Que el backend o reverse proxy responda en `https://api.afcrseguridad.com/ping`.
-5. Que `CORS_ALLOW_ORIGINS` incluya `https://afcrseguridad.com` y
-   `https://www.afcrseguridad.com`.
+4. Que el backend o reverse proxy responda en `https://api.afcrtecnologia.com/ping`.
+5. Que `CORS_ALLOW_ORIGINS` incluya `https://afcrtecnologia.com` y
+   `https://www.afcrtecnologia.com`.
 
 ### El ESP32 no recibe comandos HTTPS
 
@@ -421,7 +421,7 @@ Revisar:
 2. Que el ESP32 haya guardado `device_id` y `device_api_key` durante el claim.
 3. En laboratorio, que la API mostrada en el sketch sea la IP LAN de Windows
    con `portproxy` activo hacia WSL, nunca `localhost`.
-4. En produccion, que tenga salida HTTPS hacia `api.afcrseguridad.com` y que
+4. En produccion, que tenga salida HTTPS hacia `api.afcrtecnologia.com` y que
    su cadena TLS siga siendo valida para `ISRG Root X1`.
 5. Que el equipo se haya asignado al mismo ambiente dicho por voz.
 6. Que `WIFI_SSID` y `WIFI_PASSWORD` correspondan a una red de 2.4 GHz

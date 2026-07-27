@@ -1,6 +1,6 @@
 # AGENTS.md - Frontend
 
-Ultima revision: 2026-07-20.
+Ultima revision: 2026-07-27.
 
 ## Contexto
 
@@ -18,7 +18,7 @@ https://github.com/abraham-development/proy_ia_frontend.git
 
 Rama activa: `main`.
 
-Ultimo commit operativo conocido: `f.46`.
+Ultimo commit operativo conocido: `f.49`.
 
 ## Estado De Trabajo Actual
 
@@ -28,7 +28,10 @@ Ultimo commit operativo conocido: `f.46`.
 - `frontend/.env.local` apunta a `http://localhost:8000` para la API local; no
   modificar ese archivo sin solicitud explicita.
 - La API publica ya refleja el flujo ESP32 directo y el backend operativo
-  conocido es `b.24`.
+  conocido es `b.30`.
+- El 2026-07-27 se completo el corte a AFCR Tecnologia. Supabase Auth envio y
+  verifico OTP por SMTP de `contacto@afcrtecnologia.com` y registro/login
+  finalizaron con estado 200.
 - La experiencia publica es de domotica residencial: hogares, casa inteligente,
   sensores y alarmas. No existe campo empresa en registro, perfil ni metadata.
 
@@ -37,7 +40,7 @@ Ultimo commit operativo conocido: `f.46`.
 Frontend publico:
 
 ```text
-https://afcrseguridad.com
+https://afcrtecnologia.com
 ```
 
 Hostinger esta configurado como:
@@ -57,8 +60,8 @@ La configuracion final que funciono localmente y se dejo para Hostinger:
   - `build`: `next build`
   - `start`: `node server.js`
 - Variables publicas de produccion configuradas en Hostinger:
-  - `NEXT_PUBLIC_SITE_URL=https://afcrseguridad.com`
-  - `NEXT_PUBLIC_API_BASE_URL=https://api.afcrseguridad.com`
+  - `NEXT_PUBLIC_SITE_URL=https://afcrtecnologia.com`
+  - `NEXT_PUBLIC_API_BASE_URL=https://api.afcrtecnologia.com`
   - `NEXT_PUBLIC_SUPABASE_URL=https://omkbowrspgbuwpifksfk.supabase.co`
   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<clave_publishable>`
 - `next.config.js`
@@ -71,7 +74,7 @@ La configuracion final que funciono localmente y se dejo para Hostinger:
   - Usa `process.env.PORT || 3000`.
   - Log esperado al arrancar: `AFCR_FRONTEND_READY=http://0.0.0.0:<port>`.
 - `scripts/print-deploy-info.js`
-  - Imprime `AFCR_FRONTEND_BUILD=f.46`.
+  - Imprime `AFCR_FRONTEND_BUILD=f.49`.
   - Imprime `AFCR_FRONTEND_MODE=next-server`.
 
 Lecciones aprendidas:
@@ -93,13 +96,13 @@ Lecciones aprendidas:
 La API publica es:
 
 ```text
-https://api.afcrseguridad.com
+https://api.afcrtecnologia.com
 ```
 
 El frontend compila con:
 
 ```bash
-NEXT_PUBLIC_API_BASE_URL=https://api.afcrseguridad.com
+NEXT_PUBLIC_API_BASE_URL=https://api.afcrtecnologia.com
 NEXT_PUBLIC_SUPABASE_URL=https://omkbowrspgbuwpifksfk.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<clave_publishable>
 ```
@@ -107,13 +110,13 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<clave_publishable>
 En `lib/backend-api.ts` el default tambien es:
 
 ```text
-https://api.afcrseguridad.com
+https://api.afcrtecnologia.com
 ```
 
 El cliente normaliza URLs para evitar:
 
 - Produccion apuntando a IP LAN/privada.
-- `http://api.afcrseguridad.com` desde HTTPS.
+- `http://api.afcrtecnologia.com` desde HTTPS.
 
 ## Archivos importantes
 
@@ -193,7 +196,7 @@ Reglas:
 - Los audios nuevos quedan en el bucket privado `voice-audio` y el dashboard
   solo presenta metadatos del historial, no reproduccion publica.
 - Muestra preview/plan.
-- Si el usuario dice `prende el LED`, el backend `b.24` puede devolver un plan
+- Si el usuario dice `prende el LED`, el backend `b.30` puede devolver un plan
   ejecutable usando el ESP32 enlazado mas reciente cuando no hay ambiente explicito.
 - Ejecuta hardware solo tras `POST /voice-intent/confirm`.
 - Los ESP32 enlazados reciben comandos por polling HTTP(S) y el dashboard sigue
@@ -206,7 +209,7 @@ Reglas:
 - En laboratorio esa URL debe ser LAN y accesible desde el ESP32, por ejemplo
   `http://192.168.0.5:8000`; se muestra una prueba `<api_url>/ping` para hacer
   desde un celular en la misma WiFi. En produccion debe ser
-  `https://api.afcrseguridad.com`.
+  `https://api.afcrtecnologia.com`.
 - Luces legacy pueden ejecutar MQTT real.
 - Camaras, puertas, sensores y alarmas son visuales/plan hasta conectar
   hardware real.
@@ -264,13 +267,13 @@ versionado.
 API:
 
 ```bash
-curl https://api.afcrseguridad.com/ping
+curl https://api.afcrtecnologia.com/ping
 ```
 
 Frontend publico:
 
 ```bash
-curl -I https://afcrseguridad.com
+curl -I https://afcrtecnologia.com
 ```
 
 Si Hostinger falla:

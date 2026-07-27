@@ -1,6 +1,6 @@
 # AGENTS.md - Memoria compacta de Codex
 
-Ultima revision: 2026-07-20.
+Ultima revision: 2026-07-27.
 
 ## Contexto rapido
 
@@ -22,9 +22,17 @@ No recrear la copia legacy anidada `proy_ia_security/`.
 - Backend local de prueba debe correr en `http://localhost:8000`; para el
   ESP32 fisico debe anunciar una URL LAN accesible, no `localhost`.
 - El flujo ESP32 por HTTP(S) polling ya esta publicado en backend AWS. El
-  backend operativo conocido es `b.24`.
-- El frontend operativo conocido es `f.46`; Hostinger debe mostrar
-  `AFCR_FRONTEND_BUILD=f.46` y `AFCR_FRONTEND_MODE=next-server`.
+  backend operativo conocido es `b.30`.
+- El frontend operativo conocido es `f.49`; Hostinger debe mostrar
+  `AFCR_FRONTEND_BUILD=f.49` y `AFCR_FRONTEND_MODE=next-server`.
+- El 2026-07-27 se migro produccion a `afcrtecnologia.com` y
+  `api.afcrtecnologia.com`. El frontend anterior ya no tiene A/AAAA, el virtual
+  host de la API anterior se retiro de Nginx con respaldo recuperable y CORS
+  rechaza el origen anterior. Solo queda verificar la eliminacion DNS del A
+  `api.afcrseguridad.com` en Hostinger.
+- Supabase Auth usa Site URL y redirects del dominio nuevo. El SMTP productivo
+  usa `contacto@afcrtecnologia.com`; registro, envio de OTP, verificacion e
+  inicio de sesion terminaron con estado 200.
 - OpenAI esta funcionando: se probo transcripcion con audio sintetico
   "prende el LED". El modelo principal es `gpt-4o-mini-transcribe` y el
   fallback remoto es `whisper-1`.
@@ -48,11 +56,11 @@ Hay repos Git separados. Usar el repo correcto para commits y push:
 - Frontend: `/home/abraham/proy_ia_security/frontend`
   - Remoto: `abraham-development/proy_ia_frontend`
   - Rama: `main`
-  - Ultimo cambio operativo conocido: `f.46`
+  - Ultimo cambio operativo conocido: `f.49`
 - Backend: `/home/abraham/proy_ia_security/backend`
   - Remoto: `abraham-development/proy_ia_backend`
   - Rama: `main`
-  - Ultimo cambio operativo conocido: `b.24`
+  - Ultimo cambio operativo conocido: `b.30`
   - Automatizacion AWS GitHub Actions + SSM activa para despliegue autorizado
     desde `main`.
 
@@ -139,16 +147,16 @@ backend/
 
 ## Despliegue
 
-- Frontend publico Hostinger: `https://afcrseguridad.com`
-- Backend publico AWS: `https://api.afcrseguridad.com`
+- Frontend publico Hostinger: `https://afcrtecnologia.com`
+- Backend publico AWS: `https://api.afcrtecnologia.com`
 - IP backend AWS: `3.132.192.3`
-- DNS: `api.afcrseguridad.com` apunta a `3.132.192.3`.
+- DNS: `api.afcrtecnologia.com` apunta a `3.132.192.3`.
 - Base de datos de aplicacion: Supabase `omkbowrspgbuwpifksfk`; requiere
   variables de `backend/.env.example` en cada entorno desplegado.
 - Produccion frontend debe usar:
 
 ```bash
-NEXT_PUBLIC_API_BASE_URL=https://api.afcrseguridad.com
+NEXT_PUBLIC_API_BASE_URL=https://api.afcrtecnologia.com
 ```
 
 El frontend publico corre por HTTPS; la API publica tambien debe estar por HTTPS
@@ -161,7 +169,7 @@ para evitar contenido mixto.
 - En los logs correctos debe verse:
 
 ```text
-AFCR_FRONTEND_BUILD=f.46
+AFCR_FRONTEND_BUILD=f.49
 AFCR_FRONTEND_MODE=next-server
 ```
 
@@ -223,7 +231,7 @@ La vista `sync`:
 - En laboratorio, el backend debe responder una `api_url` LAN alcanzable por
   el ESP32 (por ejemplo `http://192.168.0.5:8000`), no `localhost`; el sketch
   copiado la inserta automaticamente y admite HTTP solo para la red local. En
-  produccion usa `https://api.afcrseguridad.com` con CA.
+  produccion usa `https://api.afcrtecnologia.com` con CA.
 - Tras crear el token, la pantalla desplaza al usuario a la guia Arduino IDE,
   ofrece copiar token/sketch e indica probar `<api_url>/ping` desde un celular
   en la misma WiFi antes de cargar un ESP32 real.
@@ -275,11 +283,11 @@ Funciones activas:
 Valor default compilado si no existe env:
 
 ```text
-DEFAULT_API_BASE_URL = https://api.afcrseguridad.com
+DEFAULT_API_BASE_URL = https://api.afcrtecnologia.com
 ```
 
 El cliente normaliza URLs para evitar que produccion use hosts LAN/privados o
-`http://api.afcrseguridad.com`.
+`http://api.afcrtecnologia.com`.
 
 ## Backend actual
 
@@ -322,7 +330,7 @@ MQTT_SERVER = os.getenv("MQTT_SERVER", "127.0.0.1")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_TOPIC_LUCES = os.getenv("MQTT_TOPIC_LUCES", "casa/esp32/luces")
 MQTT_DEVICE_TOPIC_PREFIX = os.getenv("MQTT_DEVICE_TOPIC_PREFIX", "afcr/devices")
-PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "https://api.afcrseguridad.com")
+PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "https://api.afcrtecnologia.com")
 AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").strip().lower()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 OPENAI_TRANSCRIBE_MODEL = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
@@ -496,7 +504,7 @@ Flujo de pairing:
 4. Usuario sube el sketch al ESP32 por USB.
 5. ESP32 se conecta directamente al WiFi y llama `POST /devices/claim` contra
    la `API_URL` insertada por la web: LAN HTTP en laboratorio o
-   `https://api.afcrseguridad.com` en produccion.
+   `https://api.afcrtecnologia.com` en produccion.
 6. Backend marca dispositivo como `online`, guarda `claimed_at` y entrega
    `device_api_key` una sola vez.
 7. ESP32 consulta `GET /device/commands?device_id=...` con bearer token.
@@ -557,8 +565,8 @@ uvicorn app_api:app --host 0.0.0.0 --port 8000
 Health checks:
 
 ```bash
-curl https://api.afcrseguridad.com/ping
-curl -I https://afcrseguridad.com
+curl https://api.afcrtecnologia.com/ping
+curl -I https://afcrtecnologia.com
 curl http://localhost:8000/ping
 ```
 
@@ -569,7 +577,7 @@ curl http://localhost:8000/ping
   tres `AGENTS.md` cuando el usuario lo pida.
 - No tocar `.env.local`, claves, tokens ni secretos.
 - No tocar `backend/.env` salvo peticion explicita del usuario.
-- Mantener `api.afcrseguridad.com` como API publica salvo cambio explicito.
+- Mantener `api.afcrtecnologia.com` como API publica salvo cambio explicito.
 - Mientras el usuario este validando localmente, no desplegar ni hacer
   `git push`; los cambios de produccion requieren confirmacion explicita.
 - Verificar el destino MCP antes de alterar Supabase; el proyecto autorizado

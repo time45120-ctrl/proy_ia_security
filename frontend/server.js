@@ -8,6 +8,21 @@ const handle = app.getRequestHandler();
 
 app.prepare().then(() => {
   createServer((request, response) => {
+    const forwardedHost = String(request.headers["x-forwarded-host"] || "")
+      .split(",")[0]
+      .trim();
+    const requestHost = String(forwardedHost || request.headers.host || "")
+      .split(":")[0]
+      .toLowerCase();
+
+    if (requestHost === "www.afcrtecnologia.com") {
+      response.writeHead(301, {
+        Location: `https://afcrtecnologia.com${request.url || "/"}`,
+      });
+      response.end();
+      return;
+    }
+
     handle(request, response);
   }).listen(port, hostname, () => {
     console.log(`AFCR_FRONTEND_READY=http://${hostname}:${port}`);

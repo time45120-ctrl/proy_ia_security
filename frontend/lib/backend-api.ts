@@ -232,10 +232,10 @@ export type PairingTokenResponse = {
   commands_url?: string | null;
 };
 
-const DEFAULT_API_BASE_URL = "https://api.afcrseguridad.com";
+const DEFAULT_API_BASE_URL = "https://api.afcrtecnologia.com";
 const PRODUCTION_FRONTEND_HOSTS = new Set([
-  "afcrseguridad.com",
-  "www.afcrseguridad.com",
+  "afcrtecnologia.com",
+  "www.afcrtecnologia.com",
 ]);
 
 function getBrowserLocation() {
@@ -271,7 +271,7 @@ function normalizeApiBaseUrl(value: string) {
       return DEFAULT_API_BASE_URL;
     }
 
-    if (url.protocol === "http:" && url.hostname === "api.afcrseguridad.com") {
+    if (url.protocol === "http:" && url.hostname === "api.afcrtecnologia.com") {
       url.protocol = "https:";
     }
 

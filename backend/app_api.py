@@ -92,7 +92,7 @@ DB_PATH = os.getenv(
     str(Path(__file__).resolve().parent / "devices.db")
 )
 LOCAL_HOUSEHOLD_ID = "local-household"
-PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "https://api.afcrseguridad.com").rstrip("/")
+PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "https://api.afcrtecnologia.com").rstrip("/")
 PAIRING_TOKEN_MINUTES = int(os.getenv("PAIRING_TOKEN_MINUTES", "60"))
 DEVICE_ONLINE_WINDOW_SECONDS = int(os.getenv("DEVICE_ONLINE_WINDOW_SECONDS", "120"))
 DEVICE_COMMAND_TTL_SECONDS = int(os.getenv("DEVICE_COMMAND_TTL_SECONDS", "300"))
@@ -118,10 +118,10 @@ WHISPER_MODEL_NAME = "tiny"
 
 # --- CORS ---
 # Separar con comas si se necesitan otros origenes:
-# CORS_ALLOW_ORIGINS="https://afcrseguridad.com,http://localhost:3000"
+# CORS_ALLOW_ORIGINS="https://afcrtecnologia.com,http://localhost:3000"
 DEFAULT_CORS_ALLOW_ORIGINS = (
-    "https://afcrseguridad.com",
-    "https://www.afcrseguridad.com",
+    "https://afcrtecnologia.com",
+    "https://www.afcrtecnologia.com",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:3001",

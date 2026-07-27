@@ -33,6 +33,50 @@ path.write_text('\n'.join(lines) + '\n')
 PY_ENV
 }
 
+ensure_production_domain_config() {
+  local cors_origins=(
+    "https://afcrtecnologia.com"
+    "https://www.afcrtecnologia.com"
+  )
+  if [[ "${AFCR_LEGACY_ORIGINS_ENABLED:-false}" == "true" ]]; then
+    cors_origins+=(
+      "https://afcrseguridad.com"
+      "https://www.afcrseguridad.com"
+    )
+  fi
+  cors_origins+=(
+    "http://localhost:3000"
+    "http://127.0.0.1:3000"
+    "http://localhost:3001"
+    "http://127.0.0.1:3001"
+    "http://localhost:3002"
+    "http://127.0.0.1:3002"
+  )
+  local cors_csv
+  cors_csv="$(IFS=,; printf '%s' "${cors_origins[*]}")"
+
+  run_as_app_user python3 - "${cors_csv}" <<'PY_ENV'
+import sys
+from pathlib import Path
+
+path = Path('.env')
+updates = {
+    'PUBLIC_API_URL': 'https://api.afcrtecnologia.com',
+    'CORS_ALLOW_ORIGINS': sys.argv[1],
+}
+lines = path.read_text().splitlines()
+for key, value in updates.items():
+    replacement = f'{key}={value}'
+    for index, line in enumerate(lines):
+        if line.startswith(f'{key}='):
+            lines[index] = replacement
+            break
+    else:
+        lines.append(replacement)
+path.write_text('\n'.join(lines) + '\n')
+PY_ENV
+}
+
 cd "${APP_DIR}"
 
 test -f app_api.py
@@ -44,10 +88,25 @@ if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
 fi
 
 ensure_pairing_token_minutes
+ensure_production_domain_config
 
 run_as_app_user "${VENV_DIR}/bin/python" -m pip install --requirement requirements.txt
 run_as_app_user "${VENV_DIR}/bin/python" -c "import ast, pathlib; ast.parse(pathlib.Path('app_api.py').read_text()); print('app_api.py syntax OK')"
 run_as_app_user "${VENV_DIR}/bin/python" -B -m unittest -v test_http_polling.py
+
+if [[ "${AFCR_INSPECT_LEGACY_API_DOMAIN:-false}" == "true" ]]; then
+  bash "${APP_DIR}/scripts/inspect-legacy-api-domain.sh"
+fi
+
+if [[ "${AFCR_CONFIGURE_API_DOMAIN:-false}" == "true" ]]; then
+  AFCR_API_DOMAIN="${AFCR_API_DOMAIN:-api.afcrtecnologia.com}" \
+  AFCR_API_EXPECTED_IPV4="${AFCR_API_EXPECTED_IPV4:-3.132.192.3}" \
+    bash "${APP_DIR}/scripts/configure-api-domain.sh"
+fi
+
+if [[ "${AFCR_RETIRE_LEGACY_API_DOMAIN:-false}" == "true" ]]; then
+  bash "${APP_DIR}/scripts/retire-legacy-api-domain.sh"
+fi
 
 if [[ "$(id -u)" -eq 0 ]]; then
   systemctl restart "${SERVICE_NAME}"

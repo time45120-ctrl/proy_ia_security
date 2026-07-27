@@ -1,6 +1,6 @@
 # AGENTS.md - Backend
 
-Ultima revision: 2026-07-20.
+Ultima revision: 2026-07-27.
 
 ## Contexto
 
@@ -18,12 +18,12 @@ https://github.com/abraham-development/proy_ia_backend.git
 
 Rama activa: `main`.
 
-Ultimo commit operativo conocido: `b.24`.
+Ultimo commit operativo conocido: `b.30`.
 
 Backend publico:
 
 ```text
-https://api.afcrseguridad.com
+https://api.afcrtecnologia.com
 ```
 
 IP AWS:
@@ -36,9 +36,16 @@ IP AWS:
 
 - El usuario valida en produccion y local segun el caso. No hacer commit, push
   ni actualizar AWS sin autorizacion explicita.
-- Produccion objetivo: frontend Hostinger `https://afcrseguridad.com`,
-  backend AWS `https://api.afcrseguridad.com` (`3.132.192.3`) y Supabase
+- Produccion activa: frontend Hostinger `https://afcrtecnologia.com`,
+  backend AWS `https://api.afcrtecnologia.com` (`3.132.192.3`) y Supabase
   `omkbowrspgbuwpifksfk`.
+- El 2026-07-27 se emitio y valido TLS para la API nueva, se cambio
+  `PUBLIC_API_URL`, se dejo CORS solo para el frontend nuevo y se retiro el
+  virtual host `api.afcrseguridad.com`. El respaldo recuperable del retiro esta
+  en `/var/backups/afcr-domain-migration/legacy-retired-20260727T082540Z`.
+- GitHub Actions usa `PUBLIC_HEALTH_URL=https://api.afcrtecnologia.com/ping`.
+  Las banderas de configuracion, inspeccion y retiro quedaron en `false` luego
+  del corte.
 - El 2026-07-20 se completo en Supabase la arquitectura residencial:
   `households`, `household_members` y `household_id`; se eliminaron
   definitivamente tablas, columnas, funciones, politicas y metadata de
@@ -180,7 +187,7 @@ MQTT_SERVER = os.getenv("MQTT_SERVER", "127.0.0.1")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_TOPIC_LUCES = os.getenv("MQTT_TOPIC_LUCES", "casa/esp32/luces")
 MQTT_DEVICE_TOPIC_PREFIX = os.getenv("MQTT_DEVICE_TOPIC_PREFIX", "afcr/devices")
-PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "https://api.afcrseguridad.com")
+PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "https://api.afcrtecnologia.com")
 AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").strip().lower()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
 OPENAI_TRANSCRIBE_MODEL = os.getenv("OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe")
@@ -218,7 +225,7 @@ explicita del usuario.
   portal/AP temporal salvo nueva decision explicita.
 - Para laboratorio, `PUBLIC_API_URL` debe ser una URL LAN que el ESP32 pueda
   alcanzar y el sketch acepta HTTP solo para esa prueba local. Para produccion
-  usar `https://api.afcrseguridad.com` y TLS validado.
+  usar `https://api.afcrtecnologia.com` y TLS validado.
 
 ## MQTT Legacy
 
@@ -310,7 +317,7 @@ respondia. No considerar listo un ESP32 fisico hasta que
 Health check:
 
 ```bash
-curl https://api.afcrseguridad.com/ping
+curl https://api.afcrtecnologia.com/ping
 ```
 
 Pruebas:
@@ -320,7 +327,7 @@ cd /home/abraham/proy_ia_security/backend
 venv/bin/python test_http_polling.py
 ```
 
-La suite verificada para `b.24` contiene 25 pruebas.
+La suite verificada para `b.30` contiene 26 pruebas.
 
 Deploy por Git:
 
