@@ -2,7 +2,7 @@ process.env.HOSTNAME = "0.0.0.0";
 process.env.PORT = process.env.PORT || "3000";
 
 console.log(
-  `AFCR_FRONTEND_BOOT=node:${process.version} host:${process.env.HOSTNAME} port:${process.env.PORT}`,
+  `AFCR_FRONTEND_BOOT=node:${process.version} pid:${process.pid} ppid:${process.ppid} host:${process.env.HOSTNAME} port:${process.env.PORT}`,
 );
 
 process.on("uncaughtException", (error) => {

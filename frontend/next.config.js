@@ -12,6 +12,11 @@ const nextConfig = {
     // Serve local assets directly from /public so they remain CDN-cacheable.
     unoptimized: true,
   },
+  experimental: {
+    // Hostinger Web Apps has a strict process quota. Prevent Next.js from
+    // deriving the much larger CPU count exposed by the build container.
+    cpus: 1,
+  },
   async redirects() {
     return [
       {
