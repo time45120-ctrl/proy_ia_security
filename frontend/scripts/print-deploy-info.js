@@ -1,2 +1,2 @@
-console.log("AFCR_FRONTEND_BUILD=f.52");
-console.log("AFCR_FRONTEND_MODE=next-server");
+console.log("AFCR_FRONTEND_BUILD=f.53");
+console.log("AFCR_FRONTEND_MODE=standalone");
