@@ -8,7 +8,7 @@
     "prebuild": "node scripts/print-deploy-info.js",
     "build": "next build",
     "postbuild": "node scripts/prepare-standalone.js",
-    "start": "node server.js"
+    "start": "node dist/hostinger-entry.js"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.3",

@@ -3,12 +3,13 @@ const path = require("node:path");
 
 const projectRoot = path.resolve(__dirname, "..");
 const standaloneRoot = path.join(projectRoot, ".next", "standalone");
+const deploymentRoot = path.join(projectRoot, "dist");
 
 if (!fs.existsSync(path.join(standaloneRoot, "server.js"))) {
   throw new Error("No se genero .next/standalone/server.js.");
 }
 
-function copyDirectory(source, destination) {
+function copyPath(source, destination) {
   if (!fs.existsSync(source)) {
     return;
   }
@@ -17,13 +18,23 @@ function copyDirectory(source, destination) {
   fs.cpSync(source, destination, { recursive: true });
 }
 
-copyDirectory(
+fs.rmSync(deploymentRoot, { force: true, recursive: true });
+copyPath(standaloneRoot, deploymentRoot);
+copyPath(
   path.join(projectRoot, "public"),
-  path.join(standaloneRoot, "public"),
+  path.join(deploymentRoot, "public"),
 );
-copyDirectory(
+copyPath(
   path.join(projectRoot, ".next", "static"),
-  path.join(standaloneRoot, ".next", "static"),
+  path.join(deploymentRoot, ".next", "static"),
+);
+copyPath(
+  path.join(projectRoot, "scripts", "hostinger-entry.js"),
+  path.join(deploymentRoot, "hostinger-entry.js"),
 );
 
-console.log("AFCR_FRONTEND_STANDALONE_READY=.next/standalone/server.js");
+if (!fs.existsSync(path.join(deploymentRoot, "hostinger-entry.js"))) {
+  throw new Error("No se genero dist/hostinger-entry.js.");
+}
+
+console.log("AFCR_FRONTEND_STANDALONE_READY=dist/hostinger-entry.js");
