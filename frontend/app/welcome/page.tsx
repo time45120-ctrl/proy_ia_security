@@ -583,7 +583,7 @@ export default function WelcomePage() {
 
   return (
     <main className="min-h-screen overflow-hidden bg-[#071421] text-white">
-      <header className="fixed inset-x-0 top-0 z-40 bg-[#06111c] px-4 py-3 sm:px-6 lg:px-10">
+      <header className="fixed inset-x-0 top-0 z-40 bg-[#24182d] px-4 py-3 sm:px-6 lg:px-10">
         <nav className="mx-auto flex max-w-7xl items-center justify-between gap-3">
           <button
             type="button"
