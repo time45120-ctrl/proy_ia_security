@@ -38,7 +38,7 @@ git pull --ff-only origin main
 sudo systemctl restart proy-ia-backend.service
 sudo systemctl --no-pager --full status proy-ia-backend.service
 curl --fail --silent --show-error http://127.0.0.1:8000/ping
-curl --fail --silent --show-error https://api.afcrseguridad.com/ping
+curl --fail --silent --show-error https://api.afcrtecnologia.com/ping
 ```
 
 No ejecutar `git pull` si `git status` muestra cambios locales en EC2; primero
@@ -58,7 +58,7 @@ Crear un Environment de GitHub llamado `production` con estas variables:
 | `BACKEND_VENV_DIR` | Opcional, default `/home/ubuntu/proy_ia_backend/.venv` |
 | `BACKEND_SERVICE_NAME` | Opcional, default `proy-ia-backend.service` |
 | `BACKEND_LOCAL_HEALTH_URL` | Opcional, default `http://127.0.0.1:8000/ping` |
-| `PUBLIC_HEALTH_URL` | Opcional, default `https://api.afcrseguridad.com/ping` |
+| `PUBLIC_HEALTH_URL` | Opcional, default `https://api.afcrtecnologia.com/ping` |
 
 Como el workflow utiliza el Environment `production`, configurar sus reglas
 de deployment para permitir solamente la rama `main` y, si se desea revision
@@ -84,4 +84,4 @@ Al hacer `push` autorizado a `main`, el workflow:
 3. Ejecuta `scripts/deploy-ec2.sh`, que instala dependencias, valida el
    backend, corre las pruebas de polling, reinicia el servicio y consulta el
    health check local.
-4. Consulta `https://api.afcrseguridad.com/ping` desde GitHub Actions.
+4. Consulta `https://api.afcrtecnologia.com/ping` desde GitHub Actions.

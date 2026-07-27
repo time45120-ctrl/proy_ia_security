@@ -28,7 +28,10 @@ jobs:
       BACKEND_VENV_DIR: ${{ vars.BACKEND_VENV_DIR || '/home/ubuntu/proy_ia_backend/.venv' }}
       BACKEND_SERVICE_NAME: ${{ vars.BACKEND_SERVICE_NAME || 'proy-ia-backend.service' }}
       BACKEND_LOCAL_HEALTH_URL: ${{ vars.BACKEND_LOCAL_HEALTH_URL || 'http://127.0.0.1:8000/ping' }}
-      PUBLIC_HEALTH_URL: ${{ vars.PUBLIC_HEALTH_URL || 'https://api.afcrseguridad.com/ping' }}
+      PUBLIC_HEALTH_URL: ${{ vars.PUBLIC_HEALTH_URL || 'https://api.afcrtecnologia.com/ping' }}
+      AFCR_CONFIGURE_API_DOMAIN: ${{ vars.AFCR_CONFIGURE_API_DOMAIN || 'false' }}
+      AFCR_API_DOMAIN: ${{ vars.AFCR_API_DOMAIN || 'api.afcrtecnologia.com' }}
+      AFCR_API_EXPECTED_IPV4: ${{ vars.AFCR_API_EXPECTED_IPV4 || '3.132.192.3' }}
     steps:
       - name: Validate deployment configuration
         shell: bash
@@ -49,7 +52,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          REMOTE_SCRIPT="set -Eeuo pipefail; test -d '${BACKEND_APP_DIR}/.git'; test -f '${BACKEND_APP_DIR}/.env'; runuser -u '${BACKEND_APP_USER}' -- git -C '${BACKEND_APP_DIR}' fetch origin main; runuser -u '${BACKEND_APP_USER}' -- git -C '${BACKEND_APP_DIR}' checkout main; runuser -u '${BACKEND_APP_USER}' -- git -C '${BACKEND_APP_DIR}' merge --ff-only origin/main; BACKEND_APP_USER='${BACKEND_APP_USER}' BACKEND_APP_DIR='${BACKEND_APP_DIR}' BACKEND_VENV_DIR='${BACKEND_VENV_DIR}' BACKEND_SERVICE_NAME='${BACKEND_SERVICE_NAME}' BACKEND_LOCAL_HEALTH_URL='${BACKEND_LOCAL_HEALTH_URL}' bash '${BACKEND_APP_DIR}/scripts/deploy-ec2.sh'"
+          REMOTE_SCRIPT="set -Eeuo pipefail; test -d '${BACKEND_APP_DIR}/.git'; test -f '${BACKEND_APP_DIR}/.env'; runuser -u '${BACKEND_APP_USER}' -- git -C '${BACKEND_APP_DIR}' fetch origin main; runuser -u '${BACKEND_APP_USER}' -- git -C '${BACKEND_APP_DIR}' checkout main; runuser -u '${BACKEND_APP_USER}' -- git -C '${BACKEND_APP_DIR}' merge --ff-only origin/main; BACKEND_APP_USER='${BACKEND_APP_USER}' BACKEND_APP_DIR='${BACKEND_APP_DIR}' BACKEND_VENV_DIR='${BACKEND_VENV_DIR}' BACKEND_SERVICE_NAME='${BACKEND_SERVICE_NAME}' BACKEND_LOCAL_HEALTH_URL='${BACKEND_LOCAL_HEALTH_URL}' AFCR_CONFIGURE_API_DOMAIN='${AFCR_CONFIGURE_API_DOMAIN}' AFCR_API_DOMAIN='${AFCR_API_DOMAIN}' AFCR_API_EXPECTED_IPV4='${AFCR_API_EXPECTED_IPV4}' bash '${BACKEND_APP_DIR}/scripts/deploy-ec2.sh'"
           REMOTE_COMMAND="bash -lc $(printf '%q' "${REMOTE_SCRIPT}")"
           PARAMETERS="$(jq -cn --arg command "${REMOTE_COMMAND}" '{commands:[$command]}')"
           COMMAND_ID="$(aws ssm send-command \

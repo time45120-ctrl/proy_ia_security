@@ -57,6 +57,17 @@ class HttpPollingDeviceTests(unittest.TestCase):
             },
         )
 
+    def test_production_domain_defaults_and_pairing_url(self):
+        self.assertEqual(api.PUBLIC_API_URL, "https://api.afcrtecnologia.com")
+        self.assertIn("https://afcrtecnologia.com", api.CORS_ALLOW_ORIGINS)
+        self.assertIn("https://www.afcrtecnologia.com", api.CORS_ALLOW_ORIGINS)
+        self.assertNotIn("https://afcrseguridad.com", api.CORS_ALLOW_ORIGINS)
+
+        pairing = api.create_pairing_token(
+            api.PairingTokenRequest(name="ESP32 dominio nuevo", type="ESP32", model="ESP32")
+        )
+        self.assertEqual(pairing["api_url"], "https://api.afcrtecnologia.com")
+
     def test_pairing_token_expires_after_configured_minutes(self):
         before = api.utc_now()
         pairing = api.create_pairing_token(
