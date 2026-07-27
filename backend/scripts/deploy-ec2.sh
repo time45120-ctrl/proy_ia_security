@@ -104,6 +104,10 @@ if [[ "${AFCR_CONFIGURE_API_DOMAIN:-false}" == "true" ]]; then
     bash "${APP_DIR}/scripts/configure-api-domain.sh"
 fi
 
+if [[ "${AFCR_RETIRE_LEGACY_API_DOMAIN:-false}" == "true" ]]; then
+  bash "${APP_DIR}/scripts/retire-legacy-api-domain.sh"
+fi
+
 if [[ "$(id -u)" -eq 0 ]]; then
   systemctl restart "${SERVICE_NAME}"
   systemctl is-active --quiet "${SERVICE_NAME}"
