@@ -1,0 +1,95 @@
+flowchart TB
+    %% Arquitectura futura con automatizaciones programadas - AFCR Tecnología
+
+    subgraph WEB["1. Aplicacion web"]
+        USER["Usuario<br/>pide una automatizacion por voz"]
+        DASH["Dashboard de voz<br/>muestra la propuesta de la IA"]
+        RULE_UI["Panel de automatizaciones<br/>activar, pausar o cancelar reglas"]
+        API_CLIENT["Cliente API<br/>envia audio y confirmaciones"]
+
+        USER --> DASH
+        DASH --> API_CLIENT
+        RULE_UI --> API_CLIENT
+    end
+
+    subgraph BACKEND["2. Backend FastAPI"]
+        API["API principal<br/>recibe solicitudes"]
+        VOICE["Modulo de voz<br/>procesa el audio"]
+        RULE_BUILDER["Constructor de automatizacion<br/>convierte la intencion en una regla"]
+        APPROVAL["Confirmacion del usuario<br/>evita ejecutar reglas sin aprobar"]
+        RULE_ENGINE["Motor de automatizaciones<br/>administra reglas activas"]
+        SCHEDULER["Scheduler<br/>dispara tareas por tiempo o evento"]
+        COMMAND_QUEUE["Cola de comandos<br/>ordena acciones para dispositivos"]
+    end
+
+    subgraph AI["3. Inteligencia artificial"]
+        TRANSCRIBE["Transcripcion<br/>audio a texto"]
+        INTENT["Interpretacion<br/>accion, ambiente, frecuencia y duracion"]
+        VALIDATOR["Validacion semantica<br/>detecta reglas ambiguas o riesgosas"]
+    end
+
+    subgraph DATA["4. Datos y auditoria"]
+        USERS["Usuarios y permisos<br/>Supabase Auth"]
+        DEVICES["Dispositivos y ambientes<br/>Supabase Postgres"]
+        RULES_DB["Reglas de automatizacion<br/>frecuencia, estado y proxima ejecucion"]
+        AUDIT["Auditoria<br/>voz, aprobaciones y ejecuciones"]
+    end
+
+    subgraph IOT["5. Dispositivos IoT"]
+        ESP32["ESP32 en sala<br/>consulta comandos por polling"]
+        LIGHT["Luz de sala<br/>enciende o apaga"]
+        ACK["ACK del dispositivo<br/>ejecutado, fallido o expirado"]
+    end
+
+    subgraph EXAMPLE["Ejemplo de automatizacion"]
+        REQUEST["Quiero que prendas y apagues<br/>la sala cada 10 minutos"]
+        RULE["Regla creada<br/>ambiente sala<br/>accion alternar luz<br/>intervalo 10 minutos"]
+        CYCLE["Ejecucion periodica<br/>ON luego OFF en ciclos"]
+    end
+
+    USER --> REQUEST
+    REQUEST --> DASH
+
+    API_CLIENT --> API
+    API --> VOICE
+    VOICE --> TRANSCRIBE
+    TRANSCRIBE --> INTENT
+    INTENT --> VALIDATOR
+    VALIDATOR --> RULE_BUILDER
+
+    RULE_BUILDER --> RULE
+    RULE_BUILDER -->|propuesta de regla| DASH
+    DASH -->|usuario confirma| APPROVAL
+    APPROVAL --> RULE_ENGINE
+
+    RULE_ENGINE --> RULES_DB
+    RULE_ENGINE --> AUDIT
+    API --> USERS
+    API --> DEVICES
+
+    RULE_ENGINE --> SCHEDULER
+    SCHEDULER -->|cada 10 minutos| CYCLE
+    CYCLE --> COMMAND_QUEUE
+
+    COMMAND_QUEUE -->|orden pendiente| ESP32
+    ESP32 -->|ejecuta accion| LIGHT
+    ESP32 --> ACK
+    ACK --> COMMAND_QUEUE
+    COMMAND_QUEUE -->|estado actualizado| RULE_UI
+    ACK --> AUDIT
+
+    RULE_UI -->|pausar o cancelar| RULE_ENGINE
+
+    classDef web fill:#e7f8ef,stroke:#2f8f5b,color:#172033;
+    classDef backend fill:#fff3d8,stroke:#c78313,color:#172033;
+    classDef ai fill:#f2eaff,stroke:#8c5ec7,color:#172033;
+    classDef data fill:#e8f7fb,stroke:#348ca3,color:#172033;
+    classDef iot fill:#fff0ec,stroke:#c95b42,color:#172033;
+    classDef example fill:#f8fafc,stroke:#64748b,color:#172033;
+
+    class USER,DASH,RULE_UI,API_CLIENT web;
+    class API,VOICE,RULE_BUILDER,APPROVAL,RULE_ENGINE,SCHEDULER,COMMAND_QUEUE backend;
+    class TRANSCRIBE,INTENT,VALIDATOR ai;
+    class USERS,DEVICES,RULES_DB,AUDIT data;
+    class ESP32,LIGHT,ACK iot;
+    class REQUEST,RULE,CYCLE example;

@@ -1,394 +1,485 @@
 # proy_ia_security
 
-Sistema de asistente de voz IoT para laboratorio local. El flujo actual captura audio desde un navegador Android, lo envía a un backend FastAPI que corre en WSL, transcribe con Whisper, analiza intención y estado de ánimo con Qwen2 vía Ollama, y publica comandos MQTT que un ESP32 consume para controlar un LED simple y un LED RGB.
+Sistema de asistente de voz IoT para laboratorio. El flujo captura audio desde
+el dashboard, lo envia a FastAPI, interpreta la intencion con IA y, despues de
+confirmacion humana, entrega comandos a un ESP32 real mediante polling HTTPS y
+ACK. MQTT se conserva para dispositivos legacy.
 
-Este README documenta el estado real probado del proyecto para que sea fácil retomarlo sin reconstruir la topología desde cero.
-
-## Estado actual validado
-
-- Frontend móvil apuntando a `http://192.168.0.2:8000`
-- Backend FastAPI ejecutándose en WSL
-- Ollama ejecutándose en WSL con `qwen2:7b-instruct-q4_0`
-- Mosquitto ejecutándose en WSL
-- ESP32 conectado al broker MQTT a través de Windows `portproxy`
-- Topics confirmados:
-  - `casa/esp32/led`
-  - `casa/esp32/rgb`
-
-## Arquitectura real del laboratorio
+La fuente activa del proyecto es la carpeta raiz:
 
 ```text
-Android Browser
-   |
-   | HTTP -> 192.168.0.2:8000
-   v
-Windows host
-   |
-   | portproxy -> WSL:<IP-interna-actual>:8000
-   v
-WSL
-   |
-   +-- FastAPI (backend/app_api.py)
-   |     |
-   |     +-- Whisper tiny
-   |     +-- Ollama + qwen2:7b-instruct-q4_0
-   |     `-- paho-mqtt
-   |
-   `-- Mosquitto -> 127.0.0.1:1883 para backend
-
-ESP32
-   |
-   | MQTT -> 192.168.0.2:1883
-   v
-Windows host
-   |
-   | portproxy -> WSL:<IP-interna-actual>:1883
-   v
-Mosquitto en WSL
+/home/abraham/proy_ia_security
 ```
 
-## Topología de red actual
+La copia legacy anidada `proy_ia_security/` fue eliminada. La unica fuente
+valida del proyecto es esta raiz.
 
-### Roles por equipo
+## Estado actual
 
-- `Windows` expone la IP LAN `192.168.0.2`
-- `WSL` corre el backend, Ollama y Mosquitto
-- `Android` consume la API por HTTP usando la IP de Windows
-- `ESP32` consume MQTT usando la IP de Windows
+- Frontend Next.js en `frontend/`
+- Backend FastAPI en `backend/app_api.py`
+- Frontend desplegado en Hostinger: `https://afcrtecnologia.com`
+- Backend desplegado en AWS: `3.132.192.3`
+- API publica: `https://api.afcrtecnologia.com`
+- DNS Hostinger: `api.afcrtecnologia.com` apunta a `3.132.192.3`
+- Endpoint de salud: `GET /ping`
+- Endpoint principal: `POST /voice-intent`
+- Endpoint ESP32: `GET /device/commands?device_id=...`
+- Confirmacion ESP32: `POST /device/commands/{command_id}/ack`
+- Supabase: proyecto `proy_ia_security` (`omkbowrspgbuwpifksfk`) para Auth,
+  organizaciones, dispositivos, comandos y auditoria de voz
+- Storage privado: bucket `voice-audio`, retencion automatica de 30 dias
+- Automatizacion AWS backend preparada localmente en `backend/` mediante
+  GitHub Actions + SSM; pendiente configurar EC2/IAM y autorizar publicacion
+- Broker MQTT esperado en `127.0.0.1:1883` desde el backend
+- Topic MQTT legacy: `casa/esp32/luces`
+- Payload MQTT activo:
 
-### Port forwarding usado
+```json
+{
+  "espacio": "cocina",
+  "accion": "ON"
+}
+```
 
-En Windows se está usando `netsh interface portproxy` para reenviar tráfico hacia WSL. El patrón actual es:
+Ambientes validos:
+
+- `sala`
+- `comedor`
+- `cocina`
+- `cuarto_principal`
+
+Acciones validas:
+
+- `ON`
+- `OFF`
+
+## Arquitectura
 
 ```text
-192.168.0.2:8000 -> WSL:<IP-actual>:8000
-192.168.0.2:1883 -> WSL:<IP-actual>:1883
+Android o desktop browser
+   |
+   | HTTP -> NEXT_PUBLIC_API_BASE_URL
+   v
+Frontend Next.js
+   |
+   | GET /ping
+   | POST /voice-intent multipart/form-data audio=<archivo>
+   v
+Backend FastAPI (backend/app_api.py)
+   |
+   +-- valida JWT de Supabase y aisla datos por organizacion (RLS)
+   +-- guarda audio nuevo en Storage privado voice-audio
+   +-- Whisper tiny -> texto
+   +-- OpenAI u Ollama -> JSON de intencion
+   +-- confirmacion UI -> cola Supabase device_commands
+   `-- GET HTTPS autenticado <- ESP32
+          |
+          +-- GPIO 2 LED
+          `-- POST ACK -> dashboard muestra ejecucion
 ```
 
-En una prueba previa también existió una regla para `80`, pero el flujo actual del proyecto usa `8000` para HTTP y `1883` para MQTT.
+Luces legacy sin ESP32 HTTP asignado conservan la ruta MQTT.
 
-### Importante sobre la IP de WSL
+En el laboratorio, si FastAPI y Mosquitto corren dentro de WSL, Windows puede
+exponerlos hacia la LAN con `portproxy`:
 
-La IP interna de WSL puede cambiar después de reiniciar WSL o Windows. Si eso ocurre, hay que:
-
-1. Obtener la IP actual de WSL.
-2. Actualizar `portproxy` en Windows para `8000` y `1883`.
-3. Verificar que el firewall de Windows permita ambos puertos.
-
-## Componentes del proyecto
-
-### Frontend
-
-Archivo: [frontend/index.html](/home/abraham/proy_ia_security/frontend/index.html:1)
-
-- HTML + JavaScript vanilla
-- Diseñado para abrir la grabadora nativa del navegador Android con `accept="audio/*"` y `capture`
-- Usa:
-  - `GET /ping` para validar conectividad
-  - `POST /voice-intent` para enviar el audio
-
-Configuración actual:
-
-```javascript
-const HOST = "http://192.168.0.2:8000";
+```text
+<IP-LAN-Windows>:8000 -> WSL:<IP-interna-actual>:8000
+<IP-LAN-Windows>:1883 -> WSL:<IP-interna-actual>:1883
 ```
 
-### Backend
+La IP interna de WSL puede cambiar despues de reiniciar WSL o Windows. Si eso
+ocurre, actualizar las reglas de `portproxy` y revisar el firewall de Windows.
 
-Archivo: [backend/app_api.py](/home/abraham/proy_ia_security/backend/app_api.py:1)
+## Frontend
 
-Responsabilidades:
+El frontend usa `NEXT_PUBLIC_API_BASE_URL` para decidir donde esta FastAPI.
+`frontend/.env.local` manda sobre el valor default compilado en el codigo.
 
-- Recibir audio por `multipart/form-data`
-- Guardar el archivo en `audios_recibidos/`
-- Transcribir con Whisper `tiny`
-- Enviar el texto a `ollama run qwen2:7b-instruct-q4_0`
-- Extraer JSON de la respuesta del modelo
-- Publicar acciones MQTT para LED y RGB
-- Responder JSON con trazabilidad del flujo
+Pruebas locales/LAN:
 
-Configuración actual relevante:
+```bash
+NEXT_PUBLIC_API_BASE_URL=http://192.168.0.220:8000
+```
+
+Produccion en Hostinger:
+
+```bash
+NEXT_PUBLIC_API_BASE_URL=https://api.afcrtecnologia.com
+NEXT_PUBLIC_SUPABASE_URL=https://omkbowrspgbuwpifksfk.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<clave_publishable>
+```
+
+No subir `frontend/.env.local` al repo. Para produccion, configurar la variable
+en Hostinger antes de compilar/desplegar el frontend.
+
+Supabase Auth usa confirmacion por correo. En el Dashboard de Supabase,
+configurar como URLs de redireccion permitidas:
+
+```text
+http://localhost:3000/auth/confirm
+http://localhost:3001/auth/confirm
+https://afcrtecnologia.com/auth/confirm
+```
+
+La ruta Next.js `GET /auth/confirm` intercambia el token del email por la
+sesion y redirige a `/desarrollo/sync`.
+
+Comandos:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Abrir:
+
+```text
+http://localhost:3000
+```
+
+El dashboard muestra:
+
+- conectividad con `GET /ping`
+- transcripcion devuelta por `fase_2_transcripcion.texto_transcrito`
+- intencion, detalle, ambiente y accion desde `fase_3_ia_json.ia_json`
+- entrega HTTPS del ESP32 y estado `queued/delivered/executed/failed/expired`,
+  o resultado MQTT para dispositivos legacy
+- respuesta completa del backend para trazabilidad
+
+## Backend
+
+Archivo principal:
+
+```text
+backend/app_api.py
+```
+
+Configuracion relevante:
 
 ```python
 MQTT_SERVER = "127.0.0.1"
 MQTT_PORT = 1883
-MQTT_TOPIC_LED = "casa/esp32/led"
-MQTT_TOPIC_RGB = "casa/esp32/rgb"
+MQTT_TOPIC_LUCES = "casa/esp32/luces"
+DEVICE_COMMAND_TTL_SECONDS = 300
+CORS_ALLOW_ORIGINS = [...]
+AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").strip().lower()
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+LOCAL_AI_MODEL = os.getenv("LOCAL_AI_MODEL", "qwen2:7b-instruct-q4_0")
 ```
 
-Esto es correcto porque el backend corre en WSL y Mosquitto también corre en WSL.
+`AI_PROVIDER` acepta:
 
-### Broker MQTT
+- `openai`: usa la API de OpenAI y requiere `OPENAI_API_KEY`
+- `local`: usa Ollama con `LOCAL_AI_MODEL`
 
-Servicio: `mosquitto` en WSL
+El backend carga variables locales desde `backend/.env`. Ese archivo no debe
+subirse a git; usa `backend/.env.example` como plantilla. `frontend/.env.local`
+es solo para variables del frontend como `NEXT_PUBLIC_API_BASE_URL`; no pongas
+secretos ahi porque cualquier variable `NEXT_PUBLIC_*` llega al navegador.
+La clave `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` esta disenada para navegador;
+las reglas RLS controlan acceso a datos. `SUPABASE_SECRET_KEY` se configura
+solo en FastAPI para operaciones privilegiadas y nunca se publica en el
+frontend. `SUPABASE_SERVICE_ROLE_KEY` se admite solo como compatibilidad
+legacy temporal.
 
-Configuración clave validada:
+El CORS del backend se configura con `CORS_ALLOW_ORIGINS`, separado por comas.
+Por defecto permite produccion y desarrollo local:
 
-```conf
-listener 1883 0.0.0.0
-allow_anonymous true
+```bash
+CORS_ALLOW_ORIGINS=https://afcrtecnologia.com,https://www.afcrtecnologia.com,http://localhost:3000,http://127.0.0.1:3000
 ```
 
-Esto permite que:
+El frontend publico usa HTTPS, asi que la API publica tambien debe responder por
+HTTPS en `https://api.afcrtecnologia.com` para evitar bloqueo por contenido mixto.
 
-- el backend use `127.0.0.1:1883`
-- Windows `portproxy` pueda reenviar conexiones externas hacia WSL
-- el ESP32 llegue al broker entrando por `192.168.0.2:1883`
+La parte quirurgica esta en esta linea:
 
-### ESP32
-
-El sketch del ESP32 no vive todavía dentro de este repo, pero el comportamiento esperado ya está definido y probado.
-
-Configuración relevante del ESP32:
-
-```cpp
-const char* mqtt_server = "192.168.0.2";
+```python
+AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").strip().lower()
 ```
 
-Topics suscritos:
+Con eso eliges si la Fase 3 trabaja con OpenAI API o con IA local sin tocar el
+resto del backend.
 
-- `casa/esp32/led`
-- `casa/esp32/rgb`
+Para usar OpenAI API:
 
-Payloads esperados:
+```bash
+cd /home/abraham/proy_ia_security/backend
+cp .env.example .env
+# Editar backend/.env y poner la API key real solo ahi.
+#
+# AI_PROVIDER=openai
+# OPENAI_API_KEY=TU_API_KEY
+# OPENAI_MODEL=gpt-4o-mini
+uvicorn app_api:app --host 0.0.0.0 --port 8000
+```
 
-- LED simple:
-  - `ON`
-  - `OFF`
-- RGB:
-  - `HAPPY`
-  - `SAD`
-  - `NEUTRAL`
+Para volver a IA local con Qwen2/Ollama:
 
-## Flujo funcional
+```bash
+cd /home/abraham/proy_ia_security/backend
+# Editar backend/.env:
+#
+# AI_PROVIDER=local
+# LOCAL_AI_MODEL=qwen2:7b-instruct-q4_0
+uvicorn app_api:app --host 0.0.0.0 --port 8000
+```
 
-1. El usuario abre el frontend en Android.
-2. El frontend prueba conectividad con `GET /ping`.
-3. El usuario graba audio.
-4. El frontend envía el archivo a `POST /voice-intent`.
-5. El backend guarda el audio en `audios_recibidos/`.
-6. Whisper transcribe el audio.
-7. Qwen2 analiza intención y estado de ánimo.
-8. El backend traduce la salida del modelo a comandos MQTT.
-9. Mosquitto distribuye el mensaje al ESP32.
-10. El ESP32 cambia el LED simple o el RGB según el topic y payload recibidos.
+Levantar backend:
 
-## Comandos de voz esperados
+```bash
+cd /home/abraham/proy_ia_security/backend
+uvicorn app_api:app --host 0.0.0.0 --port 8000
+```
 
-### LED simple
-
-| Frase del usuario | Acción lógica | Topic | Payload |
-|---|---|---|---|
-| `prende la luz` | encender LED | `casa/esp32/led` | `ON` |
-| `enciende el led` | encender LED | `casa/esp32/led` | `ON` |
-| `apaga la luz` | apagar LED | `casa/esp32/led` | `OFF` |
-| `apaga el led` | apagar LED | `casa/esp32/led` | `OFF` |
-
-### Estado de ánimo
-
-| Frase del usuario | Estado detectado | Topic | Payload |
-|---|---|---|---|
-| `me siento alegre` | alegre | `casa/esp32/rgb` | `HAPPY` |
-| `estoy feliz` | alegre | `casa/esp32/rgb` | `HAPPY` |
-| `me siento triste` | triste | `casa/esp32/rgb` | `SAD` |
-| `estoy desanimado` | triste | `casa/esp32/rgb` | `SAD` |
-| sin emoción clara | neutral/desconocido | `casa/esp32/rgb` | `NEUTRAL` o sin acción |
-
-## Endpoints actuales
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| `GET` | `/` | Health check |
-| `GET` | `/ping` | Prueba rápida de conectividad |
-| `POST` | `/voice-intent` | Procesa audio, llama al modelo y publica acciones MQTT |
-
-### Respuesta típica de `POST /voice-intent`
+Despues de `POST /voice-intent`, el usuario confirma el plan. Si hay un ESP32
+asignado al ambiente, `POST /voice-intent/confirm` encola la orden:
 
 ```json
 {
   "ok": true,
-  "filename": "20250331-153045_audio.webm",
-  "saved_path": "/home/abraham/proy_ia_security/audios_recibidos/20250331-153045_audio.webm",
-  "content_type": "audio/webm",
-  "texto_transcrito": "prende la luz, me siento alegre",
-  "ia_raw": "{ ... respuesta completa de Qwen2 ... }",
-  "ia_json": {
-    "texto": "prende la luz, me siento alegre",
-    "intencion": "encender iluminación",
-    "detalle": "El usuario quiere encender el LED y expresa alegría",
-    "siguiente_paso_led": "encender_led",
-    "estado_animo": "alegre",
-    "siguiente_paso_rgb": "rgb_alegre"
-  },
-  "accion_mqtt_led": "LED_ON_OK",
-  "accion_mqtt_rgb": "RGB_ALEGRE_OK"
+  "queued": true,
+  "executed": false,
+  "delivery": {
+    "transport": "http_polling",
+    "command_id": "cmd_...",
+    "device_id": "esp32-luz-cocina-...",
+    "target": "led",
+    "action": "turn_on",
+    "espacio": "cocina",
+    "status": "queued",
+    "expires_at": "..."
+  }
 }
 ```
 
-### Valores importantes del backend
+Estados visibles de entrega HTTPS:
 
-`accion_mqtt_led`
+- `queued`: confirmado y esperando una consulta del ESP32.
+- `delivered`: el ESP32 recibio el JSON y aun debe confirmar.
+- `executed`: el LED fue actualizado y confirmado.
+- `failed`: el ESP32 informo que no ejecuto la orden.
+- `expired`: no se ejecuto dentro de la ventana de 300 segundos.
 
-- `LED_ON_OK`
-- `LED_ON_ERROR`
-- `LED_OFF_OK`
-- `LED_OFF_ERROR`
-- `SIN_ACCION_LED`
-- `SIN_JSON`
+## ESP32
 
-`accion_mqtt_rgb`
+El flujo legacy de laboratorio usa un broker MQTT expuesto en la LAN y el topic:
 
-- `RGB_ALEGRE_OK`
-- `RGB_ALEGRE_ERROR`
-- `RGB_TRISTE_OK`
-- `RGB_TRISTE_ERROR`
-- `RGB_NEUTRAL_OK`
-- `RGB_NEUTRAL_ERROR`
-- `SIN_ACCION_RGB`
-- `SIN_JSON`
-
-## Cómo ejecutar el entorno actual
-
-### 1. Activar el entorno virtual
-
-```bash
-cd /home/abraham/proy_ia_security
-source venv/bin/activate
+```text
+casa/esp32/luces
 ```
 
-### 2. Verificar que Mosquitto esté activo en WSL
+El sketch debe parsear JSON y aplicar la accion al ambiente recibido:
 
-```bash
-ps -ef | grep mosquitto
-sudo ss -ltnp | grep 1883
+```json
+{
+  "espacio": "sala",
+  "accion": "OFF"
+}
 ```
 
-Debe aparecer escuchando en `0.0.0.0:1883` o equivalente, no solo en `127.0.0.1:1883`.
+Para enlace real desde el frontend publico HTTPS, el flujo ESP32 usa pairing y
+polling autenticado:
 
-### 3. Levantar el backend
+1. Frontend crea un token con `POST /devices/pairing-token`.
+2. La web muestra el sketch base para Arduino IDE; el usuario escribe su SSID,
+   password WiFi y token temporal en las tres constantes editables.
+3. Usuario carga el sketch por USB a un `ESP32 Dev Module`.
+4. ESP32 se conecta directamente al WiFi y llama `POST /devices/claim` contra
+   `https://api.afcrtecnologia.com`.
+5. Backend guarda el dispositivo en Supabase y entrega una `device_api_key`
+   una sola vez; en base solo persiste su hash.
+6. Al confirmar un comando, el backend lo guarda en `device_commands` bajo la
+   organizacion autenticada.
+7. ESP32 consulta `GET /device/commands?device_id=...` con bearer token,
+   ejecuta su LED GPIO 2 y envia `POST /device/commands/{id}/ack`.
+
+El backend no recibe ni guarda la contraseña WiFi. Esa clave solo queda en el
+sketch local que el usuario carga desde Arduino IDE.
+
+En laboratorio local, iniciar el backend con una URL alcanzable desde el
+ESP32, no con `localhost`:
 
 ```bash
+PUBLIC_API_URL=http://<IP-LAN-Windows>:8000 uvicorn app_api:app --host 0.0.0.0 --port 8000
+```
+
+La web inserta esa `API URL` en el sketch copiado. Las conexiones HTTP se usan
+solo en la red local de prueba; al publicar se vuelve a
+`https://api.afcrtecnologia.com`, validado por la CA incluida en el firmware.
+Antes de cargar el ESP32, abrir `http://<IP-LAN-Windows>:8000/ping` desde otro
+equipo conectado al mismo WiFi; si no responde, corregir `portproxy` o firewall.
+
+Endpoints nuevos:
+
+```text
+POST /devices/pairing-token
+POST /devices/claim
+GET /devices
+POST /devices/{device_id}/command
+POST /devices/{device_id}/heartbeat
+GET /device/commands?device_id={device_id}
+POST /device/commands/{command_id}/ack
+GET /device/commands/{command_id}/status
+```
+
+Firmware base:
+
+```text
+firmware/esp32_pairing_portal/esp32_pairing_portal.ino
+```
+
+El firmware ESP32 incluido valida `https://api.afcrtecnologia.com` con
+`ISRG Root X1`, la raiz de la cadena Let's Encrypt actualmente publicada. MQTT
+queda como transporte legacy configurable mediante:
+
+```bash
+MQTT_SERVER=mqtt.afcrtecnologia.com
+MQTT_PORT=8883
+MQTT_TLS=true
+MQTT_USERNAME=...
+MQTT_PASSWORD=...
+MQTT_DEVICE_TOPIC_PREFIX=afcr/devices
+PUBLIC_API_URL=https://api.afcrtecnologia.com
+```
+
+## Comandos de voz esperados
+
+| Frase del usuario | Espacio | Accion IA | Payload ESP32 |
+|---|---|---|---|
+| `prende la luz de la sala` | `sala` | `ON` | `led / turn_on` |
+| `enciende la luz del comedor` | `comedor` | `ON` | `led / turn_on` |
+| `apaga la luz de la cocina` | `cocina` | `OFF` | `led / turn_off` |
+| `apaga cuarto principal` | `cuarto_principal` | `OFF` | `led / turn_off` |
+
+Si no hay ESP32 HTTP asignado al ambiente, la ruta MQTT legacy continua
+disponible para luces ya conectadas.
+
+## Verificacion
+
+Backend:
+
+```bash
+python3 -c "import ast, pathlib; ast.parse(pathlib.Path('backend/app_api.py').read_text()); print('backend/app_api.py syntax OK')"
 cd backend
-uvicorn app_api:app --host 0.0.0.0 --port 8000
+python3 -m unittest -v test_http_polling.py
 ```
 
-### 4. Verificar conectividad desde Android
-
-Abrir el frontend y probar `GET /ping` contra:
-
-```text
-http://192.168.0.2:8000
-```
-
-### 5. Verificar conectividad MQTT del ESP32
-
-El ESP32 debe conectarse al broker con:
-
-```cpp
-const char* mqtt_server = "192.168.0.2";
-```
-
-Si todo está bien, dejará de mostrar errores `rc=-2` y se conectará al broker.
-
-## Problema real ya encontrado y resuelto
-
-### Síntoma
-
-El ESP32 mostraba repetidamente:
-
-```text
-Intentando conectar MQTT...falló, rc=-2
-```
-
-### Causa real
-
-Mosquitto estaba corriendo en WSL, pero el servicio seguía escuchando solo en localhost o no había recargado correctamente la configuración. El backend local podía hablar con el broker, pero el tráfico reenviado desde Windows no lograba entrar.
-
-### Solución aplicada
-
-1. Confirmar que existía una configuración válida en WSL:
-
-```conf
-listener 1883 0.0.0.0
-allow_anonymous true
-```
-
-2. Reiniciar `mosquitto` con permisos `sudo`:
+Frontend:
 
 ```bash
-sudo systemctl restart mosquitto
+cd frontend
+npm run build
 ```
 
-3. Verificar nuevamente el listener:
+Health check:
 
 ```bash
-sudo ss -ltnp | grep 1883
+curl http://localhost:8000/ping
 ```
 
-4. Reprobar el ESP32.
+Prueba funcional manual:
 
-Resultado: el ESP32 quedó conectado correctamente.
+1. En Sincronizacion elegir `ESP32`, ambiente `cocina` y crear el enlace.
+2. Copiar el sketch mostrado por la web y reemplazar `WIFI_SSID`,
+   `WIFI_PASSWORD` y `PAIRING_TOKEN` en Arduino IDE.
+3. Seleccionar `ESP32 Dev Module` y subir el sketch por USB.
+4. Esperar que el inventario de la web muestre el ESP32 `Online`.
+5. Enviar voz diciendo `prende la luz de la cocina` y confirmar el plan.
+6. Verificar LED encendido y estado `LED ejecutado y confirmado por el ESP32`.
+7. Repetir con apagado; desconectar mas de 300 segundos para comprobar
+   expiracion sin ejecucion tardia.
 
-## Troubleshooting rápido
-
-### El ESP32 no conecta al broker
-
-Revisar en este orden:
-
-1. Que `mosquitto` esté corriendo en WSL.
-2. Que esté escuchando en `0.0.0.0:1883`.
-3. Que Windows siga teniendo `portproxy` hacia la IP actual de WSL.
-4. Que el firewall de Windows permita `1883`.
-5. Que el ESP32 siga usando `192.168.0.2` como broker MQTT.
+## Troubleshooting rapido
 
 ### El frontend no llega al backend
 
 Revisar:
 
-1. Que `uvicorn` esté corriendo en `0.0.0.0:8000`.
-2. Que la IP LAN de Windows siga siendo `192.168.0.2`.
-3. Que `portproxy` de Windows para `8000` siga apuntando a la IP actual de WSL.
+1. Que `uvicorn` este corriendo en `0.0.0.0:8000`.
+2. Que `frontend/.env.local` tenga la IP LAN correcta.
+3. Que `portproxy` de Windows para `8000` apunte a la IP actual de WSL.
 4. Que el firewall de Windows permita `8000`.
-5. Que `frontend/index.html` siga apuntando a `http://192.168.0.2:8000`.
 
-### Después de reiniciar Windows o WSL algo dejó de funcionar
+En produccion:
 
-La primera sospecha debe ser la IP interna de WSL. Si cambió, actualizar `portproxy` y luego volver a validar backend y MQTT.
+1. Que Hostinger tenga `NEXT_PUBLIC_API_BASE_URL=https://api.afcrtecnologia.com`.
+2. Que `api.afcrtecnologia.com` resuelva hacia `3.132.192.3`.
+3. Que AWS permita trafico entrante hacia HTTPS o el puerto publicado.
+4. Que el backend o reverse proxy responda en `https://api.afcrtecnologia.com/ping`.
+5. Que `CORS_ALLOW_ORIGINS` incluya `https://afcrtecnologia.com` y
+   `https://www.afcrtecnologia.com`.
 
-## Estructura actual del repo
+### El ESP32 no recibe comandos HTTPS
+
+Revisar:
+
+1. Que el token siga vigente al reclamarlo.
+2. Que el ESP32 haya guardado `device_id` y `device_api_key` durante el claim.
+3. En laboratorio, que la API mostrada en el sketch sea la IP LAN de Windows
+   con `portproxy` activo hacia WSL, nunca `localhost`.
+4. En produccion, que tenga salida HTTPS hacia `api.afcrtecnologia.com` y que
+   su cadena TLS siga siendo valida para `ISRG Root X1`.
+5. Que el equipo se haya asignado al mismo ambiente dicho por voz.
+6. Que `WIFI_SSID` y `WIFI_PASSWORD` correspondan a una red de 2.4 GHz
+   accesible desde el ESP32.
+
+### Un dispositivo legacy no conecta al broker MQTT
+
+Revisar:
+
+1. Que `mosquitto` este corriendo.
+2. Que escuche en `0.0.0.0:1883` si debe recibir conexiones externas.
+3. Que `portproxy` de Windows para `1883` apunte a la IP actual de WSL.
+4. Que el firewall de Windows permita `1883`.
+5. Que el ESP32 use la IP LAN de Windows como broker, no la IP interna de WSL.
+
+### Despues de reiniciar Windows o WSL algo dejo de funcionar
+
+La primera sospecha debe ser la IP interna de WSL. Si cambio, actualizar
+`portproxy` para `8000` y `1883`, reiniciar servicios si hace falta y validar
+otra vez `GET /ping` y MQTT.
+
+## Dependencias
+
+No hay todavia un manifiesto Python (`requirements.txt` o `pyproject.toml`) en
+la raiz activa, asi que las dependencias del backend siguen siendo instalacion
+manual.
+
+Backend:
+
+```bash
+pip install fastapi uvicorn openai python-dotenv whisper-timestamped paho-mqtt python-multipart
+```
+
+Si se usa Ollama:
+
+```bash
+ollama pull qwen2:7b-instruct-q4_0
+```
+
+Frontend:
+
+```bash
+cd frontend
+npm install
+```
+
+## Estructura principal
 
 ```text
 proy_ia_security/
 ├── backend/
 │   └── app_api.py
 ├── frontend/
-│   └── index.html
+│   ├── app/
+│   ├── components/
+│   ├── lib/
+│   ├── package.json
+│   └── tailwind.config.ts
 ├── audios_recibidos/
-├── venv/
 └── README.md
 ```
-
-## Dependencias usadas hoy
-
-- Python 3.12
-- FastAPI
-- Uvicorn
-- `whisper-timestamped`
-- `paho-mqtt`
-- `python-multipart`
-- Ollama
-- modelo `qwen2:7b-instruct-q4_0`
-- Mosquitto
-
-Instalación manual actual:
-
-```bash
-pip install fastapi uvicorn openai-whisper whisper-timestamped paho-mqtt python-multipart
-```
-
-## Notas para retomarlo rápido
-
-- El frontend y el ESP32 no deben apuntar a la IP interna de WSL; deben apuntar a la IP LAN de Windows.
-- El backend sí debe seguir apuntando a `127.0.0.1` para MQTT mientras Mosquitto corra dentro de WSL.
-- El punto más frágil de esta topología es `WSL IP + portproxy + restart de mosquitto`.
-- Si el ESP32 falla con `rc=-2`, casi siempre el problema es de reachability TCP hacia `192.168.0.2:1883`, no de lógica en el sketch.
