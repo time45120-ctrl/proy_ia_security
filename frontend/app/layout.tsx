@@ -8,6 +8,15 @@ export const metadata: Metadata = {
   title: "AFCR Tecnología | Domótica residencial con IA",
   description:
     "Sistema de domótica residencial con mini PC, inteligencia artificial, tecnología, dispositivos IoT y soporte continuo.",
+  applicationName: "AFCR Tecnología",
+  referrer: "strict-origin-when-cross-origin",
+  icons: {
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
 };
 
 export default function RootLayout({
