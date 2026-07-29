@@ -72,6 +72,8 @@ const USERNAME_ERROR =
   "Usa 3 a 30 caracteres: letras minúsculas, números o guion bajo.";
 const OTP_LENGTH = 8;
 const OTP_RESEND_SECONDS = 60;
+const HEADER_AUTH_BUTTON_CLASS =
+  "inline-flex min-h-10 items-center rounded-xl bg-[#6ee7b7] px-2 py-2 text-[10px] font-bold text-[#052018] shadow-[0_8px_30px_rgba(110,231,183,0.22)] transition hover:-translate-y-0.5 hover:bg-[#90f3ce] sm:px-4 sm:text-xs";
 
 type AuthMode =
   | "register"
@@ -583,7 +585,7 @@ export default function WelcomePage() {
 
   return (
     <main className="min-h-screen overflow-hidden bg-[#071421] text-white">
-      <header className="fixed inset-x-0 top-0 z-40 border-b border-white/10 bg-[#06121d]/78 px-4 py-3 backdrop-blur-2xl sm:px-6 lg:px-10">
+      <header className="fixed inset-x-0 top-0 z-40 bg-[#363738] px-4 py-3 sm:px-6 lg:px-10">
         <nav className="mx-auto flex max-w-7xl items-center justify-between gap-3">
           <button
             type="button"
@@ -629,14 +631,14 @@ export default function WelcomePage() {
                 <button
                   type="button"
                   onClick={handleLogin}
-                  className="min-h-10 rounded-xl px-1.5 py-2 text-[10px] font-semibold text-slate-200 transition hover:bg-white/[0.07] sm:px-3 sm:text-xs"
+                  className={HEADER_AUTH_BUTTON_CLASS}
                 >
                   Iniciar sesión
                 </button>
                 <button
                   type="button"
                   onClick={() => openAuth("register")}
-                  className="inline-flex min-h-10 items-center rounded-xl bg-[#6ee7b7] px-2 py-2 text-[10px] font-bold text-[#052018] shadow-[0_8px_30px_rgba(110,231,183,0.22)] transition hover:-translate-y-0.5 hover:bg-[#90f3ce] sm:px-4 sm:text-xs"
+                  className={HEADER_AUTH_BUTTON_CLASS}
                 >
                   Crear cuenta
                 </button>
