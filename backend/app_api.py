@@ -23,7 +23,7 @@
 # IMPORTACIONES
 # =========================================================
 
-from fastapi import FastAPI, File, Header, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime, timedelta, timezone
 from pydantic import BaseModel
@@ -255,6 +255,20 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), geolocation=(), microphone=()"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+    )
+    return response
 
 
 # =========================================================
