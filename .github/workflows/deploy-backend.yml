@@ -1,0 +1,109 @@
+name: Deploy backend to AWS
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Bootstrap creates the parallel EC2 checkout; deploy updates it.
+        required: true
+        default: deploy
+        type: choice
+        options:
+          - deploy
+          - bootstrap
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: production-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy through SSM
+    if: >-
+      vars.MONOREPO_BACKEND_DEPLOY_ENABLED == 'true' ||
+      (github.event_name == 'workflow_dispatch' && inputs.mode == 'bootstrap')
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ROLE_TO_ASSUME: ${{ vars.AWS_ROLE_TO_ASSUME }}
+      AWS_INSTANCE_ID: ${{ vars.AWS_INSTANCE_ID }}
+      MONOREPO_DIR: ${{ vars.MONOREPO_DIR || '/home/ubuntu/casa-domotica-ia' }}
+      BACKEND_APP_USER: ${{ vars.BACKEND_APP_USER || 'ubuntu' }}
+      BACKEND_APP_DIR: ${{ vars.BACKEND_APP_DIR || '/home/ubuntu/casa-domotica-ia/backend' }}
+      BACKEND_VENV_DIR: ${{ vars.BACKEND_VENV_DIR || '/home/ubuntu/casa-domotica-ia/backend/.venv' }}
+      LEGACY_BACKEND_APP_DIR: ${{ vars.LEGACY_BACKEND_APP_DIR || '/home/ubuntu/proy_ia_backend' }}
+      BACKEND_SERVICE_NAME: ${{ vars.BACKEND_SERVICE_NAME || 'proy-ia-backend.service' }}
+      BACKEND_LOCAL_HEALTH_URL: ${{ vars.BACKEND_LOCAL_HEALTH_URL || 'http://127.0.0.1:8000/ping' }}
+      PUBLIC_HEALTH_URL: ${{ vars.PUBLIC_HEALTH_URL || 'https://api.afcrtecnologia.com/ping' }}
+      AFCR_CONFIGURE_API_DOMAIN: ${{ vars.AFCR_CONFIGURE_API_DOMAIN || 'false' }}
+      AFCR_API_DOMAIN: ${{ vars.AFCR_API_DOMAIN || 'api.afcrtecnologia.com' }}
+      AFCR_API_EXPECTED_IPV4: ${{ vars.AFCR_API_EXPECTED_IPV4 || '3.132.192.3' }}
+      AFCR_LEGACY_ORIGINS_ENABLED: ${{ vars.AFCR_LEGACY_ORIGINS_ENABLED || 'false' }}
+      AFCR_INSPECT_LEGACY_API_DOMAIN: ${{ vars.AFCR_INSPECT_LEGACY_API_DOMAIN || 'false' }}
+      AFCR_RETIRE_LEGACY_API_DOMAIN: ${{ vars.AFCR_RETIRE_LEGACY_API_DOMAIN || 'false' }}
+    steps:
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          : "${AWS_REGION:?Configure AWS_REGION in the production environment variables}"
+          : "${AWS_ROLE_TO_ASSUME:?Configure AWS_ROLE_TO_ASSUME in the production environment variables}"
+          : "${AWS_INSTANCE_ID:?Configure AWS_INSTANCE_ID in the production environment variables}"
+
+      - name: Checkout deployment scripts
+        uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure temporary AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ env.AWS_ROLE_TO_ASSUME }}
+          role-session-name: afcr-monorepo-backend-production
+          mask-aws-account-id: true
+
+      - name: Deploy on EC2 through Systems Manager
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.mode }}" == "bootstrap" ]]; then
+            BOOTSTRAP_B64="$(base64 -w0 backend/scripts/bootstrap-monorepo-ec2.sh)"
+            REMOTE_SCRIPT="set -Eeuo pipefail; BOOTSTRAP_PATH=\$(mktemp /tmp/afcr-monorepo-bootstrap.XXXXXX); printf '%s' '${BOOTSTRAP_B64}' | base64 --decode > \${BOOTSTRAP_PATH}; chmod 700 \${BOOTSTRAP_PATH}; MONOREPO_REPOSITORY_URL='https://github.com/${GITHUB_REPOSITORY}.git' MONOREPO_TARGET_SHA='${GITHUB_SHA}' MONOREPO_DIR='${MONOREPO_DIR}' BACKEND_APP_USER='${BACKEND_APP_USER}' BACKEND_APP_DIR='${BACKEND_APP_DIR}' BACKEND_VENV_DIR='${BACKEND_VENV_DIR}' LEGACY_BACKEND_APP_DIR='${LEGACY_BACKEND_APP_DIR}' BACKEND_SERVICE_NAME='${BACKEND_SERVICE_NAME}' BACKEND_LOCAL_HEALTH_URL='${BACKEND_LOCAL_HEALTH_URL}' AFCR_CONFIGURE_API_DOMAIN='${AFCR_CONFIGURE_API_DOMAIN}' AFCR_API_DOMAIN='${AFCR_API_DOMAIN}' AFCR_API_EXPECTED_IPV4='${AFCR_API_EXPECTED_IPV4}' AFCR_LEGACY_ORIGINS_ENABLED='${AFCR_LEGACY_ORIGINS_ENABLED}' AFCR_INSPECT_LEGACY_API_DOMAIN='${AFCR_INSPECT_LEGACY_API_DOMAIN}' AFCR_RETIRE_LEGACY_API_DOMAIN='${AFCR_RETIRE_LEGACY_API_DOMAIN}' bash \${BOOTSTRAP_PATH}"
+          else
+            REMOTE_SCRIPT="set -Eeuo pipefail; test -d '${MONOREPO_DIR}/.git'; test -f '${BACKEND_APP_DIR}/.env'; runuser -u '${BACKEND_APP_USER}' -- git -C '${MONOREPO_DIR}' fetch origin main; runuser -u '${BACKEND_APP_USER}' -- git -C '${MONOREPO_DIR}' checkout main; runuser -u '${BACKEND_APP_USER}' -- git -C '${MONOREPO_DIR}' merge --ff-only origin/main; BACKEND_APP_USER='${BACKEND_APP_USER}' BACKEND_APP_DIR='${BACKEND_APP_DIR}' BACKEND_VENV_DIR='${BACKEND_VENV_DIR}' BACKEND_SERVICE_NAME='${BACKEND_SERVICE_NAME}' BACKEND_LOCAL_HEALTH_URL='${BACKEND_LOCAL_HEALTH_URL}' AFCR_CONFIGURE_API_DOMAIN='${AFCR_CONFIGURE_API_DOMAIN}' AFCR_API_DOMAIN='${AFCR_API_DOMAIN}' AFCR_API_EXPECTED_IPV4='${AFCR_API_EXPECTED_IPV4}' AFCR_LEGACY_ORIGINS_ENABLED='${AFCR_LEGACY_ORIGINS_ENABLED}' AFCR_INSPECT_LEGACY_API_DOMAIN='${AFCR_INSPECT_LEGACY_API_DOMAIN}' AFCR_RETIRE_LEGACY_API_DOMAIN='${AFCR_RETIRE_LEGACY_API_DOMAIN}' bash '${BACKEND_APP_DIR}/scripts/deploy-ec2.sh'"
+          fi
+
+          REMOTE_COMMAND="bash -lc $(printf '%q' "${REMOTE_SCRIPT}")"
+          PARAMETERS="$(jq -cn --arg command "${REMOTE_COMMAND}" '{commands:[$command]}')"
+          COMMAND_ID="$(aws ssm send-command \
+            --instance-ids "${AWS_INSTANCE_ID}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy casa-domotica-ia/backend from ${GITHUB_SHA}" \
+            --parameters "${PARAMETERS}" \
+            --query 'Command.CommandId' \
+            --output text)"
+
+          if ! aws ssm wait command-executed --command-id "${COMMAND_ID}" --instance-id "${AWS_INSTANCE_ID}"; then
+            aws ssm get-command-invocation --command-id "${COMMAND_ID}" --instance-id "${AWS_INSTANCE_ID}" --output table || true
+            exit 1
+          fi
+
+          STATUS="$(aws ssm get-command-invocation --command-id "${COMMAND_ID}" --instance-id "${AWS_INSTANCE_ID}" --query 'Status' --output text)"
+          aws ssm get-command-invocation --command-id "${COMMAND_ID}" --instance-id "${AWS_INSTANCE_ID}" --query '[StandardOutputContent,StandardErrorContent]' --output text
+          test "${STATUS}" = "Success"
+
+      - name: Verify public API health
+        shell: bash
+        run: curl --fail --silent --show-error --retry 5 --retry-delay 3 "${PUBLIC_HEALTH_URL}"

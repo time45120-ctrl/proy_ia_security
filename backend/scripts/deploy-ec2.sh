@@ -2,8 +2,8 @@
 set -Eeuo pipefail
 
 APP_USER="${BACKEND_APP_USER:-ubuntu}"
-APP_DIR="${BACKEND_APP_DIR:-/home/ubuntu/proy_ia_backend}"
-VENV_DIR="${BACKEND_VENV_DIR:-/home/ubuntu/proy_ia_backend/.venv}"
+APP_DIR="${BACKEND_APP_DIR:-/home/ubuntu/casa-domotica-ia/backend}"
+VENV_DIR="${BACKEND_VENV_DIR:-/home/ubuntu/casa-domotica-ia/backend/.venv}"
 SERVICE_NAME="${BACKEND_SERVICE_NAME:-proy-ia-backend.service}"
 LOCAL_HEALTH_URL="${BACKEND_LOCAL_HEALTH_URL:-http://127.0.0.1:8000/ping}"
 

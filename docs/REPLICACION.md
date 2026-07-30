@@ -304,6 +304,10 @@ La configuracion actual usa `output: "export"` y genera `frontend/out/`. Las
 variables publicas deben existir en Hostinger antes del build porque quedan
 incorporadas en los archivos estaticos.
 
+Conecta el monorepo, selecciona la rama `main` y usa `./frontend` como
+directorio raiz. La configuracion recomendada es Node 24.x, comando
+`npm run build`, directorio de salida `out` y ningun archivo de entrada.
+
 Configura:
 
 ```text
@@ -335,26 +339,36 @@ La replica productiva necesita:
 - Servicio systemd que ejecute Uvicorn en `127.0.0.1:8000`.
 - Nginx como reverse proxy y certificado TLS renovable.
 
-El workflow `backend/.github/workflows/deploy-aws.yml` usa GitHub OIDC y SSM.
+El workflow `.github/workflows/deploy-backend.yml` usa GitHub OIDC y SSM y solo
+se activa automaticamente cuando cambia `backend/**` o el propio workflow.
 Configura en el environment `production` estas variables, no access keys:
 
 ```text
 AWS_REGION
 AWS_ROLE_TO_ASSUME
 AWS_INSTANCE_ID
+MONOREPO_DIR
 BACKEND_APP_USER
 BACKEND_APP_DIR
 BACKEND_VENV_DIR
+LEGACY_BACKEND_APP_DIR
 BACKEND_SERVICE_NAME
 BACKEND_LOCAL_HEALTH_URL
 PUBLIC_HEALTH_URL
 AFCR_API_DOMAIN
 AFCR_API_EXPECTED_IPV4
+MONOREPO_BACKEND_DEPLOY_ENABLED
 ```
 
 Los flags de configuracion/retiro de dominios deben quedar `false` salvo una
-migracion de DNS deliberada. El rol OIDC debe limitar `sub` al repositorio y
-environment autorizados.
+migracion de DNS deliberada. Mantiene
+`MONOREPO_BACKEND_DEPLOY_ENABLED=false` hasta completar el bootstrap manual. El
+rol OIDC debe limitar `sub` al repositorio y environment autorizados.
+
+El primer corte se ejecuta con `workflow_dispatch` y modo `bootstrap`. El script
+clona el monorepo en paralelo, copia el `.env` anterior con modo `600`, crea el
+entorno virtual, valida el backend, instala un drop-in de systemd y restaura el
+servicio anterior automaticamente si el health check falla.
 
 ## 11. Checklist antes de publicar
 
