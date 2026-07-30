@@ -6,9 +6,9 @@ antes de enviar un comando a un ESP32. La aplicacion usa Supabase para Auth,
 Postgres, RLS y Storage; OpenAI es el proveedor de IA predeterminado y MQTT se
 conserva para dispositivos legacy.
 
-Este repositorio contiene una copia completa y reproducible del proyecto. Los
-repositorios separados de frontend y backend se conservan para sus despliegues,
-pero no son necesarios para una instalacion local desde cero.
+Este monorepo es la unica fuente de verdad y contiene el frontend, el backend,
+el firmware y la infraestructura reproducible. Los despliegues de Hostinger y
+AWS parten de `main` y se limitan a su subdirectorio correspondiente.
 
 ## Arquitectura
 
@@ -203,12 +203,15 @@ una URL accesible desde el ESP32, no `localhost`. En produccion debe ser HTTPS.
 
 ## Despliegue
 
-- Frontend: aplicación Next.js/estatica en Hostinger con las cuatro variables
-  `NEXT_PUBLIC_*` del ejemplo.
+- Frontend: aplicación Next.js/estatica en Hostinger conectada a este
+  repositorio, rama `main`, directorio raiz `./frontend`, salida `out` y las
+  cuatro variables `NEXT_PUBLIC_*` del ejemplo.
 - Backend: FastAPI tras Nginx/HTTPS en una instancia AWS. `backend/.env` se crea
   directamente en la maquina y nunca se descarga del repositorio.
-- GitHub Actions: el backend usa OIDC + AWS SSM; no necesita guardar access keys
-  permanentes de AWS en GitHub.
+- GitHub Actions: `.github/workflows/deploy-backend.yml` filtra cambios de
+  `backend/**`, usa OIDC + AWS SSM y no necesita access keys permanentes.
+- CI: cada PR a `main` compila el frontend con Node 22, ejecuta las pruebas del
+  backend con Python 3.12 y escanea el arbol publicable con Gitleaks.
 - Supabase: las migraciones se publican con `supabase db push`; SMTP y redirects
   se configuran en el Dashboard con valores propios del despliegue.
 
@@ -229,11 +232,13 @@ docs/REPLICACION.md              Guia completa
 SECURITY.md                      Politica de secretos
 ```
 
-## Repositorios de despliegue
+## Repositorio canonico
 
-- General: `abraham-development/casa-domotica-ia`
-- Frontend: `abraham-development/casa-domotica-ia-frontend`
-- Backend: `abraham-development/casa-domotica-ia-backend`
+- `abraham-development/casa-domotica-ia`
+
+Los historiales de los antiguos repositorios de frontend y backend estan
+conectados a este historial bajo `frontend/` y `backend/`. Los mapas entre SHA
+originales y reescritos se conservan junto a los bundles privados de respaldo.
 
 No se incluyen `.env`, bases SQLite, grabaciones, builds, tokens de pairing ni
 credenciales WiFi en la fuente reproducible.
