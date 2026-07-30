@@ -1,14 +1,21 @@
 {
-  "name": "proy-ia-security",
+  "name": "casa-domotica-ia",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "npm --prefix frontend run dev",
     "build": "npm --prefix frontend run build",
-    "start": "npm --prefix frontend run start",
     "frontend:dev": "npm --prefix frontend run dev",
     "frontend:build": "npm --prefix frontend run build",
-    "frontend:start": "npm --prefix frontend run start"
+    "check:env": "node scripts/check-env.mjs",
+    "test:backend": "node scripts/run-backend-tests.mjs",
+    "verify": "npm run check:env && npm run frontend:build && npm run test:backend",
+    "supabase:start": "supabase start",
+    "supabase:reset": "supabase db reset --local",
+    "supabase:status": "supabase status"
   },
   "devDependencies": {
     "supabase": "2.109.1"

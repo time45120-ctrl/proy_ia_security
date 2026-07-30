@@ -1,8 +1,27 @@
 venv/
 node_modules/
-backend/.env
 frontend/node_modules/
 frontend/.next/
 frontend/out/
+
+# Datos locales/generados. Las grabaciones y bases de prueba no forman parte
+# del codigo reproducible ni deben publicarse.
+audios_recibidos/
+backend/audios_recibidos/
+backend/devices.db
+backend/devices.db-*
+**/__pycache__/
+*.py[cod]
+*.tsbuildinfo
+
+# Los archivos de entorno reales nunca se versionan. Solo se permiten
+# plantillas .env.example, tambien dentro de frontend/ y backend/.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+
 *.ppk
 *.pem

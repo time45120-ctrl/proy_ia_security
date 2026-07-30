@@ -2,7 +2,7 @@
 # https://supabase.com/docs/guides/local-development/cli/config
 # A string used to distinguish different Supabase projects on the same host. Defaults to the
 # working directory name when running `supabase init`.
-project_id = "proy_ia_security"
+project_id = "casa-domotica-ia"
 
 [api]
 enabled = true
@@ -161,6 +161,8 @@ site_url = "http://localhost:3001"
 # external_url = ""
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
 additional_redirect_urls = [
+  "http://localhost:3000/auth/confirm",
+  "http://127.0.0.1:3000/auth/confirm",
   "http://localhost:3001/auth/confirm",
   "http://127.0.0.1:3001/auth/confirm",
   "https://afcrtecnologia.com/auth/confirm",

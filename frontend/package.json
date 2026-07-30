@@ -1,7 +1,10 @@
 {
-  "name": "proy-ia-security-frontend",
+  "name": "casa-domotica-ia-frontend",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "predev": "node scripts/clean-dev-cache.js",
     "dev": "next dev",

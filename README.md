@@ -1,485 +1,239 @@
-# proy_ia_security
+# Casa Domotica IA
 
-Sistema de asistente de voz IoT para laboratorio. El flujo captura audio desde
-el dashboard, lo envia a FastAPI, interpreta la intencion con IA y, despues de
-confirmacion humana, entrega comandos a un ESP32 real mediante polling HTTPS y
-ACK. MQTT se conserva para dispositivos legacy.
+Asistente de voz para domotica residencial. El frontend captura audio, el
+backend interpreta la intencion y prepara un plan que la persona debe confirmar
+antes de enviar un comando a un ESP32. La aplicacion usa Supabase para Auth,
+Postgres, RLS y Storage; OpenAI es el proveedor de IA predeterminado y MQTT se
+conserva para dispositivos legacy.
 
-La fuente activa del proyecto es la carpeta raiz:
-
-```text
-/home/abraham/proy_ia_security
-```
-
-La copia legacy anidada `proy_ia_security/` fue eliminada. La unica fuente
-valida del proyecto es esta raiz.
-
-## Estado actual
-
-- Frontend Next.js en `frontend/`
-- Backend FastAPI en `backend/app_api.py`
-- Frontend desplegado en Hostinger: `https://afcrtecnologia.com`
-- Backend desplegado en AWS: `3.132.192.3`
-- API publica: `https://api.afcrtecnologia.com`
-- DNS Hostinger: `api.afcrtecnologia.com` apunta a `3.132.192.3`
-- Endpoint de salud: `GET /ping`
-- Endpoint principal: `POST /voice-intent`
-- Endpoint ESP32: `GET /device/commands?device_id=...`
-- Confirmacion ESP32: `POST /device/commands/{command_id}/ack`
-- Supabase: proyecto `proy_ia_security` (`omkbowrspgbuwpifksfk`) para Auth,
-  organizaciones, dispositivos, comandos y auditoria de voz
-- Storage privado: bucket `voice-audio`, retencion automatica de 30 dias
-- Automatizacion AWS backend preparada localmente en `backend/` mediante
-  GitHub Actions + SSM; pendiente configurar EC2/IAM y autorizar publicacion
-- Broker MQTT esperado en `127.0.0.1:1883` desde el backend
-- Topic MQTT legacy: `casa/esp32/luces`
-- Payload MQTT activo:
-
-```json
-{
-  "espacio": "cocina",
-  "accion": "ON"
-}
-```
-
-Ambientes validos:
-
-- `sala`
-- `comedor`
-- `cocina`
-- `cuarto_principal`
-
-Acciones validas:
-
-- `ON`
-- `OFF`
+Este repositorio contiene una copia completa y reproducible del proyecto. Los
+repositorios separados de frontend y backend se conservan para sus despliegues,
+pero no son necesarios para una instalacion local desde cero.
 
 ## Arquitectura
 
 ```text
-Android o desktop browser
-   |
-   | HTTP -> NEXT_PUBLIC_API_BASE_URL
-   v
-Frontend Next.js
-   |
-   | GET /ping
-   | POST /voice-intent multipart/form-data audio=<archivo>
-   v
-Backend FastAPI (backend/app_api.py)
-   |
-   +-- valida JWT de Supabase y aisla datos por organizacion (RLS)
-   +-- guarda audio nuevo en Storage privado voice-audio
-   +-- Whisper tiny -> texto
-   +-- OpenAI u Ollama -> JSON de intencion
-   +-- confirmacion UI -> cola Supabase device_commands
-   `-- GET HTTPS autenticado <- ESP32
+Navegador (Next.js)
+  |-- Supabase Auth con clave publishable
+  `-- HTTPS / REST con JWT de usuario
           |
-          +-- GPIO 2 LED
-          `-- POST ACK -> dashboard muestra ejecucion
+          v
+FastAPI
+  |-- OpenAI u Ollama
+  |-- Supabase Postgres + Storage privado
+  |-- cola HTTP(S) para ESP32
+  `-- MQTT legacy opcional
+          |
+          v
+ESP32: polling autenticado -> GPIO -> ACK
 ```
 
-Luces legacy sin ESP32 HTTP asignado conservan la ruta MQTT.
+El comando fisico nunca se ejecuta directamente al transcribir el audio. El
+flujo es `preview -> confirmacion humana -> cola -> polling ESP32 -> ACK`.
 
-En el laboratorio, si FastAPI y Mosquitto corren dentro de WSL, Windows puede
-exponerlos hacia la LAN con `portproxy`:
+## Requisitos
 
-```text
-<IP-LAN-Windows>:8000 -> WSL:<IP-interna-actual>:8000
-<IP-LAN-Windows>:1883 -> WSL:<IP-interna-actual>:1883
-```
+- Git.
+- Node.js 22 o posterior y npm. `.nvmrc` fija la version base en Node 22.
+- Python 3.12 y soporte para entornos virtuales.
+- Una cuenta/proyecto de Supabase, o Docker Desktop para Supabase local.
+- Una clave de OpenAI si se usa `AI_PROVIDER=openai`.
+- Opcional: Ollama, Mosquitto, Arduino IDE y un ESP32.
 
-La IP interna de WSL puede cambiar despues de reiniciar WSL o Windows. Si eso
-ocurre, actualizar las reglas de `portproxy` y revisar el firewall de Windows.
+Las librerias cliente de Supabase ya no soportan Node 20; utiliza Node 22 o una
+version posterior compatible.
 
-## Frontend
+## Inicio rapido
 
-El frontend usa `NEXT_PUBLIC_API_BASE_URL` para decidir donde esta FastAPI.
-`frontend/.env.local` manda sobre el valor default compilado en el codigo.
-
-Pruebas locales/LAN:
+### 1. Clonar e instalar
 
 ```bash
-NEXT_PUBLIC_API_BASE_URL=http://192.168.0.220:8000
+git clone https://github.com/abraham-development/casa-domotica-ia.git
+cd casa-domotica-ia
+
+npm ci
+npm --prefix frontend ci
+
+python3 -m venv backend/.venv
+backend/.venv/bin/python -m pip install --upgrade pip
+backend/.venv/bin/python -m pip install -r backend/requirements.txt
 ```
 
-Produccion en Hostinger:
+En PowerShell, activa Python con:
+
+```powershell
+backend\.venv\Scripts\Activate.ps1
+```
+
+### 2. Preparar Supabase
+
+Hay dos alternativas:
+
+- Supabase alojado: crea un proyecto, enlaza el CLI y aplica las migraciones.
+- Supabase local: instala Docker Desktop y ejecuta el stack incluido.
+
+Supabase local:
 
 ```bash
-NEXT_PUBLIC_API_BASE_URL=https://api.afcrtecnologia.com
-NEXT_PUBLIC_SUPABASE_URL=https://omkbowrspgbuwpifksfk.supabase.co
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<clave_publishable>
+npm run supabase:start
+npm run supabase:reset
+npm run supabase:status
 ```
 
-No subir `frontend/.env.local` al repo. Para produccion, configurar la variable
-en Hostinger antes de compilar/desplegar el frontend.
+El ultimo comando muestra la URL local y las claves generadas. Copialas solo a
+los archivos locales indicados en el siguiente paso; no las pegues en codigo,
+issues, commits ni documentacion.
 
-Supabase Auth usa confirmacion por correo. En el Dashboard de Supabase,
-configurar como URLs de redireccion permitidas:
-
-```text
-http://localhost:3000/auth/confirm
-http://localhost:3001/auth/confirm
-https://afcrtecnologia.com/auth/confirm
-```
-
-La ruta Next.js `GET /auth/confirm` intercambia el token del email por la
-sesion y redirige a `/desarrollo/sync`.
-
-Comandos:
+Para un proyecto alojado:
 
 ```bash
-cd frontend
-npm install
+npx supabase login
+npx supabase link --project-ref YOUR_PROJECT_REF
+npx supabase db push
+npx supabase functions deploy purge-expired-voice-audio
+```
+
+Las migraciones crean el esquema, las politicas RLS, RPC de dispositivos, el
+bucket privado `voice-audio` y el trabajo de retencion. La funcion de purga y su
+programacion requieren configuracion externa adicional, descrita en
+[docs/REPLICACION.md](docs/REPLICACION.md).
+
+### 3. Configurar variables
+
+```bash
+cp frontend/.env.example frontend/.env.local
+cp backend/.env.example backend/.env
+chmod 600 frontend/.env.local backend/.env
+```
+
+Completa los marcadores con valores de tu propio proyecto. La clasificacion es:
+
+| Variable | Donde vive | Secreto |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Frontend | No |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Frontend | No, esta hecha para navegador |
+| `NEXT_PUBLIC_API_BASE_URL` | Frontend | No |
+| `SUPABASE_SECRET_KEY` | Backend | Si |
+| `OPENAI_API_KEY` | Backend | Si |
+| `MQTT_PASSWORD` | Backend | Si, cuando se usa |
+| Credenciales SMTP | Dashboard de Supabase | Si |
+| SSID/password WiFi | Sketch local del ESP32 | Si |
+
+Nunca declares una clave secret, `service_role`, OpenAI, SMTP o una contrasena
+con el prefijo `NEXT_PUBLIC_`.
+
+Comprueba la configuracion sin imprimir valores:
+
+```bash
+npm run check:env
+```
+
+### 4. Ejecutar
+
+Terminal 1:
+
+```bash
+cd backend
+.venv/bin/python -m uvicorn app_api:app --host 0.0.0.0 --port 8000
+```
+
+Terminal 2:
+
+```bash
 npm run dev
 ```
 
-Abrir:
-
-```text
-http://localhost:3000
-```
-
-El dashboard muestra:
-
-- conectividad con `GET /ping`
-- transcripcion devuelta por `fase_2_transcripcion.texto_transcrito`
-- intencion, detalle, ambiente y accion desde `fase_3_ia_json.ia_json`
-- entrega HTTPS del ESP32 y estado `queued/delivered/executed/failed/expired`,
-  o resultado MQTT para dispositivos legacy
-- respuesta completa del backend para trazabilidad
-
-## Backend
-
-Archivo principal:
-
-```text
-backend/app_api.py
-```
-
-Configuracion relevante:
-
-```python
-MQTT_SERVER = "127.0.0.1"
-MQTT_PORT = 1883
-MQTT_TOPIC_LUCES = "casa/esp32/luces"
-DEVICE_COMMAND_TTL_SECONDS = 300
-CORS_ALLOW_ORIGINS = [...]
-AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").strip().lower()
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-LOCAL_AI_MODEL = os.getenv("LOCAL_AI_MODEL", "qwen2:7b-instruct-q4_0")
-```
-
-`AI_PROVIDER` acepta:
-
-- `openai`: usa la API de OpenAI y requiere `OPENAI_API_KEY`
-- `local`: usa Ollama con `LOCAL_AI_MODEL`
-
-El backend carga variables locales desde `backend/.env`. Ese archivo no debe
-subirse a git; usa `backend/.env.example` como plantilla. `frontend/.env.local`
-es solo para variables del frontend como `NEXT_PUBLIC_API_BASE_URL`; no pongas
-secretos ahi porque cualquier variable `NEXT_PUBLIC_*` llega al navegador.
-La clave `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` esta disenada para navegador;
-las reglas RLS controlan acceso a datos. `SUPABASE_SECRET_KEY` se configura
-solo en FastAPI para operaciones privilegiadas y nunca se publica en el
-frontend. `SUPABASE_SERVICE_ROLE_KEY` se admite solo como compatibilidad
-legacy temporal.
-
-El CORS del backend se configura con `CORS_ALLOW_ORIGINS`, separado por comas.
-Por defecto permite produccion y desarrollo local:
-
-```bash
-CORS_ALLOW_ORIGINS=https://afcrtecnologia.com,https://www.afcrtecnologia.com,http://localhost:3000,http://127.0.0.1:3000
-```
-
-El frontend publico usa HTTPS, asi que la API publica tambien debe responder por
-HTTPS en `https://api.afcrtecnologia.com` para evitar bloqueo por contenido mixto.
-
-La parte quirurgica esta en esta linea:
-
-```python
-AI_PROVIDER = os.getenv("AI_PROVIDER", "openai").strip().lower()
-```
-
-Con eso eliges si la Fase 3 trabaja con OpenAI API o con IA local sin tocar el
-resto del backend.
-
-Para usar OpenAI API:
-
-```bash
-cd /home/abraham/proy_ia_security/backend
-cp .env.example .env
-# Editar backend/.env y poner la API key real solo ahi.
-#
-# AI_PROVIDER=openai
-# OPENAI_API_KEY=TU_API_KEY
-# OPENAI_MODEL=gpt-4o-mini
-uvicorn app_api:app --host 0.0.0.0 --port 8000
-```
-
-Para volver a IA local con Qwen2/Ollama:
-
-```bash
-cd /home/abraham/proy_ia_security/backend
-# Editar backend/.env:
-#
-# AI_PROVIDER=local
-# LOCAL_AI_MODEL=qwen2:7b-instruct-q4_0
-uvicorn app_api:app --host 0.0.0.0 --port 8000
-```
-
-Levantar backend:
-
-```bash
-cd /home/abraham/proy_ia_security/backend
-uvicorn app_api:app --host 0.0.0.0 --port 8000
-```
-
-Despues de `POST /voice-intent`, el usuario confirma el plan. Si hay un ESP32
-asignado al ambiente, `POST /voice-intent/confirm` encola la orden:
-
-```json
-{
-  "ok": true,
-  "queued": true,
-  "executed": false,
-  "delivery": {
-    "transport": "http_polling",
-    "command_id": "cmd_...",
-    "device_id": "esp32-luz-cocina-...",
-    "target": "led",
-    "action": "turn_on",
-    "espacio": "cocina",
-    "status": "queued",
-    "expires_at": "..."
-  }
-}
-```
-
-Estados visibles de entrega HTTPS:
-
-- `queued`: confirmado y esperando una consulta del ESP32.
-- `delivered`: el ESP32 recibio el JSON y aun debe confirmar.
-- `executed`: el LED fue actualizado y confirmado.
-- `failed`: el ESP32 informo que no ejecuto la orden.
-- `expired`: no se ejecuto dentro de la ventana de 300 segundos.
-
-## ESP32
-
-El flujo legacy de laboratorio usa un broker MQTT expuesto en la LAN y el topic:
-
-```text
-casa/esp32/luces
-```
-
-El sketch debe parsear JSON y aplicar la accion al ambiente recibido:
-
-```json
-{
-  "espacio": "sala",
-  "accion": "OFF"
-}
-```
-
-Para enlace real desde el frontend publico HTTPS, el flujo ESP32 usa pairing y
-polling autenticado:
-
-1. Frontend crea un token con `POST /devices/pairing-token`.
-2. La web muestra el sketch base para Arduino IDE; el usuario escribe su SSID,
-   password WiFi y token temporal en las tres constantes editables.
-3. Usuario carga el sketch por USB a un `ESP32 Dev Module`.
-4. ESP32 se conecta directamente al WiFi y llama `POST /devices/claim` contra
-   `https://api.afcrtecnologia.com`.
-5. Backend guarda el dispositivo en Supabase y entrega una `device_api_key`
-   una sola vez; en base solo persiste su hash.
-6. Al confirmar un comando, el backend lo guarda en `device_commands` bajo la
-   organizacion autenticada.
-7. ESP32 consulta `GET /device/commands?device_id=...` con bearer token,
-   ejecuta su LED GPIO 2 y envia `POST /device/commands/{id}/ack`.
-
-El backend no recibe ni guarda la contraseña WiFi. Esa clave solo queda en el
-sketch local que el usuario carga desde Arduino IDE.
-
-En laboratorio local, iniciar el backend con una URL alcanzable desde el
-ESP32, no con `localhost`:
-
-```bash
-PUBLIC_API_URL=http://<IP-LAN-Windows>:8000 uvicorn app_api:app --host 0.0.0.0 --port 8000
-```
-
-La web inserta esa `API URL` en el sketch copiado. Las conexiones HTTP se usan
-solo en la red local de prueba; al publicar se vuelve a
-`https://api.afcrtecnologia.com`, validado por la CA incluida en el firmware.
-Antes de cargar el ESP32, abrir `http://<IP-LAN-Windows>:8000/ping` desde otro
-equipo conectado al mismo WiFi; si no responde, corregir `portproxy` o firewall.
-
-Endpoints nuevos:
-
-```text
-POST /devices/pairing-token
-POST /devices/claim
-GET /devices
-POST /devices/{device_id}/command
-POST /devices/{device_id}/heartbeat
-GET /device/commands?device_id={device_id}
-POST /device/commands/{command_id}/ack
-GET /device/commands/{command_id}/status
-```
-
-Firmware base:
-
-```text
-firmware/esp32_pairing_portal/esp32_pairing_portal.ino
-```
-
-El firmware ESP32 incluido valida `https://api.afcrtecnologia.com` con
-`ISRG Root X1`, la raiz de la cadena Let's Encrypt actualmente publicada. MQTT
-queda como transporte legacy configurable mediante:
-
-```bash
-MQTT_SERVER=mqtt.afcrtecnologia.com
-MQTT_PORT=8883
-MQTT_TLS=true
-MQTT_USERNAME=...
-MQTT_PASSWORD=...
-MQTT_DEVICE_TOPIC_PREFIX=afcr/devices
-PUBLIC_API_URL=https://api.afcrtecnologia.com
-```
-
-## Comandos de voz esperados
-
-| Frase del usuario | Espacio | Accion IA | Payload ESP32 |
-|---|---|---|---|
-| `prende la luz de la sala` | `sala` | `ON` | `led / turn_on` |
-| `enciende la luz del comedor` | `comedor` | `ON` | `led / turn_on` |
-| `apaga la luz de la cocina` | `cocina` | `OFF` | `led / turn_off` |
-| `apaga cuarto principal` | `cuarto_principal` | `OFF` | `led / turn_off` |
-
-Si no hay ESP32 HTTP asignado al ambiente, la ruta MQTT legacy continua
-disponible para luces ya conectadas.
-
-## Verificacion
-
-Backend:
-
-```bash
-python3 -c "import ast, pathlib; ast.parse(pathlib.Path('backend/app_api.py').read_text()); print('backend/app_api.py syntax OK')"
-cd backend
-python3 -m unittest -v test_http_polling.py
-```
-
-Frontend:
-
-```bash
-cd frontend
-npm run build
-```
-
-Health check:
+Abre `http://localhost:3000` y comprueba:
 
 ```bash
 curl http://localhost:8000/ping
 ```
 
-Prueba funcional manual:
+Para Supabase local, los correos de confirmacion no salen a Internet. Se ven en
+el servidor de correo local mostrado por `npx supabase status`, normalmente en
+`http://127.0.0.1:54324`.
 
-1. En Sincronizacion elegir `ESP32`, ambiente `cocina` y crear el enlace.
-2. Copiar el sketch mostrado por la web y reemplazar `WIFI_SSID`,
-   `WIFI_PASSWORD` y `PAIRING_TOKEN` en Arduino IDE.
-3. Seleccionar `ESP32 Dev Module` y subir el sketch por USB.
-4. Esperar que el inventario de la web muestre el ESP32 `Online`.
-5. Enviar voz diciendo `prende la luz de la cocina` y confirmar el plan.
-6. Verificar LED encendido y estado `LED ejecutado y confirmado por el ESP32`.
-7. Repetir con apagado; desconectar mas de 300 segundos para comprobar
-   expiracion sin ejecucion tardia.
-
-## Troubleshooting rapido
-
-### El frontend no llega al backend
-
-Revisar:
-
-1. Que `uvicorn` este corriendo en `0.0.0.0:8000`.
-2. Que `frontend/.env.local` tenga la IP LAN correcta.
-3. Que `portproxy` de Windows para `8000` apunte a la IP actual de WSL.
-4. Que el firewall de Windows permita `8000`.
-
-En produccion:
-
-1. Que Hostinger tenga `NEXT_PUBLIC_API_BASE_URL=https://api.afcrtecnologia.com`.
-2. Que `api.afcrtecnologia.com` resuelva hacia `3.132.192.3`.
-3. Que AWS permita trafico entrante hacia HTTPS o el puerto publicado.
-4. Que el backend o reverse proxy responda en `https://api.afcrtecnologia.com/ping`.
-5. Que `CORS_ALLOW_ORIGINS` incluya `https://afcrtecnologia.com` y
-   `https://www.afcrtecnologia.com`.
-
-### El ESP32 no recibe comandos HTTPS
-
-Revisar:
-
-1. Que el token siga vigente al reclamarlo.
-2. Que el ESP32 haya guardado `device_id` y `device_api_key` durante el claim.
-3. En laboratorio, que la API mostrada en el sketch sea la IP LAN de Windows
-   con `portproxy` activo hacia WSL, nunca `localhost`.
-4. En produccion, que tenga salida HTTPS hacia `api.afcrtecnologia.com` y que
-   su cadena TLS siga siendo valida para `ISRG Root X1`.
-5. Que el equipo se haya asignado al mismo ambiente dicho por voz.
-6. Que `WIFI_SSID` y `WIFI_PASSWORD` correspondan a una red de 2.4 GHz
-   accesible desde el ESP32.
-
-### Un dispositivo legacy no conecta al broker MQTT
-
-Revisar:
-
-1. Que `mosquitto` este corriendo.
-2. Que escuche en `0.0.0.0:1883` si debe recibir conexiones externas.
-3. Que `portproxy` de Windows para `1883` apunte a la IP actual de WSL.
-4. Que el firewall de Windows permita `1883`.
-5. Que el ESP32 use la IP LAN de Windows como broker, no la IP interna de WSL.
-
-### Despues de reiniciar Windows o WSL algo dejo de funcionar
-
-La primera sospecha debe ser la IP interna de WSL. Si cambio, actualizar
-`portproxy` para `8000` y `1883`, reiniciar servicios si hace falta y validar
-otra vez `GET /ping` y MQTT.
-
-## Dependencias
-
-No hay todavia un manifiesto Python (`requirements.txt` o `pyproject.toml`) en
-la raiz activa, asi que las dependencias del backend siguen siendo instalacion
-manual.
-
-Backend:
+## Verificacion
 
 ```bash
-pip install fastapi uvicorn openai python-dotenv whisper-timestamped paho-mqtt python-multipart
+npm run check:env
+npm run frontend:build
+npm run test:backend
 ```
 
-Si se usa Ollama:
+La prueba manual minima es:
 
-```bash
-ollama pull qwen2:7b-instruct-q4_0
-```
+1. Registrar y confirmar un usuario.
+2. Iniciar sesion y abrir sincronizacion.
+3. Crear un token de pairing para un ESP32.
+4. Verificar que el sketch generado use la API configurada.
+5. Grabar un comando de voz y revisar el preview.
+6. Confirmar el plan y observar `queued`, `delivered` y `executed` tras el ACK.
 
-Frontend:
+## Supabase y seguridad de datos
 
-```bash
-cd frontend
-npm install
-```
+- Todas las tablas expuestas tienen RLS.
+- El aislamiento funcional se hace por hogar (`households`).
+- La clave publishable no concede acceso privilegiado; RLS sigue siendo
+  obligatoria.
+- La clave secret/service role permanece solo en FastAPI.
+- El bucket `voice-audio` es privado y los objetos tienen retencion.
+- `supabase/seed.sql` esta vacio intencionalmente: una replica nunca debe copiar
+  usuarios, hogares, dispositivos, grabaciones o comandos de produccion.
 
-## Estructura principal
+Consulta [SECURITY.md](SECURITY.md) antes de publicar un cambio y
+[docs/REPLICACION.md](docs/REPLICACION.md) para la instalacion detallada.
+
+## ESP32
+
+El firmware base esta en:
 
 ```text
-proy_ia_security/
-├── backend/
-│   └── app_api.py
-├── frontend/
-│   ├── app/
-│   ├── components/
-│   ├── lib/
-│   ├── package.json
-│   └── tailwind.config.ts
-├── audios_recibidos/
-└── README.md
+firmware/esp32_pairing_portal/esp32_pairing_portal.ino
 ```
+
+El usuario solo completa en su copia local:
+
+- `WIFI_SSID`
+- `WIFI_PASSWORD`
+- `PAIRING_TOKEN`
+
+No confirmes esos valores en Git. Para pruebas en LAN, `PUBLIC_API_URL` debe ser
+una URL accesible desde el ESP32, no `localhost`. En produccion debe ser HTTPS.
+
+## Despliegue
+
+- Frontend: aplicación Next.js/estatica en Hostinger con las cuatro variables
+  `NEXT_PUBLIC_*` del ejemplo.
+- Backend: FastAPI tras Nginx/HTTPS en una instancia AWS. `backend/.env` se crea
+  directamente en la maquina y nunca se descarga del repositorio.
+- GitHub Actions: el backend usa OIDC + AWS SSM; no necesita guardar access keys
+  permanentes de AWS en GitHub.
+- Supabase: las migraciones se publican con `supabase db push`; SMTP y redirects
+  se configuran en el Dashboard con valores propios del despliegue.
+
+Los detalles de DNS, CORS, Auth, SMTP, Vault, Edge Functions, AWS y Hostinger
+estan en [docs/REPLICACION.md](docs/REPLICACION.md).
+
+## Estructura
+
+```text
+backend/                         FastAPI, pruebas y despliegue AWS
+frontend/                        Next.js, Auth y dashboard
+firmware/esp32_pairing_portal/   Firmware Arduino/ESP32
+supabase/migrations/             Esquema, RLS, Storage y RPC
+supabase/functions/              Purga de audio
+supabase/templates/              Plantillas de Auth
+scripts/check-env.mjs            Verificacion sin mostrar valores
+docs/REPLICACION.md              Guia completa
+SECURITY.md                      Politica de secretos
+```
+
+## Repositorios de despliegue
+
+- General: `abraham-development/casa-domotica-ia`
+- Frontend: `abraham-development/casa-domotica-ia-frontend`
+- Backend: `abraham-development/casa-domotica-ia-backend`
+
+No se incluyen `.env`, bases SQLite, grabaciones, builds, tokens de pairing ni
+credenciales WiFi en la fuente reproducible.
