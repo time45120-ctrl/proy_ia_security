@@ -75,7 +75,11 @@ elif ENV_PATH.exists():
     print("AVISO: backend/.env existe, pero python-dotenv no esta instalado.")
 
 # --- Ruta local para guardar audios ---
-SAVE_DIR = "/home/abraham/proy_ia_security/audios_recibidos"
+# El default es relativo al backend para que un clon nuevo sea portable.
+SAVE_DIR = os.getenv(
+    "VOICE_AUDIO_SAVE_DIR",
+    str(Path(__file__).resolve().parent / "audios_recibidos"),
+)
 
 # --- MQTT ---
 MQTT_SERVER = os.getenv("MQTT_SERVER", "127.0.0.1")
