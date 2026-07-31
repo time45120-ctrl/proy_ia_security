@@ -63,8 +63,14 @@ humana antes del despliegue, requerir aprobacion.
 El rol OIDC debe confiar unicamente en el sujeto del Environment:
 
 ```text
-repo:abraham-development/casa-domotica-ia:environment:production
+repo:abraham-development@260437753/casa-domotica-ia@1195824020:environment:production
 ```
+
+GitHub usa este formato inmutable porque el repositorio fue renombrado despues
+del 15 de julio de 2026. Los IDs de propietario y repositorio forman parte del
+`sub` y deben coincidir exactamente con la trust policy de AWS. Para otra
+instalacion, consulta el `sub_claim_prefix` mediante la API OIDC de GitHub en
+lugar de copiar estos numeros.
 
 Y debe tener permisos minimos para `ssm:SendCommand` sobre la instancia y el
 documento `AWS-RunShellScript`, junto con `ssm:GetCommandInvocation` para leer
