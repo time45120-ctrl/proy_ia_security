@@ -365,6 +365,12 @@ migracion de DNS deliberada. Mantiene
 `MONOREPO_BACKEND_DEPLOY_ENABLED=false` hasta completar el bootstrap manual. El
 rol OIDC debe limitar `sub` al repositorio y environment autorizados.
 
+GitHub puede emitir un `sub` inmutable con IDs numericos en repositorios nuevos
+o renombrados, por ejemplo
+`repo:OWNER@OWNER_ID/REPO@REPO_ID:environment:production`. Consulta
+`sub_claim_prefix` con la API OIDC del repositorio y usa el valor exacto en la
+trust policy de AWS; no asumas el formato historico basado solo en nombres.
+
 El primer corte se ejecuta con `workflow_dispatch` y modo `bootstrap`. El script
 clona el monorepo en paralelo, copia el `.env` anterior con modo `600`, crea el
 entorno virtual, valida el backend, instala un drop-in de systemd y restaura el
