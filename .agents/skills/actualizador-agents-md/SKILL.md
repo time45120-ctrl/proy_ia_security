@@ -25,7 +25,8 @@ Usa esta skill cuando el usuario diga cosas como "actualiza mis AGENTS.md", "ref
    python3 .agents/skills/actualizador-agents-md/scripts/inventory_agents_context.py
    ```
 
-3. Revisa commits y estado Git de los tres repos separados: raiz, backend y frontend.
+3. Revisa el estado y commits del unico monorepo desde la raiz; confirma
+   que `backend/` y `frontend/` resuelvan al mismo toplevel Git.
 4. Detecta la marca de frontend desde `frontend/scripts/print-deploy-info.js`.
 5. Confirma constantes operativas desde codigo antes de documentarlas, por ejemplo:
    - `VOICE_AUDIO_MIN_BYTES`
@@ -39,7 +40,8 @@ Usa esta skill cuando el usuario diga cosas como "actualiza mis AGENTS.md", "ref
 ## Reglas De Edicion
 
 - No recrear la copia legacy anidada `proy_ia_security/`.
-- No mezclar commits de raiz, backend y frontend; son repos separados.
+- Mantener un unico commit coherente desde la raiz del monorepo; no crear
+  repos Git anidados en `backend/` ni `frontend/`.
 - No cambiar codigo operativo cuando el usuario solo pidio actualizar memoria.
 - Si hay cambios no relacionados en el worktree, no revertirlos; mencionarlos como preexistentes si afectan el diff.
 - Mantener el texto conciso, factual y fechado.

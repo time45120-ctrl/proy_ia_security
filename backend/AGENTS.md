@@ -1,24 +1,27 @@
 # AGENTS.md - Backend
 
-Ultima revision: 2026-07-27.
+Ultima revision: 2026-08-01.
 
 ## Contexto
 
-Este directorio es el repo Git desplegable del backend:
+Este directorio contiene el backend desplegable del monorepo:
 
 ```text
 /home/abraham/proy_ia_security/backend
 ```
 
-Remoto:
+Repositorio canonico:
 
 ```text
-https://github.com/abraham-development/proy_ia_backend.git
+https://github.com/abraham-development/casa-domotica-ia.git
 ```
 
-Rama activa: `main`.
+`backend/` no tiene un Git independiente: su toplevel es
+`/home/abraham/proy_ia_security`. La rama unica en GitHub es `main`;
+acepta pushes directos y mantiene bloqueados el borrado y el `force push`.
 
-Ultimo commit operativo conocido: `b.30`.
+Ultima referencia importada del backend: `b.32`. Revision del monorepo
+desplegada y verificada: `34f8b62`.
 
 Backend publico:
 
@@ -44,8 +47,8 @@ IP AWS:
   virtual host `api.afcrseguridad.com`. El respaldo recuperable del retiro esta
   en `/var/backups/afcr-domain-migration/legacy-retired-20260727T082540Z`.
 - GitHub Actions usa `PUBLIC_HEALTH_URL=https://api.afcrtecnologia.com/ping`.
-  Las banderas de configuracion, inspeccion y retiro quedaron en `false` luego
-  del corte.
+  `MONOREPO_BACKEND_DEPLOY_ENABLED=true`; las banderas de configuracion,
+  inspeccion y retiro del dominio anterior permanecen en `false`.
 - El 2026-07-20 se completo en Supabase la arquitectura residencial:
   `households`, `household_members` y `household_id`; se eliminaron
   definitivamente tablas, columnas, funciones, politicas y metadata de
@@ -163,11 +166,14 @@ Dispositivos:
 POST /devices/pairing-token
 POST /devices/claim
 GET /devices
+GET /devices/{device_id}/led-states
 POST /devices/{device_id}/heartbeat
 POST /devices/{device_id}/command
 GET /device/commands?device_id={device_id}
 POST /device/commands/{command_id}/ack
 GET /device/commands/{command_id}/status
+GET /voice-intents/{request_id}/audio/respuesta-ia
+GET /voice-intents/recent
 ```
 
 `POST /voice-intent` no ejecuta hardware. Devuelve preview/plan. Para un
@@ -182,7 +188,10 @@ reciente y su `assigned_space`.
 ## Variables relevantes
 
 ```python
-SAVE_DIR = "/home/abraham/proy_ia_security/audios_recibidos"
+SAVE_DIR = os.getenv(
+    "VOICE_AUDIO_SAVE_DIR",
+    str(Path(__file__).resolve().parent / "audios_recibidos"),
+)
 MQTT_SERVER = os.getenv("MQTT_SERVER", "127.0.0.1")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_TOPIC_LUCES = os.getenv("MQTT_TOPIC_LUCES", "casa/esp32/luces")
@@ -264,24 +273,27 @@ Acciones validas:
 
 ## Despliegue AWS Automatizado
 
-- El backend desplegable sigue siendo este repo, remoto `proy_ia_backend`, rama
-  `main`; la raiz `proy_ia_security/new1` no activa el deploy backend.
-- El workflow objetivo esta en `.github/workflows/deploy-aws.yml` y usa GitHub
-  OIDC mas AWS Systems Manager; no debe almacenar `.ppk` ni claves AWS
-  permanentes.
-- Tras transferir el repo a `abraham-development`, AWS confia en el sujeto
-  OIDC inmutable
-  `repo:abraham-development@260437753/proy_ia_backend@1227907633:environment:production`.
-- La preparacion de EC2, variables GitHub, rol OIDC y SSM se documentan en
-  `deploy/README.md`.
-- En AWS se confirmo el checkout `/home/ubuntu/proy_ia_backend`, el entorno
-  `.venv`, el servicio `proy-ia-backend.service` y Nginx hacia
-  `127.0.0.1:8000`.
-- `scripts/deploy-ec2.sh` exige `.env` privado ya instalado en EC2, instala las
-  dependencias de `requirements.txt` como `ubuntu`, valida, reinicia el
-  servicio y prueba `/ping`.
-- Los push a `main` despliegan el backend cuando la automatizacion AWS esta
-  disponible; hacerlos solo con autorizacion explicita del usuario.
+- El workflow activo esta en la raiz
+  `.github/workflows/deploy-backend.yml`.
+- Se activa por push a `main` solo cuando cambia `backend/**` o el propio
+  workflow; tambien permite `workflow_dispatch`.
+- Usa GitHub OIDC y AWS Systems Manager, con permisos `contents: read` e
+  `id-token: write`; no almacena `.ppk` ni access keys permanentes.
+- El Environment de GitHub es `production`, restringido a `main`.
+- AWS confia en el sujeto OIDC inmutable:
+  `repo:abraham-development@260437753/casa-domotica-ia@1195824020:environment:production`.
+- En EC2 el checkout activo es `/home/ubuntu/casa-domotica-ia`, la aplicacion
+  esta en `/home/ubuntu/casa-domotica-ia/backend` y el entorno virtual en
+  `/home/ubuntu/casa-domotica-ia/backend/.venv`.
+- Se conserva temporalmente `proy-ia-backend.service`; un drop-in apunta al
+  monorepo y Nginx continua hacia `127.0.0.1:8000`.
+- El checkout anterior `/home/ubuntu/proy_ia_backend` se conserva como rollback.
+- `scripts/deploy-ec2.sh` exige `.env` privado ya instalado en EC2, ejecuta
+  sintaxis y 26 pruebas, reinicia el servicio y valida `/ping`.
+- El bootstrap y los despliegues normales fueron verificados; la ejecucion
+  automatica de la revision `34f8b62` termino correctamente.
+- La preparacion, variables, OIDC y rollback se documentan en
+  `backend/deploy/README.md`.
 
 ## Comandos
 
@@ -324,21 +336,23 @@ Pruebas:
 
 ```bash
 cd /home/abraham/proy_ia_security/backend
-venv/bin/python test_http_polling.py
+python3 -B -m unittest -v test_http_polling.py
 ```
 
-La suite verificada para `b.30` contiene 26 pruebas.
+La suite verificada contiene 26 pruebas.
 
-Deploy por Git:
+Publicacion por Git:
 
-```bash
-cd /home/abraham/proy_ia_security/backend
-python3 -c "import ast, pathlib; ast.parse(pathlib.Path('app_api.py').read_text()); print('app_api.py syntax OK')"
-git status --short
-git add app_api.py
-git commit -m "b.N"
-git push
-```
+1. Validar sintaxis y pruebas dentro de `backend/`.
+2. Desde el toplevel `/home/abraham/proy_ia_security`, revisar y hacer commit
+   solo de los archivos autorizados.
+3. Ejecutar `git push` a `main`; un Pull Request es opcional para cambios que
+   requieran revision previa.
+4. Confirmar CI y, si cambiaron archivos operativos del backend, el despliegue
+   AWS.
+
+Un push a `main` que cambie archivos operativos de `backend/**` despliega AWS
+automaticamente. Los Markdown de `backend/` quedan excluidos del trigger.
 
 ## Reglas operativas
 

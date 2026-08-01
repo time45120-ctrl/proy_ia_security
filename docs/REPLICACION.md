@@ -386,6 +386,12 @@ npm run frontend:build
 npm run test:backend
 ```
 
+El repositorio permite `git push` directo a `main`; mantiene bloqueados
+el borrado y el `force push`. Los Pull Requests son opcionales. El workflow
+`.github/workflows/ci.yml` se ejecuta tanto en pushes a `main` como en Pull
+Requests, por lo que despues de publicar se debe confirmar que los tres jobs
+terminen correctamente.
+
 Ademas:
 
 - escanea el arbol y el historial con Gitleaks;

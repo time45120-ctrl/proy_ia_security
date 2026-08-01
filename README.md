@@ -208,10 +208,14 @@ una URL accesible desde el ESP32, no `localhost`. En produccion debe ser HTTPS.
   cuatro variables `NEXT_PUBLIC_*` del ejemplo.
 - Backend: FastAPI tras Nginx/HTTPS en una instancia AWS. `backend/.env` se crea
   directamente en la maquina y nunca se descarga del repositorio.
-- GitHub Actions: `.github/workflows/deploy-backend.yml` filtra cambios de
-  `backend/**`, usa OIDC + AWS SSM y no necesita access keys permanentes.
-- CI: cada PR a `main` compila el frontend con Node 22, ejecuta las pruebas del
-  backend con Python 3.12 y escanea el arbol publicable con Gitleaks.
+- GitHub Actions: `.github/workflows/deploy-backend.yml` filtra archivos
+  operativos de `backend/**`, excluye Markdown, usa OIDC + AWS SSM y no
+  necesita access keys permanentes.
+- Git: `main` acepta push directo, bloquea borrado y `force push`; los Pull
+  Requests son opcionales.
+- CI: cada push a `main` y cada Pull Request compila el frontend con Node 22,
+  ejecuta las pruebas del backend con Python 3.12 y escanea el arbol publicable
+  con Gitleaks.
 - Supabase: las migraciones se publican con `supabase db push`; SMTP y redirects
   se configuran en el Dashboard con valores propios del despliegue.
 

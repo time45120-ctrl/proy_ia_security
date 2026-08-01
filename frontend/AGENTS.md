@@ -1,34 +1,37 @@
 # AGENTS.md - Frontend
 
-Ultima revision: 2026-07-27.
+Ultima revision: 2026-08-01.
 
 ## Contexto
 
-Este directorio es el repo Git desplegable del frontend:
+Este directorio contiene el frontend del monorepo:
 
 ```text
 /home/abraham/proy_ia_security/frontend
 ```
 
-Remoto:
+Repositorio canonico:
 
 ```text
-https://github.com/abraham-development/proy_ia_frontend.git
+https://github.com/abraham-development/casa-domotica-ia.git
 ```
 
-Rama activa: `main`.
+`frontend/` no tiene un Git independiente: su toplevel es
+`/home/abraham/proy_ia_security`. La rama unica en GitHub es `main`;
+acepta pushes directos y mantiene bloqueados el borrado y el `force push`.
 
-Ultimo commit operativo conocido: `f.49`.
+Marca operativa del frontend: `f.64`. Revision del monorepo verificada:
+`34f8b62`.
 
 ## Estado De Trabajo Actual
 
 - Se prueba en produccion y local segun el caso. No hacer commit, push ni
   publicar en Hostinger sin autorizacion explicita del usuario.
-- URL local observada para el frontend: `http://localhost:3001`.
-- `frontend/.env.local` apunta a `http://localhost:8000` para la API local; no
-  modificar ese archivo sin solicitud explicita.
-- La API publica ya refleja el flujo ESP32 directo y el backend operativo
-  conocido es `b.30`.
+- URL local habitual para el frontend: `http://localhost:3000`; puede usarse
+  `3001` si el puerto esta ocupado.
+- No modificar `frontend/.env.local` sin solicitud explicita.
+- La API publica refleja el flujo ESP32 directo; la ultima referencia importada
+  del backend es `b.32`.
 - El 2026-07-27 se completo el corte a AFCR Tecnologia. Supabase Auth envio y
   verifico OTP por SMTP de `contacto@afcrtecnologia.com` y registro/login
   finalizaron con estado 200.
@@ -45,51 +48,48 @@ https://afcrtecnologia.com
 
 Hostinger esta configurado como:
 
-- Repositorio: `proy_ia_frontend`
+- Repositorio: `abraham-development/casa-domotica-ia`
 - Rama: `main`
-- Directorio raiz: `./`
+- Directorio raiz: `./frontend`
 - Framework: `Next.js`
-- Node: `20.x`
-- Build: por defecto / `npm run build`
-- Start: `npm run start` / `node server.js`
+- Node: `24.x`
+- Build: `npm run build`
+- Directorio de salida: `out`
+- Archivo de entrada: ninguno
 
-La configuracion final que funciono localmente y se dejo para Hostinger:
+Configuracion vigente:
 
 - `package.json`
   - `prebuild`: `node scripts/print-deploy-info.js`
   - `build`: `next build`
-  - `start`: `node server.js`
+  - `postbuild`: `node scripts/prepare-static-hosting.js`
+  - No hay comando `start`; Hostinger sirve archivos estaticos.
 - Variables publicas de produccion configuradas en Hostinger:
   - `NEXT_PUBLIC_SITE_URL=https://afcrtecnologia.com`
   - `NEXT_PUBLIC_API_BASE_URL=https://api.afcrtecnologia.com`
   - `NEXT_PUBLIC_SUPABASE_URL=https://omkbowrspgbuwpifksfk.supabase.co`
   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=<clave_publishable>`
 - `next.config.js`
-  - CommonJS.
-  - `reactStrictMode: true`.
-  - Sin `output: "export"`.
-- `server.js`
-  - Arranca Next server desde `.next`.
-  - Escucha en `0.0.0.0`.
-  - Usa `process.env.PORT || 3000`.
-  - Log esperado al arrancar: `AFCR_FRONTEND_READY=http://0.0.0.0:<port>`.
+  - CommonJS, `output: "export"`, `trailingSlash: true`.
+  - `images.unoptimized: true` para servir assets locales directamente.
+- `scripts/prepare-static-hosting.js`
+  - Comprueba `out/` y copia `public/.htaccess` a `out/.htaccess`.
 - `scripts/print-deploy-info.js`
-  - Imprime `AFCR_FRONTEND_BUILD=f.49`.
-  - Imprime `AFCR_FRONTEND_MODE=next-server`.
+  - Imprime `AFCR_FRONTEND_BUILD=f.64`.
+  - Imprime `AFCR_FRONTEND_MODE=static-export`.
 
 Lecciones aprendidas:
 
-- Hostinger genero `.next`, no `out/`, aunque se intento `output: "export"`.
-- No usar `postbuild` que exija `out/index.html`; fallo el despliegue con
-  `AFCR_FRONTEND_EXPORT_MISSING=out/index.html`.
-- No volver a reescribir assets `/_next` a `/next`.
-- No usar Python `http.server` para produccion Hostinger.
-- Si falla Hostinger, mirar el log completo despues del build, no solo el log de
-  compilacion. `npm audit` no fue la causa de los fallos.
-- No ejecutar dos instancias `next dev` sobre este repo ni ejecutar
-  `npm run build` mientras `next dev` escribe `.next`; eso provoco el error
-  local `Cannot find module './820.js'`. Para recuperar, detener instancias,
-  limpiar `.next` y arrancar un solo servidor.
+- No configurar archivo de entrada, `server.js` ni comando start.
+- No depender de `/_next/image`; produjo 503 en el runtime administrado.
+- `public/.htaccess` conserva redireccion de `www`, CSP y cabeceras de
+  seguridad en el artefacto publicado.
+- Si falla Hostinger, revisar que el build genere `out/` y que el postbuild
+  anuncie `AFCR_FRONTEND_HOSTINGER_CONFIG=out/.htaccess`.
+- `npm audit` no fue la causa de los fallos.
+- No ejecutar dos instancias `next dev` ni ejecutar `npm run build` mientras
+  `next dev` escribe `.next`; para recuperar, detener instancias, limpiar
+  `.next` y arrancar un solo servidor.
 
 ## Backend publico
 
@@ -136,8 +136,8 @@ El cliente normaliza URLs para evitar:
 - `lib/supabase/`: cliente/browser/server de Supabase Auth.
 - `middleware.ts`: protege `/desarrollo` mediante sesion Supabase.
 - `package.json`: scripts de Hostinger.
-- `server.js`: servidor Next para produccion.
-- `next.config.js`: config Next.
+- `next.config.js`: exportacion estatica para Hostinger.
+- `scripts/prepare-static-hosting.js`: prepara `.htaccess` dentro de `out/`.
 - `scripts/print-deploy-info.js`: marca visible en logs Hostinger.
 
 ## Autenticacion
@@ -196,7 +196,7 @@ Reglas:
 - Los audios nuevos quedan en el bucket privado `voice-audio` y el dashboard
   solo presenta metadatos del historial, no reproduccion publica.
 - Muestra preview/plan.
-- Si el usuario dice `prende el LED`, el backend `b.30` puede devolver un plan
+- Si el usuario dice `prende el LED`, el backend puede devolver un plan
   ejecutable usando el ESP32 enlazado mas reciente cuando no hay ambiente explicito.
 - Ejecuta hardware solo tras `POST /voice-intent/confirm`.
 - Los ESP32 enlazados reciben comandos por polling HTTP(S) y el dashboard sigue
@@ -241,26 +241,24 @@ el mismo `.next`; detenerlo primero o validar solo tipos con:
 npx tsc --noEmit --pretty false
 ```
 
-Start local compatible con Hostinger:
+Preview local del artefacto estatico, despues del build:
 
 ```bash
 cd /home/abraham/proy_ia_security/frontend
-PORT=3101 npm run start
+python3 -m http.server 3101 --directory out
 ```
 
-Deploy por Git:
+Publicacion por Git:
 
-```bash
-cd /home/abraham/proy_ia_security/frontend
-git status --short
-npm run build
-git add .
-git commit -m "f.N"
-git push
-```
+1. Ejecutar el build dentro de `frontend/`.
+2. Desde el toplevel `/home/abraham/proy_ia_security`, revisar y hacer commit
+   solo de los archivos autorizados.
+3. Ejecutar `git push` a `main`; un Pull Request es opcional para cambios que
+   requieran revision previa.
+4. Confirmar el CI posterior al push y el despliegue de Hostinger.
 
-No commitear `.env` ni variantes `.env.*`; solo `.env.example` puede quedar
-versionado.
+Cada push a `main` puede activar Hostinger y ejecuta CI. No commitear `.env`
+ni variantes `.env.*`; solo `.env.example` puede quedar versionado.
 
 ## Diagnostico rapido
 
@@ -278,7 +276,9 @@ curl -I https://afcrtecnologia.com
 
 Si Hostinger falla:
 
-- Confirmar commit en log: `AFCR_FRONTEND_BUILD=f.N`.
-- Confirmar modo: `AFCR_FRONTEND_MODE=next-server`.
-- Confirmar que no aparece `AFCR_FRONTEND_EXPORT_MISSING`.
-- Confirmar que el start usa `node server.js`.
+- Confirmar marca en log: `AFCR_FRONTEND_BUILD=f.64`.
+- Confirmar modo: `AFCR_FRONTEND_MODE=static-export`.
+- Confirmar que se genero `out/`.
+- Confirmar `AFCR_FRONTEND_HOSTINGER_CONFIG=out/.htaccess`.
+- Confirmar directorio raiz `./frontend`, salida `out` y archivo de entrada
+  vacio.

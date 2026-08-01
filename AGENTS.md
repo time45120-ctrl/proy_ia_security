@@ -1,6 +1,6 @@
 # AGENTS.md - Memoria compacta de Codex
 
-Ultima revision: 2026-07-27.
+Ultima revision: 2026-08-01.
 
 ## Contexto rapido
 
@@ -18,18 +18,19 @@ No recrear la copia legacy anidada `proy_ia_security/`.
 
 - El usuario esta validando en produccion y local segun el caso. No desplegar,
   hacer commits ni `git push` sin autorizacion explicita del usuario.
-- Frontend local de prueba observado: `http://localhost:3001`.
+- Frontend local de prueba habitual: `http://localhost:3000` (puede usarse
+  `3001` si ese puerto esta ocupado).
 - Backend local de prueba debe correr en `http://localhost:8000`; para el
   ESP32 fisico debe anunciar una URL LAN accesible, no `localhost`.
-- El flujo ESP32 por HTTP(S) polling ya esta publicado en backend AWS. El
-  backend operativo conocido es `b.30`.
-- El frontend operativo conocido es `f.49`; Hostinger debe mostrar
-  `AFCR_FRONTEND_BUILD=f.49` y `AFCR_FRONTEND_MODE=next-server`.
+- El flujo ESP32 por HTTP(S) polling esta publicado en AWS desde el monorepo.
+  La ultima referencia importada del backend es `b.32` y la revision desplegada
+  del monorepo verificada es `34f8b62`.
+- El frontend operativo es `f.64`; Hostinger debe mostrar
+  `AFCR_FRONTEND_BUILD=f.64` y `AFCR_FRONTEND_MODE=static-export`.
 - El 2026-07-27 se migro produccion a `afcrtecnologia.com` y
   `api.afcrtecnologia.com`. El frontend anterior ya no tiene A/AAAA, el virtual
-  host de la API anterior se retiro de Nginx con respaldo recuperable y CORS
-  rechaza el origen anterior. Solo queda verificar la eliminacion DNS del A
-  `api.afcrseguridad.com` en Hostinger.
+  host de la API anterior se retiro de Nginx con respaldo recuperable, se
+  elimino su DNS y CORS rechaza el origen anterior.
 - Supabase Auth usa Site URL y redirects del dominio nuevo. El SMTP productivo
   usa `contacto@afcrtecnologia.com`; registro, envio de OTP, verificacion e
   inicio de sesion terminaron con estado 200.
@@ -46,47 +47,27 @@ No recrear la copia legacy anidada `proy_ia_security/`.
 - Conteos verificados despues de la migracion y QA: 8 usuarios, 8 hogares,
   8 perfiles, 8 membresias, 2 dispositivos, 194 intenciones y 255 comandos.
 
-## Repos Git activos
+## Repositorio Git activo
 
-Hay repos Git separados. Usar el repo correcto para commits y push:
+Todo el proyecto usa un unico repositorio y un unico `.git`:
 
-- Raiz/documentacion: `/home/abraham/proy_ia_security`
-  - Remoto: `abraham-development/proy_ia_security`
-  - Rama observada: `new1`
-- Frontend: `/home/abraham/proy_ia_security/frontend`
-  - Remoto: `abraham-development/proy_ia_frontend`
-  - Rama: `main`
-  - Ultimo cambio operativo conocido: `f.49`
-- Backend: `/home/abraham/proy_ia_security/backend`
-  - Remoto: `abraham-development/proy_ia_backend`
-  - Rama: `main`
-  - Ultimo cambio operativo conocido: `b.30`
-  - Automatizacion AWS GitHub Actions + SSM activa para despliegue autorizado
-    desde `main`.
+- Ruta local: `/home/abraham/proy_ia_security`
+- Remoto canonico: `abraham-development/casa-domotica-ia`
+- Rama unica en GitHub: `main`.
+- `main` acepta `git push` directo; conserva bloqueo de borrado y
+  `force push`, pero no exige Pull Request ni status checks previos.
+- Revision remota verificada antes de esta actualizacion: `34f8b62`.
+- `frontend/` y `backend/` pertenecen al mismo worktree; no son repos anidados.
+- Los antiguos repos `casa-domotica-ia-frontend` y
+  `casa-domotica-ia-backend` ya fueron eliminados de GitHub. Sus historiales
+  permanecen importados bajo sus subdirectorios y existen bundles privados de
+  respaldo.
 
-Para cambios reales de frontend:
-
-```bash
-cd /home/abraham/proy_ia_security/frontend
-npm run build
-git add .
-git commit -m "f.N"
-git push
-```
-
-Para cambios reales de backend:
-
-```bash
-cd /home/abraham/proy_ia_security/backend
-python3 -c "import ast, pathlib; ast.parse(pathlib.Path('app_api.py').read_text()); print('app_api.py syntax OK')"
-git add app_api.py
-git commit -m "b.N"
-git push
-```
-
-No confundir con commits desde la raiz: el backend desplegable se versiona en
-`/home/abraham/proy_ia_security/backend` y el frontend desplegable en
-`/home/abraham/proy_ia_security/frontend`.
+El flujo normal permite validar, hacer commit sobre `main` y ejecutar
+`git push`. Un Pull Request sigue siendo opcional y recomendable para cambios
+delicados o cuando se desea revision previa. CI ejecuta build frontend, pruebas
+backend y Gitleaks tanto en pushes a `main` como en Pull Requests. No hacer
+commit, push, PR, merge o despliegue sin autorizacion explicita.
 
 ## Mapa actual
 
@@ -121,8 +102,8 @@ frontend/
 |   `-- backend-api.ts
 |-- package.json
 |-- next.config.js
-|-- server.js
 |-- scripts/
+|   |-- prepare-static-hosting.js
 |   `-- print-deploy-info.js
 `-- .env.example
 ```
@@ -159,38 +140,45 @@ backend/
 NEXT_PUBLIC_API_BASE_URL=https://api.afcrtecnologia.com
 ```
 
+- Hostinger despliega `frontend/` desde cada merge autorizado a `main`.
+- `.github/workflows/deploy-backend.yml` despliega AWS cuando cambian
+  archivos operativos de `backend/**` o el propio workflow; ignora
+  `backend/**/*.md` y usa OIDC, SSM y el Environment `production`.
+- `.github/workflows/ci.yml` valida pushes a `main` y Pull Requests con
+  Node 22, Python 3.12 y Gitleaks.
+- La ejecucion automatica AWS de `34f8b62` termino correctamente el
+  2026-07-31. Ese mismo dia `/welcome/` respondio 200 desde Hostinger y
+  `GET /ping` devolvio `{"pong":true}`.
+
 El frontend publico corre por HTTPS; la API publica tambien debe estar por HTTPS
 para evitar contenido mixto.
 
-## Lecciones del despliegue en Hostinger
+## Despliegue frontend en Hostinger
 
-- Hostinger esta configurado como framework `Next.js`, root directory `./`,
-  Node `20.x`, build por defecto.
+- Repositorio: `abraham-development/casa-domotica-ia`.
+- Rama: `main`.
+- Directorio raiz: `./frontend`.
+- Framework: `Next.js`.
+- Node: `24.x`.
+- Comando de build: `npm run build`.
+- Directorio de salida: `out`.
+- Archivo de entrada: ninguno; es publicacion estatica.
 - En los logs correctos debe verse:
 
 ```text
-AFCR_FRONTEND_BUILD=f.49
-AFCR_FRONTEND_MODE=next-server
+AFCR_FRONTEND_BUILD=f.64
+AFCR_FRONTEND_MODE=static-export
 ```
 
-- Hostinger no genero `out/index.html` de forma fiable aunque `output: "export"`
-  estuviera en `next.config`. Se retiro el modo static export.
-- No volver a agregar un `postbuild` que falle si no existe `out/index.html`.
-- Config actual correcta del frontend:
-  - `next.config.js` CommonJS sin `output: "export"`.
-  - `npm run build` ejecuta `next build` con API publica.
-  - `npm run start` ejecuta `node server.js`.
-  - `server.js` arranca Next server sobre `.next` y escucha
-    `process.env.PORT || 3000` en `0.0.0.0`.
-- Antes hubo varios intentos fallidos:
-  - Reescribir `/_next` a `/next`.
-  - Servir `out/` con Python.
-  - Exigir `out/index.html` en `postbuild`.
-  - Static export forzado en Hostinger.
-  Estos patrones no deben recuperarse sin evidencia nueva.
+- `next.config.js` usa `output: "export"`, `trailingSlash: true` e imagenes sin
+  optimizador dinamico para que Hostinger sirva todo desde `out/`.
+- El `postbuild` copia `public/.htaccess` a `out/.htaccess`; este archivo aplica
+  la redireccion de `www`, cabeceras de seguridad y CSP.
+- No configurar `server.js`, comando start ni archivo de entrada en Hostinger.
+- No volver a depender de `/_next/image`: el runtime administrado devolvia 503;
+  los assets locales se publican directamente desde `public/`.
 - `npm audit` puede mostrar vulnerabilidades; eso no fue la causa del fallo de
-  despliegue. La causa fue incompatibilidad entre la salida esperada y lo que
-  Hostinger estaba construyendo/arrancando.
+  despliegue.
 - En desarrollo local no correr dos procesos `next dev` para el mismo
   `frontend/` ni ejecutar `npm run build` mientras un `next dev` activo usa el
   mismo `.next`; el 2026-05-25 eso corrompio chunks y produjo
@@ -325,7 +313,10 @@ Responsabilidades:
 Variables relevantes:
 
 ```python
-SAVE_DIR = "/home/abraham/proy_ia_security/audios_recibidos"
+SAVE_DIR = os.getenv(
+    "VOICE_AUDIO_SAVE_DIR",
+    str(Path(__file__).resolve().parent / "audios_recibidos"),
+)
 MQTT_SERVER = os.getenv("MQTT_SERVER", "127.0.0.1")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_TOPIC_LUCES = os.getenv("MQTT_TOPIC_LUCES", "casa/esp32/luces")
@@ -378,11 +369,14 @@ Endpoints de dispositivos:
 POST /devices/pairing-token
 POST /devices/claim
 GET /devices
+GET /devices/{device_id}/led-states
 POST /devices/{device_id}/heartbeat
 POST /devices/{device_id}/command
 GET /device/commands?device_id={device_id}
 POST /device/commands/{command_id}/ack
 GET /device/commands/{command_id}/status
+GET /voice-intents/{request_id}/audio/respuesta-ia
+GET /voice-intents/recent
 ```
 
 `POST /voice-intent` no ejecuta inmediatamente el comando fisico. Devuelve
@@ -551,7 +545,7 @@ Frontend:
 ```bash
 cd /home/abraham/proy_ia_security/frontend
 npm run build
-PORT=3101 npm run start
+python3 -m http.server 3101 --directory out
 ```
 
 Backend:
@@ -591,8 +585,9 @@ curl http://localhost:8000/ping
   - `frontend/app/desarrollo/workspace-context.tsx`
   - `frontend/components/voice-dashboard.tsx`
   - `frontend/package.json`
-  - `frontend/server.js`
   - `frontend/next.config.js`
+  - `frontend/scripts/prepare-static-hosting.js`
+  - `frontend/public/.htaccess`
 - Antes de cambiar backend, revisar `backend/app_api.py` completo.
 - Mantener el contrato MQTT salvo solicitud explicita.
 - Recordar que el flujo de voz actual es preview + confirmacion.
@@ -601,7 +596,7 @@ curl http://localhost:8000/ping
   equipo de la red.
 - Para diagnosticar Hostinger, comparar el log con la marca
   `AFCR_FRONTEND_BUILD=...` de `frontend/scripts/print-deploy-info.js`.
-- Si el sitio publica `503`, revisar primero si Hostinger esta arrancando el
-  proceso Node (`npm run start`) y si el log muestra `AFCR_FRONTEND_READY=...`.
-- No recuperar el postbuild de `out/index.html` salvo que Hostinger se cambie a
-  despliegue estatico puro.
+- Si el sitio publica `503`, comprobar que Hostinger usa `./frontend`, ejecuta
+  `npm run build`, publica `out` y no tiene archivo de entrada.
+- Mantener `output: "export"`, `images.unoptimized` y el postbuild que copia
+  `public/.htaccess`; son parte de la configuracion estatica vigente.

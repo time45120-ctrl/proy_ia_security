@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inventario no destructivo para actualizar los AGENTS.md de proy_ia_security."""
+"""Inventario no destructivo para actualizar los AGENTS.md del monorepo."""
 
 from __future__ import annotations
 
@@ -48,13 +48,13 @@ def main() -> None:
     for path in AGENTS:
         print(f"- {path}: {'OK' if path.exists() else 'MISSING'}")
 
-    section("Git")
+    section("Git monorepo")
+    print(run(["git", "status", "-sb"], ROOT))
+    print("last:", run(["git", "log", "-1", "--oneline"], ROOT))
+    remote = run(["git", "remote", "-v"], ROOT).splitlines()
+    print("remote:", remote[0] if remote else "no remote")
     for label, path in [("root", ROOT), ("backend", BACKEND), ("frontend", FRONTEND)]:
-        print(f"\n[{label}] {path}")
-        print(run(["git", "status", "-sb"], path))
-        print("last:", run(["git", "log", "-1", "--oneline"], path))
-        remote = run(["git", "remote", "-v"], path).splitlines()
-        print("remote:", remote[0] if remote else "no remote")
+        print(f"{label} toplevel:", run(["git", "rev-parse", "--show-toplevel"], path))
 
     section("Frontend build marker")
     marker = FRONTEND / "scripts" / "print-deploy-info.js"
