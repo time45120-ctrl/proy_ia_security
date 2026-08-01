@@ -28,6 +28,12 @@ Una variable `NEXT_PUBLIC_*` siempre debe considerarse publica. No confies en
 la publishable key para autorizar datos: habilita RLS y aplica politicas por
 usuario/hogar.
 
+Para el despliegue automatizado, `SUPABASE_ACCESS_TOKEN` y
+`SUPABASE_DB_PASSWORD` viven exclusivamente como secrets del Environment
+`production` de GitHub. `SUPABASE_PROJECT_REF` y
+`SUPABASE_DEPLOY_ENABLED` son variables no secretas. Mantener el interruptor
+en `false` hasta confirmar que ambos secrets existen.
+
 ## Archivos locales
 
 ```text

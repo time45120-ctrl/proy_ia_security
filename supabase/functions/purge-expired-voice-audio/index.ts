@@ -1,13 +1,32 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
+function readDefaultSecretKey() {
+  const namedKeys = Deno.env.get("SUPABASE_SECRET_KEYS");
+  if (namedKeys) {
+    try {
+      const parsed = JSON.parse(namedKeys) as Record<string, string>;
+      if (parsed.default) {
+        return parsed.default;
+      }
+    } catch {
+      // Continue with the single-key and legacy fallbacks used by local setups.
+    }
+  }
+
+  return (
+    Deno.env.get("SUPABASE_SECRET_KEY") ??
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")
+  );
+}
+
 Deno.serve(async (request) => {
   if (request.method !== "POST") {
     return new Response("Method not allowed", { status: 405 });
   }
 
   const url = Deno.env.get("SUPABASE_URL");
-  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const serviceKey = readDefaultSecretKey();
   if (!url || !serviceKey) {
     return Response.json({ error: "Supabase environment is incomplete." }, { status: 500 });
   }

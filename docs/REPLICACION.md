@@ -178,8 +178,10 @@ select vault.create_secret(
 ```
 
 No guardes el SQL ya rellenado. La funcion recibe su credencial privilegiada
-desde el entorno administrado de Supabase; no se añade una service role al
-repositorio.
+desde el entorno administrado de Supabase. Primero usa
+`SUPABASE_SECRET_KEYS["default"]`, admite `SUPABASE_SECRET_KEY` en desarrollo
+local y conserva `SUPABASE_SERVICE_ROLE_KEY` solo como fallback legacy. Ninguna
+de estas claves se añade al repositorio.
 
 La compatibilidad `cron_anon_key` es legacy. Las nuevas claves publishable no
 son JWT y no deben enviarse como `Authorization: Bearer`. Antes de retirar las
@@ -376,6 +378,34 @@ clona el monorepo en paralelo, copia el `.env` anterior con modo `600`, crea el
 entorno virtual, valida el backend, instala un drop-in de systemd y restaura el
 servicio anterior automaticamente si el health check falla.
 
+### 10.1 Supabase automatico desde GitHub
+
+`.github/workflows/deploy-supabase.yml` se activa en `main` cuando cambian
+`supabase/migrations/**`, `supabase/functions/**` o el propio workflow. Usa una
+version fijada de Supabase CLI, comprueba primero `db push --dry-run`, aplica
+solo migraciones pendientes y despliega todas las Edge Functions mediante la
+Management API sin Docker.
+
+Configura como variables del repositorio:
+
+```text
+SUPABASE_PROJECT_REF=omkbowrspgbuwpifksfk
+SUPABASE_DEPLOY_ENABLED=false
+```
+
+Configura en el Environment `production`, como secretos:
+
+```text
+SUPABASE_ACCESS_TOKEN
+SUPABASE_DB_PASSWORD
+```
+
+El access token se crea desde la cuenta de Supabase y el password corresponde
+a Postgres del proyecto. Introducelos con `gh secret set`; no uses argumentos
+de linea que puedan quedar en el historial. Cuando ambos existan, cambia
+`SUPABASE_DEPLOY_ENABLED=true`. El workflow valida que el project ref sea el
+proyecto autorizado antes de conectar.
+
 ## 11. Checklist antes de publicar
 
 ```bash
@@ -384,6 +414,22 @@ git diff --check
 npm run check:env
 npm run frontend:build
 npm run test:backend
+```
+
+Desde la maquina autorizada, despues de crear el commit y dejar el worktree
+limpio, el preflight integrado tambien comprueba `gh`, el remoto y un push
+simulado sin publicar cambios:
+
+```bash
+npm run deploy:check:all
+```
+
+Para una recuperacion manual de Supabase, conserva el mismo orden del workflow:
+
+```bash
+npx supabase db push --dry-run
+npx supabase db push
+npx supabase functions deploy --use-api
 ```
 
 El repositorio permite `git push` directo a `main`; mantiene bloqueados
@@ -413,3 +459,23 @@ Ademas:
 
 Cada persona crea sus propios proyectos, dominios y credenciales siguiendo los
 `.env.example` y conserva los secretos fuera de Git.
+
+## 13. Ubicacion de credenciales de produccion
+
+| Credencial o valor | Ubicacion correcta |
+|---|---|
+| Variables `NEXT_PUBLIC_*` | Panel de Hostinger; son publicas y se incorporan al build |
+| `OPENAI_API_KEY`, `SUPABASE_SECRET_KEY`, MQTT | `/home/ubuntu/casa-domotica-ia/backend/.env` en EC2, modo `600` |
+| AWS para GitHub Actions | OIDC mediante `AWS_ROLE_TO_ASSUME`; no usar access keys permanentes |
+| Region, instancia y rutas AWS | Variables del Environment `production` de GitHub |
+| Token de Supabase CLI | Perfil local administrado por el CLI, nunca dentro del repo |
+| Password de Postgres/Supabase | Gestor de secretos; se introduce al enlazar o desplegar |
+| `SUPABASE_ACCESS_TOKEN` CI | Secret del Environment `production` de GitHub |
+| `SUPABASE_DB_PASSWORD` CI | Secret del Environment `production` de GitHub |
+| SMTP | Dashboard de Supabase Auth |
+| `project_url` y credencial del cron | Supabase Vault |
+| WiFi y token de pairing | Copia local del sketch ESP32 |
+
+AWS no necesita GitHub Secrets porque usa OIDC. Supabase si requiere los dos
+secretos CI indicados; nunca deben declararse como variables ni escribirse en
+el workflow.

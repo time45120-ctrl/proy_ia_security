@@ -34,6 +34,6 @@ Corregir las vulnerabilidades del frontend actualizando únicamente Next.js dent
 - No hacer commit, push ni despliegue salvo autorización explícita.
 
 ## Assumptions
-- El cambio se limita a `/home/abraham/proy_ia_security/frontend`.
+- El cambio se limita a `/home/abraham/proyectos/casa-domotica-ia/frontend`.
 - Se prioriza seguridad sin romper producción.
 - Si aparece incompatibilidad, se detiene y se reporta antes de ampliar cambios.

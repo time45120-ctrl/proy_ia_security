@@ -9,7 +9,7 @@ IA para interpretar comandos y flujo de confirmacion antes de ejecutar acciones
 por polling HTTP(S) en ESP32 reales, con MQTT legacy. La fuente activa es:
 
 ```text
-/home/abraham/proy_ia_security
+/home/abraham/proyectos/casa-domotica-ia
 ```
 
 No recrear la copia legacy anidada `proy_ia_security/`.
@@ -23,10 +23,11 @@ No recrear la copia legacy anidada `proy_ia_security/`.
 - Backend local de prueba debe correr en `http://localhost:8000`; para el
   ESP32 fisico debe anunciar una URL LAN accesible, no `localhost`.
 - El flujo ESP32 por HTTP(S) polling esta publicado en AWS desde el monorepo.
-  La ultima referencia importada del backend es `b.32` y la revision desplegada
-  del monorepo verificada es `34f8b62`.
-- El frontend operativo es `f.64`; Hostinger debe mostrar
-  `AFCR_FRONTEND_BUILD=f.64` y `AFCR_FRONTEND_MODE=static-export`.
+  La ultima referencia importada del backend es `b.32` y la ultima ejecucion
+  de despliegue verificada corresponde a `0a02700` (`n.42`).
+- El frontend publicado verificado es `f.64`. La fuente preparada para el
+  proximo despliegue es `f.65`; su log debe mostrar
+  `AFCR_FRONTEND_BUILD=f.65` y `AFCR_FRONTEND_MODE=static-export`.
 - El 2026-07-27 se migro produccion a `afcrtecnologia.com` y
   `api.afcrtecnologia.com`. El frontend anterior ya no tiene A/AAAA, el virtual
   host de la API anterior se retiro de Nginx con respaldo recuperable, se
@@ -46,17 +47,26 @@ No recrear la copia legacy anidada `proy_ia_security/`.
   columnas ni metadata empresariales.
 - Conteos verificados despues de la migracion y QA: 8 usuarios, 8 hogares,
   8 perfiles, 8 membresias, 2 dispositivos, 194 intenciones y 255 comandos.
+- Esta maquina tiene GitHub CLI autenticado como `abraham-development` mediante
+  keyring, con scopes `repo` y `workflow`; Git usa `gh auth git-credential`
+  para HTTPS. Antes del push real ejecutar `npm run deploy:check`.
+- Supabase CLI esta autenticado y enlazado a `omkbowrspgbuwpifksfk`; las diez
+  migraciones locales coinciden con produccion y la Edge Function de purga esta
+  activa. El workflow automatico queda bloqueado hasta cargar sus dos secrets.
+- `frontend/.env.local` existe pero esta incompleto y `backend/.env` no existe.
+  Esto no bloquea Hostinger/AWS, cuyos entornos ya guardan sus valores, pero si
+  bloquea ejecutar localmente toda la aplicacion contra servicios reales.
 
 ## Repositorio Git activo
 
 Todo el proyecto usa un unico repositorio y un unico `.git`:
 
-- Ruta local: `/home/abraham/proy_ia_security`
+- Ruta local: `/home/abraham/proyectos/casa-domotica-ia`
 - Remoto canonico: `abraham-development/casa-domotica-ia`
 - Rama unica en GitHub: `main`.
 - `main` acepta `git push` directo; conserva bloqueo de borrado y
   `force push`, pero no exige Pull Request ni status checks previos.
-- Revision remota verificada antes de esta actualizacion: `34f8b62`.
+- Revision remota verificada antes de los cambios locales actuales: `0a02700`.
 - `frontend/` y `backend/` pertenecen al mismo worktree; no son repos anidados.
 - Los antiguos repos `casa-domotica-ia-frontend` y
   `casa-domotica-ia-backend` ya fueron eliminados de GitHub. Sus historiales
@@ -68,6 +78,10 @@ El flujo normal permite validar, hacer commit sobre `main` y ejecutar
 delicados o cuando se desea revision previa. CI ejecuta build frontend, pruebas
 backend y Gitleaks tanto en pushes a `main` como en Pull Requests. No hacer
 commit, push, PR, merge o despliegue sin autorizacion explicita.
+
+`npm run deploy:check` valida fuente, pruebas, `gh` y un push simulado con un
+worktree limpio. `npm run deploy:check:all` exige ademas que Supabase CLI este
+enlazado a `omkbowrspgbuwpifksfk`.
 
 ## Mapa actual
 
@@ -144,10 +158,14 @@ NEXT_PUBLIC_API_BASE_URL=https://api.afcrtecnologia.com
 - `.github/workflows/deploy-backend.yml` despliega AWS cuando cambian
   archivos operativos de `backend/**` o el propio workflow; ignora
   `backend/**/*.md` y usa OIDC, SSM y el Environment `production`.
+- `.github/workflows/deploy-supabase.yml` prepara el despliegue automatico de
+  migraciones y Edge Functions. Requiere los secrets
+  `SUPABASE_ACCESS_TOKEN` y `SUPABASE_DB_PASSWORD` en `production`; mantener
+  `SUPABASE_DEPLOY_ENABLED=false` hasta configurarlos.
 - `.github/workflows/ci.yml` valida pushes a `main` y Pull Requests con
   Node 22, Python 3.12 y Gitleaks.
-- La ejecucion automatica AWS de `34f8b62` termino correctamente el
-  2026-07-31. Ese mismo dia `/welcome/` respondio 200 desde Hostinger y
+- CI y la ejecucion automatica AWS de `0a02700` (`n.42`) terminaron
+  correctamente. El 2026-08-01 `/welcome/` respondio 200 desde Hostinger y
   `GET /ping` devolvio `{"pong":true}`.
 
 El frontend publico corre por HTTPS; la API publica tambien debe estar por HTTPS
@@ -166,7 +184,7 @@ para evitar contenido mixto.
 - En los logs correctos debe verse:
 
 ```text
-AFCR_FRONTEND_BUILD=f.64
+AFCR_FRONTEND_BUILD=f.65
 AFCR_FRONTEND_MODE=static-export
 ```
 
@@ -189,7 +207,8 @@ AFCR_FRONTEND_MODE=static-export
 
 Entrypoint:
 
-- `frontend/app/page.tsx` redirige a `/welcome`.
+- `frontend/app/page.tsx` hace una redireccion compatible con exportacion
+  estatica a `/welcome/` y deja un enlace manual de respaldo.
 - `frontend/app/welcome/page.tsx` implementa acceso/bienvenida.
 - `frontend/app/desarrollo/layout.tsx` implementa shell y acceso al laboratorio.
 - `frontend/app/layout.tsx` define idioma `es`, metadata y estilos globales.
@@ -297,6 +316,9 @@ Responsabilidades:
   sin variables Supabase.
 - Guardar audio nuevo en Storage privado `voice-audio` cuando Supabase esta
   configurado; la purga diaria elimina objetos vencidos a los 30 dias.
+- La Edge Function de purga prefiere la clave moderna
+  `SUPABASE_SECRET_KEYS["default"]`, admite `SUPABASE_SECRET_KEY` local y solo
+  conserva `SUPABASE_SERVICE_ROLE_KEY` como compatibilidad legacy.
 - Transcribir audio.
 - Interpretar intencion con OpenAI u Ollama y fallback por reglas.
 - Separar respuesta de IA en:
@@ -543,7 +565,7 @@ uvicorn app_api:app --host 0.0.0.0 --port 8000
 Frontend:
 
 ```bash
-cd /home/abraham/proy_ia_security/frontend
+cd /home/abraham/proyectos/casa-domotica-ia/frontend
 npm run build
 python3 -m http.server 3101 --directory out
 ```
@@ -551,7 +573,7 @@ python3 -m http.server 3101 --directory out
 Backend:
 
 ```bash
-cd /home/abraham/proy_ia_security/backend
+cd /home/abraham/proyectos/casa-domotica-ia/backend
 python3 -c "import ast, pathlib; ast.parse(pathlib.Path('app_api.py').read_text()); print('app_api.py syntax OK')"
 uvicorn app_api:app --host 0.0.0.0 --port 8000
 ```

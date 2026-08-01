@@ -2,6 +2,7 @@
   RewriteEngine On
   RewriteCond %{HTTP_HOST} ^www\.afcrtecnologia\.com$ [NC]
   RewriteRule ^ https://afcrtecnologia.com%{REQUEST_URI} [R=301,L,NE]
+  RewriteRule ^$ /welcome/ [R=302,L]
 </IfModule>
 
 <IfModule mod_headers.c>

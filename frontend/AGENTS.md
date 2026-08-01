@@ -7,7 +7,7 @@ Ultima revision: 2026-08-01.
 Este directorio contiene el frontend del monorepo:
 
 ```text
-/home/abraham/proy_ia_security/frontend
+/home/abraham/proyectos/casa-domotica-ia/frontend
 ```
 
 Repositorio canonico:
@@ -17,11 +17,11 @@ https://github.com/abraham-development/casa-domotica-ia.git
 ```
 
 `frontend/` no tiene un Git independiente: su toplevel es
-`/home/abraham/proy_ia_security`. La rama unica en GitHub es `main`;
+`/home/abraham/proyectos/casa-domotica-ia`. La rama unica en GitHub es `main`;
 acepta pushes directos y mantiene bloqueados el borrado y el `force push`.
 
-Marca operativa del frontend: `f.64`. Revision del monorepo verificada:
-`34f8b62`.
+Marca de la fuente preparada para el proximo despliegue: `f.65`. El frontend
+publicado verificado es `f.64` y la revision remota previa es `0a02700`.
 
 ## Estado De Trabajo Actual
 
@@ -30,6 +30,8 @@ Marca operativa del frontend: `f.64`. Revision del monorepo verificada:
 - URL local habitual para el frontend: `http://localhost:3000`; puede usarse
   `3001` si el puerto esta ocupado.
 - No modificar `frontend/.env.local` sin solicitud explicita.
+- `frontend/.env.local` no existe en este checkout; el build de Hostinger usa
+  las variables publicas configuradas en el panel.
 - La API publica refleja el flujo ESP32 directo; la ultima referencia importada
   del backend es `b.32`.
 - El 2026-07-27 se completo el corte a AFCR Tecnologia. Supabase Auth envio y
@@ -75,7 +77,7 @@ Configuracion vigente:
 - `scripts/prepare-static-hosting.js`
   - Comprueba `out/` y copia `public/.htaccess` a `out/.htaccess`.
 - `scripts/print-deploy-info.js`
-  - Imprime `AFCR_FRONTEND_BUILD=f.64`.
+  - Imprime `AFCR_FRONTEND_BUILD=f.65`.
   - Imprime `AFCR_FRONTEND_MODE=static-export`.
 
 Lecciones aprendidas:
@@ -120,10 +122,11 @@ El cliente normaliza URLs para evitar:
 
 ## Archivos importantes
 
-- `app/page.tsx`: redirige a `/welcome`.
+- `app/page.tsx`: redirige en el navegador a `/welcome/` y conserva un enlace
+  manual para que la raiz exportada siempre entregue HTML util.
 - `app/welcome/page.tsx`: pantalla de ingreso al laboratorio.
-- `app/auth/confirm/route.ts`: confirmacion de correo Supabase y creacion de
-  sesion SSR antes de ingresar al laboratorio.
+- `app/auth/confirm/page.tsx`: confirmacion de correo Supabase en el navegador
+  para enlaces historicos y redireccion segura al laboratorio.
 - `app/desarrollo/layout.tsx`: shell y control de acceso al laboratorio.
 - `app/desarrollo/workspace-context.tsx`: inventario, demo y navegacion.
 - `app/desarrollo/sync/sync-lab.tsx`: pairing y guia Arduino IDE.
@@ -133,8 +136,10 @@ El cliente normaliza URLs para evitar:
 - `components/voice-dashboard.tsx`: grabacion de voz, tarjeta IA, tarjetas de
   modulos, confirmacion e historial auditado de voz.
 - `lib/backend-api.ts`: cliente HTTP al backend.
-- `lib/supabase/`: cliente/browser/server de Supabase Auth.
-- `middleware.ts`: protege `/desarrollo` mediante sesion Supabase.
+- `lib/supabase/`: clientes y helpers de Supabase Auth.
+- No existe middleware raiz en el export estatico. `workspace-context.tsx`
+  valida la sesion en el navegador y el backend vuelve a validar el JWT y el
+  hogar en cada operacion protegida.
 - `package.json`: scripts de Hostinger.
 - `next.config.js`: exportacion estatica para Hostinger.
 - `scripts/prepare-static-hosting.js`: prepara `.htaccess` dentro de `out/`.
@@ -230,7 +235,7 @@ demo-luz-cocina
 Build:
 
 ```bash
-cd /home/abraham/proy_ia_security/frontend
+cd /home/abraham/proyectos/casa-domotica-ia/frontend
 npm run build
 ```
 
@@ -244,14 +249,14 @@ npx tsc --noEmit --pretty false
 Preview local del artefacto estatico, despues del build:
 
 ```bash
-cd /home/abraham/proy_ia_security/frontend
+cd /home/abraham/proyectos/casa-domotica-ia/frontend
 python3 -m http.server 3101 --directory out
 ```
 
 Publicacion por Git:
 
 1. Ejecutar el build dentro de `frontend/`.
-2. Desde el toplevel `/home/abraham/proy_ia_security`, revisar y hacer commit
+2. Desde el toplevel `/home/abraham/proyectos/casa-domotica-ia`, revisar y hacer commit
    solo de los archivos autorizados.
 3. Ejecutar `git push` a `main`; un Pull Request es opcional para cambios que
    requieran revision previa.
@@ -276,7 +281,7 @@ curl -I https://afcrtecnologia.com
 
 Si Hostinger falla:
 
-- Confirmar marca en log: `AFCR_FRONTEND_BUILD=f.64`.
+- Confirmar marca en log: `AFCR_FRONTEND_BUILD=f.65`.
 - Confirmar modo: `AFCR_FRONTEND_MODE=static-export`.
 - Confirmar que se genero `out/`.
 - Confirmar `AFCR_FRONTEND_HOSTINGER_CONFIG=out/.htaccess`.

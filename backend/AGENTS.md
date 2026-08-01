@@ -7,7 +7,7 @@ Ultima revision: 2026-08-01.
 Este directorio contiene el backend desplegable del monorepo:
 
 ```text
-/home/abraham/proy_ia_security/backend
+/home/abraham/proyectos/casa-domotica-ia/backend
 ```
 
 Repositorio canonico:
@@ -17,11 +17,11 @@ https://github.com/abraham-development/casa-domotica-ia.git
 ```
 
 `backend/` no tiene un Git independiente: su toplevel es
-`/home/abraham/proy_ia_security`. La rama unica en GitHub es `main`;
+`/home/abraham/proyectos/casa-domotica-ia`. La rama unica en GitHub es `main`;
 acepta pushes directos y mantiene bloqueados el borrado y el `force push`.
 
-Ultima referencia importada del backend: `b.32`. Revision del monorepo
-desplegada y verificada: `34f8b62`.
+Ultima referencia importada del backend: `b.32`. La ultima ejecucion de
+despliegue verificada corresponde a `0a02700` (`n.42`).
 
 Backend publico:
 
@@ -39,6 +39,9 @@ IP AWS:
 
 - El usuario valida en produccion y local segun el caso. No hacer commit, push
   ni actualizar AWS sin autorizacion explicita.
+- `backend/.env` no existe en este checkout. El despliegue AWS conserva el
+  archivo privado instalado en EC2; para runtime local completo hay que crear
+  el archivo desde `.env.example` sin versionarlo.
 - Produccion activa: frontend Hostinger `https://afcrtecnologia.com`,
   backend AWS `https://api.afcrtecnologia.com` (`3.132.192.3`) y Supabase
   `omkbowrspgbuwpifksfk`.
@@ -291,7 +294,7 @@ Acciones validas:
 - `scripts/deploy-ec2.sh` exige `.env` privado ya instalado en EC2, ejecuta
   sintaxis y 26 pruebas, reinicia el servicio y valida `/ping`.
 - El bootstrap y los despliegues normales fueron verificados; la ejecucion
-  automatica de la revision `34f8b62` termino correctamente.
+  automatica de la revision `0a02700` (`n.42`) termino correctamente.
 - La preparacion, variables, OIDC y rollback se documentan en
   `backend/deploy/README.md`.
 
@@ -300,14 +303,14 @@ Acciones validas:
 Validar sintaxis:
 
 ```bash
-cd /home/abraham/proy_ia_security/backend
+cd /home/abraham/proyectos/casa-domotica-ia/backend
 python3 -c "import ast, pathlib; ast.parse(pathlib.Path('app_api.py').read_text()); print('app_api.py syntax OK')"
 ```
 
 Levantar backend:
 
 ```bash
-cd /home/abraham/proy_ia_security/backend
+cd /home/abraham/proyectos/casa-domotica-ia/backend
 uvicorn app_api:app --host 0.0.0.0 --port 8000
 ```
 
@@ -335,7 +338,7 @@ curl https://api.afcrtecnologia.com/ping
 Pruebas:
 
 ```bash
-cd /home/abraham/proy_ia_security/backend
+cd /home/abraham/proyectos/casa-domotica-ia/backend
 python3 -B -m unittest -v test_http_polling.py
 ```
 
@@ -344,7 +347,7 @@ La suite verificada contiene 26 pruebas.
 Publicacion por Git:
 
 1. Validar sintaxis y pruebas dentro de `backend/`.
-2. Desde el toplevel `/home/abraham/proy_ia_security`, revisar y hacer commit
+2. Desde el toplevel `/home/abraham/proyectos/casa-domotica-ia`, revisar y hacer commit
    solo de los archivos autorizados.
 3. Ejecutar `git push` a `main`; un Pull Request es opcional para cambios que
    requieran revision previa.

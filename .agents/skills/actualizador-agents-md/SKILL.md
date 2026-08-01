@@ -9,9 +9,9 @@ description: Usa esta skill cuando el usuario pida actualizar, sincronizar o ref
 
 Mantener sincronizados los tres archivos de memoria operativa del proyecto:
 
-- `/home/abraham/proy_ia_security/AGENTS.md`
-- `/home/abraham/proy_ia_security/backend/AGENTS.md`
-- `/home/abraham/proy_ia_security/frontend/AGENTS.md`
+- `/home/abraham/proyectos/casa-domotica-ia/AGENTS.md`
+- `/home/abraham/proyectos/casa-domotica-ia/backend/AGENTS.md`
+- `/home/abraham/proyectos/casa-domotica-ia/frontend/AGENTS.md`
 
 Usa esta skill cuando el usuario diga cosas como "actualiza mis AGENTS.md", "refresca la memoria del proyecto" o "sincroniza los AGENTS".
 
@@ -21,7 +21,7 @@ Usa esta skill cuando el usuario diga cosas como "actualiza mis AGENTS.md", "ref
 2. Ejecuta el inventario no destructivo:
 
    ```bash
-   cd /home/abraham/proy_ia_security
+   cd /home/abraham/proyectos/casa-domotica-ia
    python3 .agents/skills/actualizador-agents-md/scripts/inventory_agents_context.py
    ```
 

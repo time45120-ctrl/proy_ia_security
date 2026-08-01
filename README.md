@@ -161,6 +161,10 @@ npm run frontend:build
 npm run test:backend
 ```
 
+Para validar el codigo aun cuando los secretos productivos viven en Hostinger,
+AWS y Supabase, usa `npm run verify:source`. Este comando compila con valores
+publicos de prueba, ejecuta las pruebas y no imprime credenciales reales.
+
 La prueba manual minima es:
 
 1. Registrar y confirmar un usuario.
@@ -211,13 +215,45 @@ una URL accesible desde el ESP32, no `localhost`. En produccion debe ser HTTPS.
 - GitHub Actions: `.github/workflows/deploy-backend.yml` filtra archivos
   operativos de `backend/**`, excluye Markdown, usa OIDC + AWS SSM y no
   necesita access keys permanentes.
+- Supabase Actions: `.github/workflows/deploy-supabase.yml` publica migraciones
+  y todas las Edge Functions cuando cambia `supabase/migrations/**` o
+  `supabase/functions/**`. Usa secretos del Environment `production`.
 - Git: `main` acepta push directo, bloquea borrado y `force push`; los Pull
   Requests son opcionales.
 - CI: cada push a `main` y cada Pull Request compila el frontend con Node 22,
   ejecuta las pruebas del backend con Python 3.12 y escanea el arbol publicable
   con Gitleaks.
-- Supabase: las migraciones se publican con `supabase db push`; SMTP y redirects
-  se configuran en el Dashboard con valores propios del despliegue.
+- Supabase: el push automatico ejecuta primero `supabase db push --dry-run`,
+  aplica migraciones pendientes y despues despliega las Edge Functions. SMTP y
+  redirects se configuran en el Dashboard.
+
+### Publicar desde esta maquina
+
+Despues de revisar y confirmar un commit limpio sobre `main`:
+
+```bash
+npm run deploy:check:all
+git push origin main
+gh run list --branch main --limit 5
+```
+
+`deploy:check:all` valida Node, rama, remoto, worktree, build, pruebas, GitHub,
+el enlace Supabase y que existan las variables y secretos de despliegue. El push
+real activa CI y Hostinger; AWS y Supabase se activan cuando cambian sus rutas
+operativas.
+
+Configura una sola vez en GitHub antes de habilitar el workflow:
+
+```bash
+gh variable set SUPABASE_PROJECT_REF --body omkbowrspgbuwpifksfk
+gh secret set SUPABASE_ACCESS_TOKEN --env production
+gh secret set SUPABASE_DB_PASSWORD --env production
+gh variable set SUPABASE_DEPLOY_ENABLED --body true
+```
+
+Los comandos `gh secret set` solicitan cada valor sin guardarlo en el
+repositorio. `SUPABASE_DEPLOY_ENABLED` debe permanecer `false` hasta que ambos
+secretos existan. El firmware ESP32 sigue requiriendo carga fisica por USB.
 
 Los detalles de DNS, CORS, Auth, SMTP, Vault, Edge Functions, AWS y Hostinger
 estan en [docs/REPLICACION.md](docs/REPLICACION.md).
@@ -232,6 +268,7 @@ supabase/migrations/             Esquema, RLS, Storage y RPC
 supabase/functions/              Purga de audio
 supabase/templates/              Plantillas de Auth
 scripts/check-env.mjs            Verificacion sin mostrar valores
+scripts/preflight-deploy.mjs     Preflight de build, Git y despliegue
 docs/REPLICACION.md              Guia completa
 SECURITY.md                      Politica de secretos
 ```
