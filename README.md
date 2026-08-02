@@ -116,7 +116,7 @@ Completa los marcadores con valores de tu propio proyecto. La clasificacion es:
 | `SUPABASE_SECRET_KEY` | Backend | Si |
 | `OPENAI_API_KEY` | Backend | Si |
 | `MQTT_PASSWORD` | Backend | Si, cuando se usa |
-| Credenciales SMTP | Dashboard de Supabase | Si |
+| Credenciales SMTP | Cuenta/proveedor de Hostinger configurado en Supabase Auth | Si |
 | SSID/password WiFi | Sketch local del ESP32 | Si |
 
 Nunca declares una clave secret, `service_role`, OpenAI, SMTP o una contrasena
@@ -215,45 +215,52 @@ una URL accesible desde el ESP32, no `localhost`. En produccion debe ser HTTPS.
 - GitHub Actions: `.github/workflows/deploy-backend.yml` filtra archivos
   operativos de `backend/**`, excluye Markdown, usa OIDC + AWS SSM y no
   necesita access keys permanentes.
-- Supabase Actions: `.github/workflows/deploy-supabase.yml` publica migraciones
-  y todas las Edge Functions cuando cambia `supabase/migrations/**` o
-  `supabase/functions/**`. Usa secretos del Environment `production`.
+- Supabase: la integracion nativa Supabase-GitHub usa working directory `.`,
+  observa la rama de produccion `main`, aplica las
+  migraciones nuevas y publica las Edge Functions declaradas en
+  `supabase/config.toml`. La autorizacion se administra en Supabase y no exige
+  copiar un access token ni el password de Postgres a GitHub Secrets.
 - Git: `main` acepta push directo, bloquea borrado y `force push`; los Pull
   Requests son opcionales.
 - CI: cada push a `main` y cada Pull Request compila el frontend con Node 22,
   ejecuta las pruebas del backend con Python 3.12 y escanea el arbol publicable
   con Gitleaks.
-- Supabase: el push automatico ejecuta primero `supabase db push --dry-run`,
-  aplica migraciones pendientes y despues despliega las Edge Functions. SMTP y
-  redirects se configuran en el Dashboard.
+- Supabase: la integracion nativa procesa los cambios versionados bajo
+  `supabase/`. SMTP, redirects y otros ajustes no desplegables por Git se
+  configuran en Supabase Dashboard; la cuenta de correo SMTP se administra en
+  Hostinger y sus credenciales no se guardan en GitHub.
 
 ### Publicar desde esta maquina
 
 Despues de revisar y confirmar un commit limpio sobre `main`:
 
 ```bash
+npm run preflight
 npm run deploy:check:all
 git push origin main
 gh run list --branch main --limit 5
 ```
 
-`deploy:check:all` valida Node, rama, remoto, worktree, build, pruebas, GitHub,
-el enlace Supabase y que existan las variables y secretos de despliegue. El push
-real activa CI y Hostinger; AWS y Supabase se activan cuando cambian sus rutas
-operativas.
+`preflight` permite revisar los cambios aun sin commit y valida Node, rama,
+remoto, build, pruebas, GitHub, las 10 migraciones y la Edge Function local y
+remota. `deploy:check:all` repite los controles exigiendo un worktree limpio.
+El push real activa CI y Hostinger; AWS y Supabase procesan los cambios que
+correspondan a sus rutas operativas.
 
-Configura una sola vez en GitHub antes de habilitar el workflow:
+Configura una sola vez la integracion desde Supabase Dashboard:
 
-```bash
-gh variable set SUPABASE_PROJECT_REF --body omkbowrspgbuwpifksfk
-gh secret set SUPABASE_ACCESS_TOKEN --env production
-gh secret set SUPABASE_DB_PASSWORD --env production
-gh variable set SUPABASE_DEPLOY_ENABLED --body true
+```text
+Project Settings > Integrations > GitHub
+Repositorio: abraham-development/casa-domotica-ia
+Working directory: .
+Production branch: main
+Deploy to production: habilitado
 ```
 
-Los comandos `gh secret set` solicitan cada valor sin guardarlo en el
-repositorio. `SUPABASE_DEPLOY_ENABLED` debe permanecer `false` hasta que ambos
-secretos existan. El firmware ESP32 sigue requiriendo carga fisica por USB.
+Esta conexion requiere autorizar la aplicacion de Supabase en GitHub desde el
+navegador. No pongas `SUPABASE_ACCESS_TOKEN` ni `SUPABASE_DB_PASSWORD` en el
+repositorio o en GitHub Secrets para este flujo. El firmware ESP32 sigue
+requiriendo carga fisica por USB.
 
 Los detalles de DNS, CORS, Auth, SMTP, Vault, Edge Functions, AWS y Hostinger
 estan en [docs/REPLICACION.md](docs/REPLICACION.md).

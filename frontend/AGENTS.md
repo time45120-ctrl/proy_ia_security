@@ -20,8 +20,8 @@ https://github.com/abraham-development/casa-domotica-ia.git
 `/home/abraham/proyectos/casa-domotica-ia`. La rama unica en GitHub es `main`;
 acepta pushes directos y mantiene bloqueados el borrado y el `force push`.
 
-Marca de la fuente preparada para el proximo despliegue: `f.65`. El frontend
-publicado verificado es `f.64` y la revision remota previa es `0a02700`.
+Marca vigente de la fuente y del frontend publicado verificado: `f.65`. La
+revision remota verificada es `fa5c8c3` (`n.43`).
 
 ## Estado De Trabajo Actual
 
@@ -30,8 +30,9 @@ publicado verificado es `f.64` y la revision remota previa es `0a02700`.
 - URL local habitual para el frontend: `http://localhost:3000`; puede usarse
   `3001` si el puerto esta ocupado.
 - No modificar `frontend/.env.local` sin solicitud explicita.
-- `frontend/.env.local` no existe en este checkout; el build de Hostinger usa
-  las variables publicas configuradas en el panel.
+- `frontend/.env.local` existe, tiene modo `600` y supera `npm run check:env`;
+  no mostrar ni versionar sus valores. El build de Hostinger usa las variables
+  publicas configuradas en su panel.
 - La API publica refleja el flujo ESP32 directo; la ultima referencia importada
   del backend es `b.32`.
 - El 2026-07-27 se completo el corte a AFCR Tecnologia. Supabase Auth envio y
@@ -39,6 +40,13 @@ publicado verificado es `f.64` y la revision remota previa es `0a02700`.
   finalizaron con estado 200.
 - La experiencia publica es de domotica residencial: hogares, casa inteligente,
   sensores y alarmas. No existe campo empresa en registro, perfil ni metadata.
+- Hostinger sigue desplegando desde `main` con raiz `./frontend`. Supabase usa
+  su GitHub Integration nativa con working directory `.`, production branch
+  `main` y `Deploy to production`; el usuario confirmo que esta habilitada y se
+  valida con el check nativo posterior al push. No usa secretos Supabase en
+  GitHub.
+- La cuenta SMTP se administra en Hostinger y se configura en Supabase Auth;
+  sus credenciales no pertenecen al frontend ni a GitHub.
 
 ## Despliegue Hostinger
 

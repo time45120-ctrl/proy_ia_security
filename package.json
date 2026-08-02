@@ -11,6 +11,7 @@
     "frontend:dev": "npm --prefix frontend run dev",
     "frontend:build": "npm --prefix frontend run build",
     "check:env": "node scripts/check-env.mjs",
+    "preflight": "node scripts/preflight-deploy.mjs --require-supabase --allow-dirty",
     "deploy:check": "node scripts/preflight-deploy.mjs",
     "deploy:check:all": "node scripts/preflight-deploy.mjs --require-supabase",
     "test:backend": "node scripts/run-backend-tests.mjs",

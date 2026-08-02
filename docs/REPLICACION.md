@@ -140,14 +140,16 @@ en `supabase/templates/`. Antes de ejecutar `npx supabase config push`, reemplaz
 en `supabase/config.toml` los dominios de ejemplo/instalacion por los tuyos;
 ese comando modifica la configuracion del proyecto enlazado.
 
-Para correo productivo configura SMTP desde el Dashboard:
+Para correo productivo administra la cuenta/proveedor en Hostinger y configura
+SMTP desde Supabase Dashboard:
 
 - host y puerto del proveedor;
 - usuario/remitente verificado;
 - password SMTP;
 - SPF, DKIM y DMARC del dominio.
 
-El password SMTP vive en Supabase, no en `.env.example` ni en GitHub.
+El password SMTP se guarda en la configuracion de Supabase Auth, no en
+`.env.example` ni en GitHub.
 
 ### 4.4 Retencion de audio
 
@@ -380,31 +382,30 @@ servicio anterior automaticamente si el health check falla.
 
 ### 10.1 Supabase automatico desde GitHub
 
-`.github/workflows/deploy-supabase.yml` se activa en `main` cuando cambian
-`supabase/migrations/**`, `supabase/functions/**` o el propio workflow. Usa una
-version fijada de Supabase CLI, comprueba primero `db push --dry-run`, aplica
-solo migraciones pendientes y despliega todas las Edge Functions mediante la
-Management API sin Docker.
+La integracion nativa Supabase-GitHub observa la rama `main`. Cuando se habilita
+`Deploy to production`, aplica migraciones nuevas y publica las Edge Functions
+declaradas en `supabase/config.toml`. El working directory es `.` porque
+`supabase/` esta en la raiz. La funcion de purga debe conservar:
 
-Configura como variables del repositorio:
-
-```text
-SUPABASE_PROJECT_REF=omkbowrspgbuwpifksfk
-SUPABASE_DEPLOY_ENABLED=false
+```toml
+[functions.purge-expired-voice-audio]
+verify_jwt = true
 ```
 
-Configura en el Environment `production`, como secretos:
+Configura una sola vez desde Supabase Dashboard:
 
 ```text
-SUPABASE_ACCESS_TOKEN
-SUPABASE_DB_PASSWORD
+Project Settings > Integrations > GitHub
+Repositorio: abraham-development/casa-domotica-ia
+Working directory: .
+Production branch: main
+Deploy to production: habilitado
 ```
 
-El access token se crea desde la cuenta de Supabase y el password corresponde
-a Postgres del proyecto. Introducelos con `gh secret set`; no uses argumentos
-de linea que puedan quedar en el historial. Cuando ambos existan, cambia
-`SUPABASE_DEPLOY_ENABLED=true`. El workflow valida que el project ref sea el
-proyecto autorizado antes de conectar.
+Autoriza la aplicacion de Supabase en GitHub cuando el navegador lo solicite.
+Este flujo no necesita copiar `SUPABASE_ACCESS_TOKEN` ni
+`SUPABASE_DB_PASSWORD` a GitHub Secrets. La integracion no despliega ajustes de
+Auth, SMTP ni seed; esos cambios se administran expresamente en el Dashboard.
 
 ## 11. Checklist antes de publicar
 
@@ -414,6 +415,7 @@ git diff --check
 npm run check:env
 npm run frontend:build
 npm run test:backend
+npm run preflight
 ```
 
 Desde la maquina autorizada, despues de crear el commit y dejar el worktree
@@ -424,7 +426,8 @@ simulado sin publicar cambios:
 npm run deploy:check:all
 ```
 
-Para una recuperacion manual de Supabase, conserva el mismo orden del workflow:
+Solo con autorizacion explicita, una recuperacion manual de Supabase conserva
+este orden:
 
 ```bash
 npx supabase db push --dry-run
@@ -470,12 +473,10 @@ Cada persona crea sus propios proyectos, dominios y credenciales siguiendo los
 | Region, instancia y rutas AWS | Variables del Environment `production` de GitHub |
 | Token de Supabase CLI | Perfil local administrado por el CLI, nunca dentro del repo |
 | Password de Postgres/Supabase | Gestor de secretos; se introduce al enlazar o desplegar |
-| `SUPABASE_ACCESS_TOKEN` CI | Secret del Environment `production` de GitHub |
-| `SUPABASE_DB_PASSWORD` CI | Secret del Environment `production` de GitHub |
-| SMTP | Dashboard de Supabase Auth |
+| Autorizacion Supabase-GitHub | Integracion OAuth administrada desde Supabase Dashboard; no copiar tokens ni passwords al repositorio |
+| SMTP | Cuenta/proveedor administrado en Hostinger y credenciales configuradas en Supabase Auth; nunca GitHub |
 | `project_url` y credencial del cron | Supabase Vault |
 | WiFi y token de pairing | Copia local del sketch ESP32 |
 
-AWS no necesita GitHub Secrets porque usa OIDC. Supabase si requiere los dos
-secretos CI indicados; nunca deben declararse como variables ni escribirse en
-el workflow.
+AWS no necesita access keys permanentes porque usa OIDC. Supabase tampoco
+requiere secretos manuales en GitHub cuando se usa la integracion nativa.

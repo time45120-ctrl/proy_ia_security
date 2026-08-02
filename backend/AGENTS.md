@@ -39,9 +39,12 @@ IP AWS:
 
 - El usuario valida en produccion y local segun el caso. No hacer commit, push
   ni actualizar AWS sin autorizacion explicita.
-- `backend/.env` no existe en este checkout. El despliegue AWS conserva el
-  archivo privado instalado en EC2; para runtime local completo hay que crear
-  el archivo desde `.env.example` sin versionarlo.
+- `backend/.env` existe, tiene modo `600` y supera `npm run check:env`; no
+  mostrar ni versionar sus valores. El despliegue AWS conserva por separado el
+  archivo privado instalado en EC2.
+- `backend/.venv` usa Python 3.12.13, contiene las dependencias declaradas y
+  supera las 26 pruebas. El entorno Python 3.14 anterior se conserva localmente
+  como respaldo ignorado por Git.
 - Produccion activa: frontend Hostinger `https://afcrtecnologia.com`,
   backend AWS `https://api.afcrtecnologia.com` (`3.132.192.3`) y Supabase
   `omkbowrspgbuwpifksfk`.
@@ -52,6 +55,14 @@ IP AWS:
 - GitHub Actions usa `PUBLIC_HEALTH_URL=https://api.afcrtecnologia.com/ping`.
   `MONOREPO_BACKEND_DEPLOY_ENABLED=true`; las banderas de configuracion,
   inspeccion y retiro del dominio anterior permanecen en `false`.
+- El backend continua desplegandose exclusivamente por GitHub OIDC y AWS SSM;
+  la migracion de Supabase no modifica ese workflow. Los secretos productivos
+  permanecen en `/home/ubuntu/casa-domotica-ia/backend/.env` dentro de EC2.
+- Supabase usa su GitHub Integration nativa con working directory `.`, rama
+  productiva `main` y `Deploy to production`; no necesita secretos Supabase en
+  GitHub. El usuario confirmo que la integracion esta habilitada; se valida con
+  su check nativo despues del push. SMTP se administra entre Hostinger y
+  Supabase Auth, no en GitHub.
 - El 2026-07-20 se completo en Supabase la arquitectura residencial:
   `households`, `household_members` y `household_id`; se eliminaron
   definitivamente tablas, columnas, funciones, politicas y metadata de

@@ -1,10 +1,14 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
 const allowDirty = process.argv.includes("--allow-dirty");
 const requireSupabase = process.argv.includes("--require-supabase");
 const skipNetwork = process.argv.includes("--skip-network");
+const authorizedSupabaseProjectRef = "omkbowrspgbuwpifksfk";
+const expectedMigrationCount = 10;
+const edgeFunctionName = "purge-expired-voice-audio";
+const supabaseCliEnvironment = { SUPABASE_TELEMETRY_DISABLED: "1" };
 let failures = 0;
 let warnings = 0;
 
@@ -25,6 +29,7 @@ function ok(message) {
 function capture(command, args, options = {}) {
   const result = spawnSync(command, args, {
     encoding: "utf8",
+    env: { ...process.env, ...(options.env ?? {}) },
     timeout: options.timeout,
   });
   // Some managed sandboxes report EPERM metadata even when the child completed
@@ -94,9 +99,12 @@ if (dirty === "") {
 run("git diff --check", "git", ["diff", "--check"]);
 
 if (!skipNetwork) {
-  run("autenticacion GitHub CLI", "gh", ["auth", "status"], {
-    timeout: 30_000,
-  });
+  run(
+    "autenticacion GitHub CLI",
+    "gh",
+    ["api", "user", "--jq", ".login"],
+    { timeout: 30_000 },
+  );
   run(
     "autenticacion Git para push",
     "git",
@@ -135,11 +143,11 @@ const projectRefPath = "supabase/.temp/project-ref";
 const linkedProjectRef = existsSync(projectRefPath)
   ? readFileSync(projectRefPath, "utf8").trim()
   : "";
-if (linkedProjectRef === "omkbowrspgbuwpifksfk") {
+if (linkedProjectRef === authorizedSupabaseProjectRef) {
   ok("Supabase CLI enlazado al proyecto autorizado");
 } else if (requireSupabase) {
   fail(
-    "Supabase CLI no esta enlazado; ejecuta npx supabase link --project-ref omkbowrspgbuwpifksfk",
+    `Supabase CLI no esta enlazado; ejecuta npx supabase link --project-ref ${authorizedSupabaseProjectRef}`,
   );
 } else {
   warn(
@@ -148,58 +156,152 @@ if (linkedProjectRef === "omkbowrspgbuwpifksfk") {
 }
 
 if (requireSupabase) {
-  if (!existsSync(".github/workflows/deploy-supabase.yml")) {
-    fail("falta .github/workflows/deploy-supabase.yml");
+  const migrationsPath = "supabase/migrations";
+  const localMigrations = existsSync(migrationsPath)
+    ? readdirSync(migrationsPath).filter((name) => /^\d{14}_.+\.sql$/.test(name))
+    : [];
+  if (localMigrations.length === expectedMigrationCount) {
+    ok(`Supabase: ${expectedMigrationCount} migraciones locales presentes`);
   } else {
-    ok("workflow de despliegue Supabase presente");
+    fail(
+      `Supabase: se esperaban ${expectedMigrationCount} migraciones locales y se encontraron ${localMigrations.length}`,
+    );
+  }
+
+  const functionEntrypoint = `supabase/functions/${edgeFunctionName}/index.ts`;
+  if (existsSync(functionEntrypoint)) {
+    ok(`Supabase: codigo local de ${edgeFunctionName} presente`);
+  } else {
+    fail(`Supabase: falta ${functionEntrypoint}`);
+  }
+
+  const configPath = "supabase/config.toml";
+  if (!existsSync(configPath)) {
+    fail(`falta ${configPath}`);
+  } else {
+    const config = readFileSync(configPath, "utf8");
+    const functionSection = config
+      .split(/(?=^\[)/m)
+      .find((section) =>
+        section.startsWith(`[functions.${edgeFunctionName}]`),
+      );
+    if (!functionSection) {
+      fail(
+        "Supabase: purge-expired-voice-audio no esta declarada en config.toml",
+      );
+    } else if (!/^verify_jwt\s*=\s*true(?:\s*#.*)?$/m.test(functionSection)) {
+      fail(
+        "Supabase: purge-expired-voice-audio debe conservar verify_jwt = true",
+      );
+    } else {
+      ok("Supabase: Edge Function declarada con verificacion JWT");
+    }
+  }
+
+  const obsoleteWorkflow = ".github/workflows/deploy-supabase.yml";
+  if (existsSync(obsoleteWorkflow)) {
+    fail(`Supabase: elimina el workflow obsoleto ${obsoleteWorkflow}`);
+  } else {
+    ok("Supabase: workflow propio obsoleto eliminado");
+  }
+
+  const workflowsPath = ".github/workflows";
+  const forbiddenWorkflowIdentifiers = [
+    "SUPABASE_ACCESS_TOKEN",
+    "SUPABASE_DB_PASSWORD",
+    "SUPABASE_DEPLOY_ENABLED",
+  ];
+  const workflowFiles = existsSync(workflowsPath)
+    ? readdirSync(workflowsPath).filter((name) => /\.ya?ml$/.test(name))
+    : [];
+  const forbiddenUsages = workflowFiles.flatMap((name) => {
+    const contents = readFileSync(`${workflowsPath}/${name}`, "utf8");
+    return forbiddenWorkflowIdentifiers
+      .filter((identifier) => contents.includes(identifier))
+      .map((identifier) => `${name}:${identifier}`);
+  });
+  if (forbiddenUsages.length === 0) {
+    ok("Supabase: ningun workflow propio exige credenciales de despliegue");
+  } else {
+    fail(
+      `Supabase: identificadores obsoletos encontrados en workflows: ${forbiddenUsages.join(", ")}`,
+    );
   }
 
   if (!skipNetwork) {
-    const repository = "abraham-development/casa-domotica-ia";
-    const variablesRaw = capture(
-      "gh",
-      ["api", `repos/${repository}/actions/variables?per_page=100`],
-      { timeout: 30_000 },
+    const migrationListRaw = capture(
+      "npx",
+      ["supabase", "migration", "list", "--linked", "--output-format", "json"],
+      { timeout: 60_000, env: supabaseCliEnvironment },
     );
-    const secretsRaw = capture(
-      "gh",
-      ["api", `repos/${repository}/environments/production/secrets`],
-      { timeout: 30_000 },
-    );
-
     try {
-      const variables = JSON.parse(variablesRaw ?? "{}").variables ?? [];
-      const values = new Map(
-        variables.map((variable) => [variable.name, variable.value]),
+      const migrationPayload = JSON.parse(migrationListRaw ?? "{}");
+      const migrations = Array.isArray(migrationPayload)
+        ? migrationPayload
+        : (migrationPayload.migrations ?? []);
+      const synchronizedMigrations = migrations.filter(
+        (migration) =>
+          typeof migration.local === "string" &&
+          migration.local !== "" &&
+          migration.local === migration.remote,
       );
-      if (values.get("SUPABASE_PROJECT_REF") === "omkbowrspgbuwpifksfk") {
-        ok("GitHub: SUPABASE_PROJECT_REF apunta al proyecto autorizado");
+      if (
+        migrations.length === expectedMigrationCount &&
+        synchronizedMigrations.length === expectedMigrationCount
+      ) {
+        ok(
+          `Supabase remoto: ${expectedMigrationCount} migraciones sincronizadas`,
+        );
       } else {
-        fail("GitHub: falta SUPABASE_PROJECT_REF o apunta a otro proyecto");
-      }
-      if (values.get("SUPABASE_DEPLOY_ENABLED") === "true") {
-        ok("GitHub: despliegue automatico de Supabase habilitado");
-      } else {
-        fail("GitHub: SUPABASE_DEPLOY_ENABLED debe ser true antes del push");
+        fail(
+          `Supabase remoto: se esperaban ${expectedMigrationCount} migraciones sincronizadas`,
+        );
       }
     } catch {
-      fail("no se pudieron validar las variables GitHub de Supabase");
+      fail("Supabase remoto: no se pudo interpretar la lista de migraciones");
     }
 
+    const functionsRaw = capture(
+      "npx",
+      [
+        "supabase",
+        "functions",
+        "list",
+        "--project-ref",
+        authorizedSupabaseProjectRef,
+        "--output-format",
+        "json",
+      ],
+      { timeout: 60_000, env: supabaseCliEnvironment },
+    );
     try {
-      const secrets = JSON.parse(secretsRaw ?? "{}").secrets ?? [];
-      const names = new Set(secrets.map((secret) => secret.name));
-      for (const name of ["SUPABASE_ACCESS_TOKEN", "SUPABASE_DB_PASSWORD"]) {
-        if (names.has(name)) {
-          ok(`GitHub production: ${name} configurado`);
-        } else {
-          fail(`GitHub production: falta el secreto ${name}`);
-        }
+      const functionsPayload = JSON.parse(functionsRaw ?? "{}");
+      const functions = Array.isArray(functionsPayload)
+        ? functionsPayload
+        : (functionsPayload.functions ?? []);
+      const remoteFunction = functions.find(
+        (item) =>
+          item.slug === edgeFunctionName || item.name === edgeFunctionName,
+      );
+      if (!remoteFunction) {
+        fail(`Supabase remoto: no existe ${edgeFunctionName}`);
+      } else if (remoteFunction.status !== "ACTIVE") {
+        fail(`Supabase remoto: ${edgeFunctionName} no esta activa`);
+      } else if (remoteFunction.verify_jwt !== true) {
+        fail(`Supabase remoto: ${edgeFunctionName} no conserva verify_jwt=true`);
+      } else {
+        ok(`Supabase remoto: ${edgeFunctionName} activa con verify_jwt=true`);
       }
     } catch {
-      fail("no se pudieron validar los secretos GitHub de Supabase");
+      fail("Supabase remoto: no se pudo interpretar la lista de Edge Functions");
     }
+  } else {
+    warn("se omitieron las comprobaciones remotas de Supabase por --skip-network");
   }
+
+  warn(
+    "no se afirma que GitHub Integration este activa hasta observar un check nativo de Supabase exitoso despues del push",
+  );
 }
 
 console.log(`\nResultado: ${failures} error(es), ${warnings} aviso(s).`);

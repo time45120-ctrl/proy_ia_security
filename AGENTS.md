@@ -25,8 +25,8 @@ No recrear la copia legacy anidada `proy_ia_security/`.
 - El flujo ESP32 por HTTP(S) polling esta publicado en AWS desde el monorepo.
   La ultima referencia importada del backend es `b.32` y la ultima ejecucion
   de despliegue verificada corresponde a `0a02700` (`n.42`).
-- El frontend publicado verificado es `f.64`. La fuente preparada para el
-  proximo despliegue es `f.65`; su log debe mostrar
+- El frontend publicado verificado corresponde a `n.43`; la marca vigente es
+  `f.65` y su log debe mostrar
   `AFCR_FRONTEND_BUILD=f.65` y `AFCR_FRONTEND_MODE=static-export`.
 - El 2026-07-27 se migro produccion a `afcrtecnologia.com` y
   `api.afcrtecnologia.com`. El frontend anterior ya no tiene A/AAAA, el virtual
@@ -52,10 +52,15 @@ No recrear la copia legacy anidada `proy_ia_security/`.
   para HTTPS. Antes del push real ejecutar `npm run deploy:check`.
 - Supabase CLI esta autenticado y enlazado a `omkbowrspgbuwpifksfk`; las diez
   migraciones locales coinciden con produccion y la Edge Function de purga esta
-  activa. El workflow automatico queda bloqueado hasta cargar sus dos secrets.
-- `frontend/.env.local` existe pero esta incompleto y `backend/.env` no existe.
-  Esto no bloquea Hostinger/AWS, cuyos entornos ya guardan sus valores, pero si
-  bloquea ejecutar localmente toda la aplicacion contra servicios reales.
+  activa. La fuente usa la integracion nativa Supabase-GitHub sin secretos CI;
+  el usuario confirmo que esta habilitada con working directory `.`, production
+  branch `main` y `Deploy to production`. Su operacion debe demostrarse con el
+  check nativo de Supabase exitoso despues de cada push relevante.
+- `frontend/.env.local` y `backend/.env` existen, tienen modo `600` y superan
+  `npm run check:env` sin variables faltantes. No mostrar sus valores.
+- El entorno canonico `backend/.venv` usa Python 3.12.13 y tiene instaladas las
+  dependencias de `backend/requirements.txt`; el anterior Python 3.14 se
+  conserva localmente como respaldo ignorado por Git.
 
 ## Repositorio Git activo
 
@@ -66,7 +71,8 @@ Todo el proyecto usa un unico repositorio y un unico `.git`:
 - Rama unica en GitHub: `main`.
 - `main` acepta `git push` directo; conserva bloqueo de borrado y
   `force push`, pero no exige Pull Request ni status checks previos.
-- Revision remota verificada antes de los cambios locales actuales: `0a02700`.
+- Revision remota verificada antes de los cambios locales actuales:
+  `fa5c8c3` (`n.43`).
 - `frontend/` y `backend/` pertenecen al mismo worktree; no son repos anidados.
 - Los antiguos repos `casa-domotica-ia-frontend` y
   `casa-domotica-ia-backend` ya fueron eliminados de GitHub. Sus historiales
@@ -81,7 +87,9 @@ commit, push, PR, merge o despliegue sin autorizacion explicita.
 
 `npm run deploy:check` valida fuente, pruebas, `gh` y un push simulado con un
 worktree limpio. `npm run deploy:check:all` exige ademas que Supabase CLI este
-enlazado a `omkbowrspgbuwpifksfk`.
+enlazado a `omkbowrspgbuwpifksfk` y que las Edge Functions desplegables esten
+declaradas en `supabase/config.toml`; la integracion del Dashboard se comprueba
+despues del push mediante su check remoto.
 
 ## Mapa actual
 
@@ -158,15 +166,17 @@ NEXT_PUBLIC_API_BASE_URL=https://api.afcrtecnologia.com
 - `.github/workflows/deploy-backend.yml` despliega AWS cuando cambian
   archivos operativos de `backend/**` o el propio workflow; ignora
   `backend/**/*.md` y usa OIDC, SSM y el Environment `production`.
-- `.github/workflows/deploy-supabase.yml` prepara el despliegue automatico de
-  migraciones y Edge Functions. Requiere los secrets
-  `SUPABASE_ACCESS_TOKEN` y `SUPABASE_DB_PASSWORD` en `production`; mantener
-  `SUPABASE_DEPLOY_ENABLED=false` hasta configurarlos.
+- La integracion nativa Supabase-GitHub despliega desde `main` migraciones y
+  Edge Functions declaradas en `supabase/config.toml`, usando working directory
+  `.` y `Deploy to production`. Se autoriza en Supabase Dashboard y no requiere
+  copiar tokens ni el password de Postgres a GitHub.
+- La cuenta SMTP se administra en Hostinger y sus credenciales se configuran
+  en Supabase Auth; no se guardan en GitHub.
 - `.github/workflows/ci.yml` valida pushes a `main` y Pull Requests con
   Node 22, Python 3.12 y Gitleaks.
-- CI y la ejecucion automatica AWS de `0a02700` (`n.42`) terminaron
-  correctamente. El 2026-08-01 `/welcome/` respondio 200 desde Hostinger y
-  `GET /ping` devolvio `{"pong":true}`.
+- CI de `fa5c8c3` (`n.43`) y la ultima ejecucion automatica AWS de `0a02700`
+  (`n.42`) terminaron correctamente. El 2026-08-01 `/welcome/` respondio 200
+  desde Hostinger y `GET /ping` devolvio `{"pong":true}`.
 
 El frontend publico corre por HTTPS; la API publica tambien debe estar por HTTPS
 para evitar contenido mixto.

@@ -28,11 +28,14 @@ Una variable `NEXT_PUBLIC_*` siempre debe considerarse publica. No confies en
 la publishable key para autorizar datos: habilita RLS y aplica politicas por
 usuario/hogar.
 
-Para el despliegue automatizado, `SUPABASE_ACCESS_TOKEN` y
-`SUPABASE_DB_PASSWORD` viven exclusivamente como secrets del Environment
-`production` de GitHub. `SUPABASE_PROJECT_REF` y
-`SUPABASE_DEPLOY_ENABLED` son variables no secretas. Mantener el interruptor
-en `false` hasta confirmar que ambos secrets existen.
+El despliegue automatizado de Supabase usa su integracion nativa con GitHub.
+La autorizacion OAuth se administra en Supabase Dashboard: este repositorio no
+requiere guardar `SUPABASE_ACCESS_TOKEN` ni `SUPABASE_DB_PASSWORD` en GitHub.
+El password de Postgres solo se introduce de forma interactiva cuando se enlaza
+el CLI o se realiza una recuperacion manual autorizada.
+
+La cuenta SMTP se administra en Hostinger y sus credenciales se configuran en
+Supabase Auth. No deben copiarse a GitHub, al frontend ni al repositorio.
 
 ## Archivos locales
 
