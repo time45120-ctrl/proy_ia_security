@@ -1,6 +1,6 @@
 # AGENTS.md - Memoria compacta de Codex
 
-Ultima revision: 2026-08-01.
+Ultima revision: 2026-08-18.
 
 ## Contexto rapido
 
@@ -24,8 +24,8 @@ No recrear la copia legacy anidada `proy_ia_security/`.
   ESP32 fisico debe anunciar una URL LAN accesible, no `localhost`.
 - El flujo ESP32 por HTTP(S) polling esta publicado desde el VPS Hostinger.
   La ultima referencia importada del backend es `b.32` y la ultima ejecucion
-  de despliegue verificada corresponde a `0a02700` (`n.42`).
-- El frontend publicado verificado corresponde a `n.43`; la marca vigente es
+  de despliegue verificada corresponde a `a0cfcb3` (`n.46`).
+- El frontend publicado verificado corresponde a `n.46`; la marca vigente es
   `f.65` y su log debe mostrar
   `AFCR_FRONTEND_BUILD=f.65` y `AFCR_FRONTEND_MODE=static-export`.
 - El 2026-07-27 se migro produccion a `afcrtecnologia.com` y
@@ -72,7 +72,7 @@ Todo el proyecto usa un unico repositorio y un unico `.git`:
 - `main` acepta `git push` directo; conserva bloqueo de borrado y
   `force push`, pero no exige Pull Request ni status checks previos.
 - Revision remota verificada antes de los cambios locales actuales:
-  `fa5c8c3` (`n.43`).
+  `a0cfcb3` (`n.46`).
 - `frontend/` y `backend/` pertenecen al mismo worktree; no son repos anidados.
 - Los antiguos repos `casa-domotica-ia-frontend` y
   `casa-domotica-ia-backend` ya fueron eliminados de GitHub. Sus historiales
@@ -173,7 +173,7 @@ NEXT_PUBLIC_API_BASE_URL=https://api.afcrtecnologia.com
   en Supabase Auth; no se guardan en GitHub.
 - `.github/workflows/ci.yml` valida pushes a `main` y Pull Requests con
   Node 22, Python 3.12 y Gitleaks.
-- CI de `fa5c8c3` (`n.43`) termino correctamente. El 2026-08-01 `/welcome/` respondio 200
+- CI de `a0cfcb3` (`n.46`) termino correctamente. El 2026-08-18 `/welcome/` respondio 200
   desde Hostinger y `GET /ping` devolvio `{"pong":true}`.
 
 El frontend publico corre por HTTPS; la API publica tambien debe estar por HTTPS

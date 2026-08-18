@@ -1,6 +1,6 @@
 # AGENTS.md - Backend
 
-Ultima revision: 2026-08-01.
+Ultima revision: 2026-08-18.
 
 ## Contexto
 
@@ -21,7 +21,7 @@ https://github.com/abraham-development/casa-domotica-ia.git
 acepta pushes directos y mantiene bloqueados el borrado y el `force push`.
 
 Ultima referencia importada del backend: `b.32`. La ultima ejecucion de
-despliegue verificada corresponde a `0a02700` (`n.42`).
+despliegue verificada corresponde a `a0cfcb3` (`n.46`).
 
 Backend publico:
 

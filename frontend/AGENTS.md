@@ -1,6 +1,6 @@
 # AGENTS.md - Frontend
 
-Ultima revision: 2026-08-01.
+Ultima revision: 2026-08-18.
 
 ## Contexto
 
@@ -21,7 +21,7 @@ https://github.com/abraham-development/casa-domotica-ia.git
 acepta pushes directos y mantiene bloqueados el borrado y el `force push`.
 
 Marca vigente de la fuente y del frontend publicado verificado: `f.65`. La
-revision remota verificada es `fa5c8c3` (`n.43`).
+revision remota verificada es `a0cfcb3` (`n.46`).
 
 ## Estado De Trabajo Actual
 
