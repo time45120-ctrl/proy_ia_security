@@ -1,0 +1,74 @@
+name: Deploy backend to Hostinger VPS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "!.github/workflows/deploy-backend-vps.yml"
+      - ".github/workflows/deploy-backend-vps.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-backend-vps
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy through SSH
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Validate deployment secrets
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          : "${VPS_HOST:?Configure VPS_HOST in the production environment}"
+          : "${VPS_USER:?Configure VPS_USER in the production environment}"
+          : "${VPS_SSH_KEY:?Configure VPS_SSH_KEY in the production environment}"
+
+      - name: Configure SSH
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -Eeuo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${VPS_SSH_KEY}" > ~/.ssh/afcr_vps_key
+          chmod 600 ~/.ssh/afcr_vps_key
+          ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Pull and deploy backend on VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_APP_DIR: ${{ vars.VPS_APP_DIR || '/opt/casa-domotica-ia' }}
+          BACKEND_APP_USER: ${{ vars.BACKEND_APP_USER || 'afcr' }}
+          BACKEND_APP_DIR: ${{ vars.BACKEND_APP_DIR || '/opt/casa-domotica-ia/backend' }}
+          BACKEND_VENV_DIR: ${{ vars.BACKEND_VENV_DIR || '/opt/casa-domotica-ia/backend/.venv' }}
+          BACKEND_SERVICE_NAME: ${{ vars.BACKEND_SERVICE_NAME || 'afcr-backend.service' }}
+        run: |
+          set -Eeuo pipefail
+          ssh -i ~/.ssh/afcr_vps_key "${VPS_USER}@${VPS_HOST}" \
+            "VPS_APP_DIR='${VPS_APP_DIR}' BACKEND_APP_USER='${BACKEND_APP_USER}' BACKEND_APP_DIR='${BACKEND_APP_DIR}' BACKEND_VENV_DIR='${BACKEND_VENV_DIR}' BACKEND_SERVICE_NAME='${BACKEND_SERVICE_NAME}' bash -s" <<'REMOTE'
+          set -Eeuo pipefail
+          test -d "${VPS_APP_DIR}/.git"
+          git -C "${VPS_APP_DIR}" fetch origin main
+          git -C "${VPS_APP_DIR}" checkout main
+          git -C "${VPS_APP_DIR}" merge --ff-only origin/main
+          BACKEND_APP_USER="${BACKEND_APP_USER}" \
+          BACKEND_APP_DIR="${BACKEND_APP_DIR}" \
+          BACKEND_VENV_DIR="${BACKEND_VENV_DIR}" \
+          BACKEND_SERVICE_NAME="${BACKEND_SERVICE_NAME}" \
+            bash "${BACKEND_APP_DIR}/scripts/deploy-vps.sh"
+          REMOTE
+
+      - name: Verify public API health
+        run: curl --fail --silent --show-error --retry 5 --retry-delay 3 https://api.afcrtecnologia.com/ping

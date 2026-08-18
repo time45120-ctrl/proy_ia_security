@@ -18,7 +18,7 @@ Segun las funciones que se quieran probar:
 - Ollama y `backend/requirements-local-ai.txt` para IA/transcripcion local.
 - Mosquitto para MQTT legacy.
 - Arduino IDE, soporte ESP32 y cable USB para hardware real.
-- AWS EC2/SSM/Nginx/Certbot y Hostinger para replicar el despliegue productivo.
+- VPS Hostinger con Nginx/Certbot para replicar el despliegue productivo.
 
 Comprueba versiones:
 
@@ -331,54 +331,35 @@ npm run build
 Publica `out/` y conserva el `.htaccess` generado por `postbuild`. Comprueba
 raiz, `/welcome/`, assets de `/_next/` y `/auth/confirm/`.
 
-## 10. Backend en AWS
+## 10. Backend en Hostinger VPS
 
 La replica productiva necesita:
 
-- EC2 con Python 3.12, Git, Nginx y Certbot.
-- Rol de instancia con SSM y agente SSM activo.
-- Security Group con 80/443; el puerto 8000 queda detras de Nginx.
-- DNS `A api.YOUR_DOMAIN -> IP publica de EC2`.
-- `backend/.env` creado directamente en EC2 con modo `600`.
+- VPS Hostinger Ubuntu 24.04 con Python 3.12, Git, Nginx y Certbot.
+- Firewall con 22/80/443; el puerto 8000 queda detras de Nginx.
+- DNS `A api.YOUR_DOMAIN -> IP publica del VPS`.
+- `backend/.env` creado directamente en el VPS con modo `600`.
 - Servicio systemd que ejecute Uvicorn en `127.0.0.1:8000`.
 - Nginx como reverse proxy y certificado TLS renovable.
 
-El workflow `.github/workflows/deploy-backend.yml` usa GitHub OIDC y SSM y solo
-se activa automaticamente cuando cambia `backend/**` o el propio workflow.
-Configura en el environment `production` estas variables, no access keys:
+El workflow `.github/workflows/deploy-backend-vps.yml` se activa cuando cambia
+`backend/**` y actualiza el checkout del VPS por SSH. Configura en el
+Environment `production`:
 
 ```text
-AWS_REGION
-AWS_ROLE_TO_ASSUME
-AWS_INSTANCE_ID
-MONOREPO_DIR
+VPS_HOST
+VPS_USER
+VPS_SSH_KEY
+VPS_APP_DIR
 BACKEND_APP_USER
 BACKEND_APP_DIR
 BACKEND_VENV_DIR
-LEGACY_BACKEND_APP_DIR
 BACKEND_SERVICE_NAME
-BACKEND_LOCAL_HEALTH_URL
-PUBLIC_HEALTH_URL
-AFCR_API_DOMAIN
-AFCR_API_EXPECTED_IPV4
-MONOREPO_BACKEND_DEPLOY_ENABLED
 ```
 
-Los flags de configuracion/retiro de dominios deben quedar `false` salvo una
-migracion de DNS deliberada. Mantiene
-`MONOREPO_BACKEND_DEPLOY_ENABLED=false` hasta completar el bootstrap manual. El
-rol OIDC debe limitar `sub` al repositorio y environment autorizados.
-
-GitHub puede emitir un `sub` inmutable con IDs numericos en repositorios nuevos
-o renombrados, por ejemplo
-`repo:OWNER@OWNER_ID/REPO@REPO_ID:environment:production`. Consulta
-`sub_claim_prefix` con la API OIDC del repositorio y usa el valor exacto en la
-trust policy de AWS; no asumas el formato historico basado solo en nombres.
-
-El primer corte se ejecuta con `workflow_dispatch` y modo `bootstrap`. El script
-clona el monorepo en paralelo, copia el `.env` anterior con modo `600`, crea el
-entorno virtual, valida el backend, instala un drop-in de systemd y restaura el
-servicio anterior automaticamente si el health check falla.
+La clave privada solo debe existir como secreto de GitHub y la clave pública
+debe estar autorizada en el VPS. El archivo `backend/.env` se crea manualmente
+en el VPS y nunca se descarga desde el repositorio.
 
 ### 10.1 Supabase automatico desde GitHub
 
@@ -468,9 +449,9 @@ Cada persona crea sus propios proyectos, dominios y credenciales siguiendo los
 | Credencial o valor | Ubicacion correcta |
 |---|---|
 | Variables `NEXT_PUBLIC_*` | Panel de Hostinger; son publicas y se incorporan al build |
-| `OPENAI_API_KEY`, `SUPABASE_SECRET_KEY`, MQTT | `/home/ubuntu/casa-domotica-ia/backend/.env` en EC2, modo `600` |
-| AWS para GitHub Actions | OIDC mediante `AWS_ROLE_TO_ASSUME`; no usar access keys permanentes |
-| Region, instancia y rutas AWS | Variables del Environment `production` de GitHub |
+| `OPENAI_API_KEY`, `SUPABASE_SECRET_KEY`, MQTT | `/opt/casa-domotica-ia/backend/.env` en el VPS, modo `600` |
+| Acceso de despliegue al VPS | `VPS_SSH_KEY` como secreto de GitHub; la clave pública en el VPS |
+| Host y rutas del VPS | Variables del Environment `production` de GitHub |
 | Token de Supabase CLI | Perfil local administrado por el CLI, nunca dentro del repo |
 | Password de Postgres/Supabase | Gestor de secretos; se introduce al enlazar o desplegar |
 | Autorizacion Supabase-GitHub | Integracion OAuth administrada desde Supabase Dashboard; no copiar tokens ni passwords al repositorio |
@@ -478,5 +459,5 @@ Cada persona crea sus propios proyectos, dominios y credenciales siguiendo los
 | `project_url` y credencial del cron | Supabase Vault |
 | WiFi y token de pairing | Copia local del sketch ESP32 |
 
-AWS no necesita access keys permanentes porque usa OIDC. Supabase tampoco
+El despliegue del VPS usa una clave SSH dedicada y restringida. Supabase no
 requiere secretos manuales en GitHub cuando se usa la integracion nativa.

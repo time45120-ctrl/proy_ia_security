@@ -20,7 +20,7 @@ Exclusivo del backend o del proveedor:
 - OpenAI API key.
 - Password SMTP.
 - Password/token MQTT.
-- AWS credentials, tokens de Supabase CLI y passwords de base de datos.
+- Credenciales de acceso al VPS, tokens de Supabase CLI y passwords de base de datos.
 - Llaves privadas, certificados privados y credenciales de dispositivos.
 - WiFi, tokens de pairing y `device_api_key` del ESP32.
 

@@ -51,7 +51,7 @@ flowchart TB
 
     subgraph DEPLOY["7. Despliegue"]
         HOSTINGER["Hostinger<br/>frontend publico"]
-        AWS["AWS<br/>backend publico"]
+        VPS["Hostinger VPS<br/>backend publico"]
         LOCAL["Laboratorio local<br/>pruebas con ESP32 real"]
     end
 
@@ -96,7 +96,7 @@ flowchart TB
     MQTT --> OLD_LIGHTS
 
     HOSTINGER -.-> FRONTEND
-    AWS -.-> API
+    VPS -.-> API
     LOCAL -.-> FRONTEND
     LOCAL -.-> API
     LOCAL -.-> ESP32
@@ -116,7 +116,7 @@ flowchart TB
     class TRANSCRIBE,INTERPRET,RULES ai;
     class TOKEN,SKETCH,ESP32,POLLING,ACK esp;
     class MQTT,OLD_LIGHTS legacy;
-    class HOSTINGER,AWS,LOCAL deploy;
+    class HOSTINGER,VPS,LOCAL deploy;
     class L_WEB,L_BACKEND,L_AI,L_DATA,L_ESP,L_LEGACY,L_DEPLOY legend;
 
     %% Colores de flechas por tipo de flujo.

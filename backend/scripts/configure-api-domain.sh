@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 API_DOMAIN="${AFCR_API_DOMAIN:-api.afcrtecnologia.com}"
-EXPECTED_IPV4="${AFCR_API_EXPECTED_IPV4:-3.132.192.3}"
+EXPECTED_IPV4="${AFCR_API_EXPECTED_IPV4:-2.24.95.57}"
 UPSTREAM="${AFCR_API_UPSTREAM:-http://127.0.0.1:8000}"
 BACKUP_ROOT="${AFCR_DOMAIN_BACKUP_ROOT:-/var/backups/afcr-domain-migration}"
 MARKER="# Managed by AFCR domain migration"

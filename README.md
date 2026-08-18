@@ -7,8 +7,8 @@ Postgres, RLS y Storage; OpenAI es el proveedor de IA predeterminado y MQTT se
 conserva para dispositivos legacy.
 
 Este monorepo es la unica fuente de verdad y contiene el frontend, el backend,
-el firmware y la infraestructura reproducible. Los despliegues de Hostinger y
-AWS parten de `main` y se limitan a su subdirectorio correspondiente.
+el firmware y la infraestructura reproducible. Los despliegues de Hostinger
+parten de `main` y se limitan a su subdirectorio correspondiente.
 
 ## Arquitectura
 
@@ -161,8 +161,8 @@ npm run frontend:build
 npm run test:backend
 ```
 
-Para validar el codigo aun cuando los secretos productivos viven en Hostinger,
-AWS y Supabase, usa `npm run verify:source`. Este comando compila con valores
+Para validar el codigo aun cuando los secretos productivos viven en Hostinger
+y Supabase, usa `npm run verify:source`. Este comando compila con valores
 publicos de prueba, ejecuta las pruebas y no imprime credenciales reales.
 
 La prueba manual minima es:
@@ -210,11 +210,10 @@ una URL accesible desde el ESP32, no `localhost`. En produccion debe ser HTTPS.
 - Frontend: aplicación Next.js/estatica en Hostinger conectada a este
   repositorio, rama `main`, directorio raiz `./frontend`, salida `out` y las
   cuatro variables `NEXT_PUBLIC_*` del ejemplo.
-- Backend: FastAPI tras Nginx/HTTPS en una instancia AWS. `backend/.env` se crea
+- Backend: FastAPI tras Nginx/HTTPS en el VPS de Hostinger. `backend/.env` se crea
   directamente en la maquina y nunca se descarga del repositorio.
-- GitHub Actions: `.github/workflows/deploy-backend.yml` filtra archivos
-  operativos de `backend/**`, excluye Markdown, usa OIDC + AWS SSM y no
-  necesita access keys permanentes.
+- GitHub Actions: `.github/workflows/deploy-backend-vps.yml` actualiza el checkout
+  del VPS por SSH y reinicia el servicio del backend.
 - Supabase: la integracion nativa Supabase-GitHub usa working directory `.`,
   observa la rama de produccion `main`, aplica las
   migraciones nuevas y publica las Edge Functions declaradas en
@@ -244,8 +243,8 @@ gh run list --branch main --limit 5
 `preflight` permite revisar los cambios aun sin commit y valida Node, rama,
 remoto, build, pruebas, GitHub, las 10 migraciones y la Edge Function local y
 remota. `deploy:check:all` repite los controles exigiendo un worktree limpio.
-El push real activa CI y Hostinger; AWS y Supabase procesan los cambios que
-correspondan a sus rutas operativas.
+El push real activa CI, Hostinger y el despliegue del VPS cuando sus secretos y
+variables de producción están configurados.
 
 Configura una sola vez la integracion desde Supabase Dashboard:
 
@@ -262,13 +261,13 @@ navegador. No pongas `SUPABASE_ACCESS_TOKEN` ni `SUPABASE_DB_PASSWORD` en el
 repositorio o en GitHub Secrets para este flujo. El firmware ESP32 sigue
 requiriendo carga fisica por USB.
 
-Los detalles de DNS, CORS, Auth, SMTP, Vault, Edge Functions, AWS y Hostinger
+Los detalles de DNS, CORS, Auth, SMTP, Vault, Edge Functions y Hostinger
 estan en [docs/REPLICACION.md](docs/REPLICACION.md).
 
 ## Estructura
 
 ```text
-backend/                         FastAPI, pruebas y despliegue AWS
+backend/                         FastAPI, pruebas y despliegue VPS
 frontend/                        Next.js, Auth y dashboard
 firmware/esp32_pairing_portal/   Firmware Arduino/ESP32
 supabase/migrations/             Esquema, RLS, Storage y RPC

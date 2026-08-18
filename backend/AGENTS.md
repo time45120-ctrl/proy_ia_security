@@ -29,24 +29,24 @@ Backend publico:
 https://api.afcrtecnologia.com
 ```
 
-IP AWS:
+IP Hostinger VPS:
 
 ```text
-3.132.192.3
+2.24.95.57
 ```
 
 ## Estado De Trabajo Actual
 
 - El usuario valida en produccion y local segun el caso. No hacer commit, push
-  ni actualizar AWS sin autorizacion explicita.
+  ni actualizar el VPS sin autorizacion explicita.
 - `backend/.env` existe, tiene modo `600` y supera `npm run check:env`; no
-  mostrar ni versionar sus valores. El despliegue AWS conserva por separado el
-  archivo privado instalado en EC2.
+  mostrar ni versionar sus valores. El despliegue VPS conserva por separado el
+  archivo privado instalado en el servidor.
 - `backend/.venv` usa Python 3.12.13, contiene las dependencias declaradas y
   supera las 26 pruebas. El entorno Python 3.14 anterior se conserva localmente
   como respaldo ignorado por Git.
 - Produccion activa: frontend Hostinger `https://afcrtecnologia.com`,
-  backend AWS `https://api.afcrtecnologia.com` (`3.132.192.3`) y Supabase
+  backend Hostinger VPS `https://api.afcrtecnologia.com` (`2.24.95.57`) y Supabase
   `omkbowrspgbuwpifksfk`.
 - El 2026-07-27 se emitio y valido TLS para la API nueva, se cambio
   `PUBLIC_API_URL`, se dejo CORS solo para el frontend nuevo y se retiro el
@@ -55,9 +55,8 @@ IP AWS:
 - GitHub Actions usa `PUBLIC_HEALTH_URL=https://api.afcrtecnologia.com/ping`.
   `MONOREPO_BACKEND_DEPLOY_ENABLED=true`; las banderas de configuracion,
   inspeccion y retiro del dominio anterior permanecen en `false`.
-- El backend continua desplegandose exclusivamente por GitHub OIDC y AWS SSM;
-  la migracion de Supabase no modifica ese workflow. Los secretos productivos
-  permanecen en `/home/ubuntu/casa-domotica-ia/backend/.env` dentro de EC2.
+- El backend se despliega por GitHub Actions mediante SSH al VPS; los secretos
+  productivos permanecen en `/opt/casa-domotica-ia/backend/.env`.
 - Supabase usa su GitHub Integration nativa con working directory `.`, rama
   productiva `main` y `Deploy to production`; no necesita secretos Supabase en
   GitHub. El usuario confirmo que la integracion esta habilitada; se valida con
@@ -285,29 +284,21 @@ Acciones validas:
 - `ON`
 - `OFF`
 
-## Despliegue AWS Automatizado
+## Despliegue Hostinger VPS Automatizado
 
 - El workflow activo esta en la raiz
-  `.github/workflows/deploy-backend.yml`.
-- Se activa por push a `main` solo cuando cambia `backend/**` o el propio
-  workflow; tambien permite `workflow_dispatch`.
-- Usa GitHub OIDC y AWS Systems Manager, con permisos `contents: read` e
-  `id-token: write`; no almacena `.ppk` ni access keys permanentes.
-- El Environment de GitHub es `production`, restringido a `main`.
-- AWS confia en el sujeto OIDC inmutable:
-  `repo:abraham-development@260437753/casa-domotica-ia@1195824020:environment:production`.
-- En EC2 el checkout activo es `/home/ubuntu/casa-domotica-ia`, la aplicacion
-  esta en `/home/ubuntu/casa-domotica-ia/backend` y el entorno virtual en
-  `/home/ubuntu/casa-domotica-ia/backend/.venv`.
-- Se conserva temporalmente `proy-ia-backend.service`; un drop-in apunta al
-  monorepo y Nginx continua hacia `127.0.0.1:8000`.
-- El checkout anterior `/home/ubuntu/proy_ia_backend` se conserva como rollback.
-- `scripts/deploy-ec2.sh` exige `.env` privado ya instalado en EC2, ejecuta
-  sintaxis y 26 pruebas, reinicia el servicio y valida `/ping`.
-- El bootstrap y los despliegues normales fueron verificados; la ejecucion
-  automatica de la revision `0a02700` (`n.42`) termino correctamente.
-- La preparacion, variables, OIDC y rollback se documentan en
-  `backend/deploy/README.md`.
+  `.github/workflows/deploy-backend-vps.yml`.
+- Se activa por push a `main` cuando cambia `backend/**` o el propio workflow;
+  tambien permite `workflow_dispatch`.
+- Usa SSH con una clave privada almacenada en el Environment `production` de
+  GitHub. El repositorio privado debe estar clonado en el VPS mediante una
+  deploy key.
+- El checkout recomendado es `/opt/casa-domotica-ia`, la aplicacion esta en
+  `/opt/casa-domotica-ia/backend` y el entorno virtual en
+  `/opt/casa-domotica-ia/backend/.venv`.
+- `scripts/deploy-vps.sh` exige `.env` privado ya instalado en el VPS, ejecuta
+  sintaxis y 26 pruebas, reinicia `afcr-backend.service` y valida `/ping`.
+- Nginx termina TLS y reenvia hacia `127.0.0.1:8000`.
 
 ## Comandos
 
@@ -363,10 +354,10 @@ Publicacion por Git:
 3. Ejecutar `git push` a `main`; un Pull Request es opcional para cambios que
    requieran revision previa.
 4. Confirmar CI y, si cambiaron archivos operativos del backend, el despliegue
-   AWS.
+   del VPS.
 
-Un push a `main` que cambie archivos operativos de `backend/**` despliega AWS
-automaticamente. Los Markdown de `backend/` quedan excluidos del trigger.
+Un push a `main` que cambie archivos operativos de `backend/**` despliega el VPS
+automaticamente cuando el Environment `production` tiene sus secretos SSH.
 
 ## Reglas operativas
 

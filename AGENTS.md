@@ -22,7 +22,7 @@ No recrear la copia legacy anidada `proy_ia_security/`.
   `3001` si ese puerto esta ocupado).
 - Backend local de prueba debe correr en `http://localhost:8000`; para el
   ESP32 fisico debe anunciar una URL LAN accesible, no `localhost`.
-- El flujo ESP32 por HTTP(S) polling esta publicado en AWS desde el monorepo.
+- El flujo ESP32 por HTTP(S) polling esta publicado desde el VPS Hostinger.
   La ultima referencia importada del backend es `b.32` y la ultima ejecucion
   de despliegue verificada corresponde a `0a02700` (`n.42`).
 - El frontend publicado verificado corresponde a `n.43`; la marca vigente es
@@ -151,9 +151,9 @@ backend/
 ## Despliegue
 
 - Frontend publico Hostinger: `https://afcrtecnologia.com`
-- Backend publico AWS: `https://api.afcrtecnologia.com`
-- IP backend AWS: `3.132.192.3`
-- DNS: `api.afcrtecnologia.com` apunta a `3.132.192.3`.
+- Backend publico Hostinger VPS: `https://api.afcrtecnologia.com`
+- IP backend Hostinger VPS: `2.24.95.57`
+- DNS: `api.afcrtecnologia.com` apunta a `2.24.95.57`.
 - Base de datos de aplicacion: Supabase `omkbowrspgbuwpifksfk`; requiere
   variables de `backend/.env.example` en cada entorno desplegado.
 - Produccion frontend debe usar:
@@ -163,9 +163,8 @@ NEXT_PUBLIC_API_BASE_URL=https://api.afcrtecnologia.com
 ```
 
 - Hostinger despliega `frontend/` desde cada merge autorizado a `main`.
-- `.github/workflows/deploy-backend.yml` despliega AWS cuando cambian
-  archivos operativos de `backend/**` o el propio workflow; ignora
-  `backend/**/*.md` y usa OIDC, SSM y el Environment `production`.
+- `.github/workflows/deploy-backend-vps.yml` actualiza el VPS por SSH cuando
+  cambian archivos operativos de `backend/**` o el propio workflow.
 - La integracion nativa Supabase-GitHub despliega desde `main` migraciones y
   Edge Functions declaradas en `supabase/config.toml`, usando working directory
   `.` y `Deploy to production`. Se autoriza en Supabase Dashboard y no requiere
@@ -174,8 +173,7 @@ NEXT_PUBLIC_API_BASE_URL=https://api.afcrtecnologia.com
   en Supabase Auth; no se guardan en GitHub.
 - `.github/workflows/ci.yml` valida pushes a `main` y Pull Requests con
   Node 22, Python 3.12 y Gitleaks.
-- CI de `fa5c8c3` (`n.43`) y la ultima ejecucion automatica AWS de `0a02700`
-  (`n.42`) terminaron correctamente. El 2026-08-01 `/welcome/` respondio 200
+- CI de `fa5c8c3` (`n.43`) termino correctamente. El 2026-08-01 `/welcome/` respondio 200
   desde Hostinger y `GET /ping` devolvio `{"pong":true}`.
 
 El frontend publico corre por HTTPS; la API publica tambien debe estar por HTTPS
