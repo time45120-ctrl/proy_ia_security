@@ -100,6 +100,12 @@ PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "https://api.afcrtecnologia.com").r
 PAIRING_TOKEN_MINUTES = int(os.getenv("PAIRING_TOKEN_MINUTES", "60"))
 DEVICE_ONLINE_WINDOW_SECONDS = int(os.getenv("DEVICE_ONLINE_WINDOW_SECONDS", "120"))
 DEVICE_COMMAND_TTL_SECONDS = int(os.getenv("DEVICE_COMMAND_TTL_SECONDS", "300"))
+ESP32_REQUIRE_ONLINE = os.getenv("ESP32_REQUIRE_ONLINE", "true").strip().lower() in {
+    "1", "true", "yes", "on"
+}
+MQTT_ALLOW_UNREGISTERED = os.getenv("MQTT_ALLOW_UNREGISTERED", "false").strip().lower() in {
+    "1", "true", "yes", "on"
+}
 
 # --- Supabase: persistencia principal al configurar estas variables ---
 SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
@@ -1118,7 +1124,12 @@ def find_http_esp32_for_space(
     if normalized_space not in ESPACIOS_VALIDOS:
         return None
 
-    return find_latest_http_esp32(household_id, access_token)
+    device = find_latest_http_esp32(household_id, access_token)
+    if device is None:
+        return None
+    if ESP32_REQUIRE_ONLINE and device.get("status") != "online":
+        return None
+    return device
 
 
 def infer_device_space(device: dict) -> str:
@@ -3988,6 +3999,8 @@ def build_light_mqtt_preview(
     }
 
     device = find_light_device_for_space(espacio, household_id, access_token)
+    if device is None and not MQTT_ALLOW_UNREGISTERED:
+        return None, MQTT_TOPIC_LUCES
     topic = device["mqtt_topic"] if device else MQTT_TOPIC_LUCES
 
     if device:
@@ -4279,6 +4292,8 @@ def send_mqtt_luz(
         }
 
         device = find_light_device_for_space(espacio, household_id, access_token)
+        if device is None and not MQTT_ALLOW_UNREGISTERED:
+            return False, None, MQTT_TOPIC_LUCES
         topic = device["mqtt_topic"] if device else MQTT_TOPIC_LUCES
 
         if device:

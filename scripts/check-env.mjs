@@ -107,6 +107,18 @@ if (!frontend.values) {
     warn("frontend: NEXT_PUBLIC_SITE_URL no esta definida; se usara el fallback del codigo");
   }
 
+  const relayActiveLow = frontend.values
+    .get("NEXT_PUBLIC_ESP32_RELAY_ACTIVE_LOW")
+    ?.trim()
+    .toLowerCase();
+  if (!relayActiveLow) {
+    warn("frontend: NEXT_PUBLIC_ESP32_RELAY_ACTIVE_LOW no esta definida; se usara true");
+  } else if (!["true", "false"].includes(relayActiveLow)) {
+    fail("frontend: NEXT_PUBLIC_ESP32_RELAY_ACTIVE_LOW debe ser true o false");
+  } else {
+    ok("frontend: polaridad del modulo de reles configurada");
+  }
+
   const forbiddenPublicNames = [...frontend.values.keys()].filter((name) =>
     /^NEXT_PUBLIC_.*(SECRET|SERVICE_ROLE|OPENAI|PASSWORD|PRIVATE|SMTP|TOKEN)/u.test(
       name,
@@ -135,6 +147,18 @@ if (!backend.values) {
     fail("backend: configura SUPABASE_SECRET_KEY (o la legacy SERVICE_ROLE_KEY)");
   } else {
     ok("backend: clave privilegiada configurada solo en el servidor");
+  }
+
+  for (const [name, fallback] of [
+    ["ESP32_REQUIRE_ONLINE", "true"],
+    ["MQTT_ALLOW_UNREGISTERED", "false"],
+  ]) {
+    const value = (backend.values.get(name) ?? fallback).trim().toLowerCase();
+    if (!["true", "false"].includes(value)) {
+      fail(`backend: ${name} debe ser true o false`);
+    } else {
+      ok(`backend: ${name} configurada`);
+    }
   }
 
   if (

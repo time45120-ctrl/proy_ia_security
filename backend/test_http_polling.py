@@ -310,6 +310,28 @@ class HttpPollingDeviceTests(unittest.TestCase):
                 self.assertEqual(plan["delivery_preview"]["device_id"], pairing["device_id"])
                 self.assertEqual(plan["delivery_preview"]["espacio"], room)
 
+    def test_offline_esp32_is_not_offered_for_physical_execution(self):
+        pairing, _claimed = self.pair_esp32("ESP32 sin polling")
+        with api.get_db_connection() as conn:
+            conn.execute(
+                "UPDATE devices SET status = 'online', last_seen = ? WHERE device_id = ?",
+                (
+                    api.to_iso(
+                        api.utc_now()
+                        - timedelta(seconds=api.DEVICE_ONLINE_WINDOW_SECONDS + 1)
+                    ),
+                    pairing["device_id"],
+                ),
+            )
+            conn.commit()
+
+        plan = self.light_plan("sala")
+
+        self.assertFalse(plan["can_execute"])
+        self.assertIsNone(plan["delivery_preview"])
+        self.assertIsNone(plan["mqtt_preview"])
+        self.assertIn("no encuentro un ESP32", plan["respuesta"])
+
     def test_legacy_light_keeps_mqtt_delivery(self):
         pairing = api.create_pairing_token(
             api.PairingTokenRequest(name="Luz cocina", type="Luces", model="ESP32")

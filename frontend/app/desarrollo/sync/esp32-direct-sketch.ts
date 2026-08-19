@@ -2,7 +2,7 @@ export const ESP32_DIRECT_SKETCH = String.raw`/*
   AFCR ESP32 laboratory client
 
   Flujo:
-  1. Conecta 4 LEDs externos con resistencia y GND comun:
+  1. Conecta 4 canales de rele (o LEDs de prueba) con GND comun:
      - Sala: GPIO 16
      - Cocina: GPIO 17
      - Comedor: GPIO 18
@@ -35,11 +35,14 @@ String deviceApiKey;
 
 // =========================================================
 // CONFIGURACION DEL USUARIO
-// Edita solamente estas tres lineas antes de subir el sketch.
+// Edita las tres credenciales y confirma la polaridad de tu modulo de reles.
 // =========================================================
 const char* WIFI_SSID = "TU_WIFI";
 const char* WIFI_PASSWORD = "TU_PASSWORD";
 const char* PAIRING_TOKEN = "PEGA_AQUI_TU_TOKEN";
+// La mayoria de modulos de 4 reles se activan con LOW. Usa false si el tuyo
+// se activa con HIGH o si estas probando LEDs conectados de GPIO a GND.
+const bool RELAY_ACTIVE_LOW = true;
 
 // La web reemplaza esta URL por la API activa al copiar el sketch.
 const char* API_URL = "https://api.afcrtecnologia.com";
@@ -138,8 +141,8 @@ String roomLedLabel(const String& espacio) {
 
 void initializeRoomLeds() {
   for (int i = 0; i < ROOM_LED_COUNT; i++) {
+    digitalWrite(ROOM_LEDS[i].pin, RELAY_ACTIVE_LOW ? HIGH : LOW);
     pinMode(ROOM_LEDS[i].pin, OUTPUT);
-    digitalWrite(ROOM_LEDS[i].pin, LOW);
   }
 }
 
@@ -165,7 +168,10 @@ bool validateLedCommand(const String& target, const String& action, const String
 String applyLedCommand(const String& action, const String& espacio) {
   int ledPin = findRoomLedPin(espacio);
   bool turnOn = action == "turn_on";
-  digitalWrite(ledPin, turnOn ? HIGH : LOW);
+  int outputLevel = RELAY_ACTIVE_LOW
+    ? (turnOn ? LOW : HIGH)
+    : (turnOn ? HIGH : LOW);
+  digitalWrite(ledPin, outputLevel);
   return String("LED ") + roomLedLabel(espacio) + (turnOn ? " encendido" : " apagado");
 }
 
@@ -213,6 +219,7 @@ void printStartupBanner() {
   Serial.println("Serial Monitor: 115200 baudios");
   Serial.println(String("API_URL: ") + API_URL);
   Serial.println("Pines: sala=GPIO16, cocina=GPIO17, comedor=GPIO18, dormitorio=GPIO19");
+  Serial.println(String("Polaridad reles: ") + (RELAY_ACTIVE_LOW ? "ACTIVE_LOW" : "ACTIVE_HIGH"));
 }
 
 void printHeartbeat(const String& detail) {
@@ -321,6 +328,9 @@ bool claimDevice() {
 
   if (code < 200 || code >= 300) {
     Serial.println(String("Fallo claim HTTP: ") + code);
+    if (code < 0) {
+      Serial.println(String("Detalle claim: ") + HTTPClient::errorToString(code));
+    }
     http.end();
     return false;
   }
@@ -369,6 +379,12 @@ bool acknowledgeCommand(const String& commandId, const String& status, const Str
   String body;
   serializeJson(request, body);
   int code = http.POST(body);
+  if (code < 200 || code >= 300) {
+    Serial.println(String("Fallo ACK HTTP: ") + code);
+    if (code < 0) {
+      Serial.println(String("Detalle ACK: ") + HTTPClient::errorToString(code));
+    }
+  }
   http.end();
 
   return code >= 200 && code < 300;
@@ -391,6 +407,9 @@ void pollCommands() {
   int code = http.GET();
   if (code < 200 || code >= 300) {
     Serial.println(String("Fallo polling HTTP: ") + code);
+    if (code < 0) {
+      Serial.println(String("Detalle polling: ") + HTTPClient::errorToString(code));
+    }
     http.end();
     return;
   }

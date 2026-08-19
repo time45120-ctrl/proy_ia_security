@@ -113,6 +113,7 @@ Completa los marcadores con valores de tu propio proyecto. La clasificacion es:
 | `NEXT_PUBLIC_SUPABASE_URL` | Frontend | No |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Frontend | No, esta hecha para navegador |
 | `NEXT_PUBLIC_API_BASE_URL` | Frontend | No |
+| `NEXT_PUBLIC_ESP32_RELAY_ACTIVE_LOW` | Frontend local y panel Hostinger | No |
 | `SUPABASE_SECRET_KEY` | Backend | Si |
 | `OPENAI_API_KEY` | Backend | Si |
 | `MQTT_PASSWORD` | Backend | Si, cuando se usa |
@@ -121,6 +122,28 @@ Completa los marcadores con valores de tu propio proyecto. La clasificacion es:
 
 Nunca declares una clave secret, `service_role`, OpenAI, SMTP o una contrasena
 con el prefijo `NEXT_PUBLIC_`.
+
+Para un modulo comun de cuatro reles de disparo LOW configura:
+
+```text
+# frontend/.env.local
+NEXT_PUBLIC_ESP32_RELAY_ACTIVE_LOW=true
+
+# Hostinger > variables de entorno de produccion
+NEXT_PUBLIC_ESP32_RELAY_ACTIVE_LOW=true
+```
+
+El backend local y el `.env` privado del VPS deben conservar:
+
+```text
+ESP32_REQUIRE_ONLINE=true
+MQTT_ALLOW_UNREGISTERED=false
+```
+
+Estas dos variables impiden confirmar una accion fisica contra un ESP32 que no
+esta haciendo polling y evitan informar exito MQTT sin hardware legacy
+registrado. Los valores por defecto del codigo son los mismos, pero se recomienda
+declararlos explicitamente en ambos entornos.
 
 Comprueba la configuracion sin imprimir valores:
 

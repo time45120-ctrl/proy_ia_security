@@ -16,9 +16,19 @@ run_as_app_user() {
 }
 
 cd "${APP_DIR}"
-test -f app_api.py
-test -f requirements.txt
-test -f .env
+if [[ ! -f "app_api.py" ]]; then
+  echo "ERROR: No se encontró app_api.py en ${APP_DIR}" >&2
+  exit 1
+fi
+if [[ ! -f "requirements.txt" ]]; then
+  echo "ERROR: No se encontró requirements.txt en ${APP_DIR}" >&2
+  exit 1
+fi
+if [[ ! -f ".env" ]]; then
+  echo "ERROR: No se encontró el archivo .env en ${APP_DIR}." >&2
+  echo "Crea el archivo privado ${APP_DIR}/.env con modo 600 en el VPS antes de desplegar." >&2
+  exit 1
+fi
 
 if [[ ! -x "${VENV_DIR}/bin/python" ]]; then
   run_as_app_user python3 -m venv "${VENV_DIR}"

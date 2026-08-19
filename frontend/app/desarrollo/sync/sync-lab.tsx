@@ -24,11 +24,15 @@ const legacyDeviceNameOptions = [
   "Luz cochera",
 ];
 const esp32RoomPins = [
-  { space: "sala", label: "Sala", gpio: "GPIO 16" },
-  { space: "cocina", label: "Cocina", gpio: "GPIO 17" },
-  { space: "comedor", label: "Comedor", gpio: "GPIO 18" },
-  { space: "dormitorio", label: "Dormitorio", gpio: "GPIO 19" },
+  { space: "sala", label: "Sala", gpio: "GPIO 16 → IN1" },
+  { space: "cocina", label: "Cocina", gpio: "GPIO 17 → IN2" },
+  { space: "comedor", label: "Comedor", gpio: "GPIO 18 → IN3" },
+  { space: "dormitorio", label: "Dormitorio", gpio: "GPIO 19 → IN4" },
 ] as const;
+const esp32RelayActiveLow =
+  (process.env.NEXT_PUBLIC_ESP32_RELAY_ACTIVE_LOW ?? "true")
+    .trim()
+    .toLowerCase() !== "false";
 
 export function SyncLab() {
   const {
@@ -65,7 +69,11 @@ export function SyncLab() {
     deviceModel.trim().length > 0 &&
     selectedDeviceName.trim().length > 0;
   const sketchForPairing = pairingInfo
-    ? withActiveApiUrl(ESP32_DIRECT_SKETCH, pairingInfo.api_url)
+    ? withEsp32RuntimeConfiguration(
+        ESP32_DIRECT_SKETCH,
+        pairingInfo.api_url,
+        esp32RelayActiveLow,
+      )
     : ESP32_DIRECT_SKETCH;
   const isLocalLabPairing = pairingInfo
     ? isLocalLabApiUrl(pairingInfo.api_url)
@@ -285,7 +293,7 @@ export function SyncLab() {
                       mundo ESP32
                     </span>
                     <p className="flex min-h-12 items-center rounded-lg border border-[#44c7f4]/25 bg-[#44c7f4]/10 px-3 text-white">
-                      Controlador multiambiente / 4 LEDs
+                      Controlador multiambiente / modulo de 4 reles
                     </p>
                   </div>
 
@@ -314,7 +322,7 @@ export function SyncLab() {
                 <p className="rounded-lg border border-[#44c7f4]/20 bg-[#44c7f4]/10 px-3 py-3 text-sm leading-6 text-[#b7ebff]">
                   Despues de crear el enlace, copia el sketch en Arduino IDE y
                   escribe alli el SSID, la contrasena de tu WiFi y el token. Un
-                  solo ESP32 controlara los cuatro LEDs por ambiente.
+                  solo ESP32 controlara los cuatro canales de rele por ambiente.
                 </p>
               ) : null}
 
@@ -394,8 +402,8 @@ export function SyncLab() {
                 3. En el gestor de librerias instala <span className="text-white">ArduinoJson</span>.
               </li>
               <li>
-                4. Conecta los LEDs externos segun el mapa de pines y copia el
-                codigo C++ de abajo en un sketch nuevo.
+                4. Conecta IN1-IN4 del modulo de reles segun el mapa de pines y
+                copia el codigo C++ de abajo en un sketch nuevo.
               </li>
               <li>
                 5. Conecta tu ESP32 por cable USB, selecciona su puerto y pulsa
@@ -491,7 +499,8 @@ export function SyncLab() {
                 <li>La API local no abre desde tu celular: habilita el puerto 8000 de tu laptop hacia el backend.</li>
                 <li>Cambiaste de WiFi: modifica las dos lineas WiFi y vuelve a subir el sketch.</li>
                 <li>Quieres otro enlace: genera un token nuevo, pegalo en PAIRING_TOKEN y vuelve a subir.</li>
-                <li>Un LED no responde: revisa el GPIO de ese ambiente, resistencia, polaridad y GND comun.</li>
+                <li>Un rele no responde: revisa GPIO/IN, alimentacion del modulo, GND comun y polaridad ACTIVE_LOW.</li>
+                <li>Trabaja con la red electrica desconectada; la conexion de focos a tension de red debe realizarla una persona calificada.</li>
               </ul>
             </div>
           </section>
@@ -655,8 +664,9 @@ function MultiroomPinMap() {
         ))}
       </div>
       <p className="mt-3 text-xs leading-5 text-slate-400">
-        Usa LEDs externos con resistencia y GND comun. El dashboard enviara el
-        ambiente por voz y el ESP32 activara el pin correspondiente.
+        Conecta IN1-IN4 al mapa indicado y comparte GND con el ESP32. Alimenta
+        el modulo segun su ficha tecnica; el dashboard activara el canal del
+        ambiente.
       </p>
     </div>
   );
@@ -772,11 +782,20 @@ function formatDateTime(value: string) {
   });
 }
 
-function withActiveApiUrl(sketch: string, apiUrl: string) {
-  return sketch.replace(
-    'const char* API_URL = "https://api.afcrtecnologia.com";',
-    `const char* API_URL = "${apiUrl}";`,
-  );
+function withEsp32RuntimeConfiguration(
+  sketch: string,
+  apiUrl: string,
+  relayActiveLow: boolean,
+) {
+  return sketch
+    .replace(
+      'const char* API_URL = "https://api.afcrtecnologia.com";',
+      `const char* API_URL = "${apiUrl}";`,
+    )
+    .replace(
+      "const bool RELAY_ACTIVE_LOW = true;",
+      `const bool RELAY_ACTIVE_LOW = ${relayActiveLow ? "true" : "false"};`,
+    );
 }
 
 function isLocalLabApiUrl(apiUrl: string) {

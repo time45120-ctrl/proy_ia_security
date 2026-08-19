@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "backend/**"
+      - "!backend/AGENTS.md"
       - "!.github/workflows/deploy-backend-vps.yml"
       - ".github/workflows/deploy-backend-vps.yml"
   workflow_dispatch:
@@ -43,12 +44,12 @@ jobs:
           printf '%s\n' "${VPS_SSH_KEY}" > ~/.ssh/afcr_vps_key
           chmod 600 ~/.ssh/afcr_vps_key
           ssh-keyscan -H "${VPS_HOST}" >> ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
 
       - name: Pull and deploy backend on VPS
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
-          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
           VPS_APP_DIR: ${{ vars.VPS_APP_DIR || '/opt/casa-domotica-ia' }}
           BACKEND_APP_USER: ${{ vars.BACKEND_APP_USER || 'afcr' }}
           BACKEND_APP_DIR: ${{ vars.BACKEND_APP_DIR || '/opt/casa-domotica-ia/backend' }}
@@ -56,19 +57,54 @@ jobs:
           BACKEND_SERVICE_NAME: ${{ vars.BACKEND_SERVICE_NAME || 'afcr-backend.service' }}
         run: |
           set -Eeuo pipefail
-          ssh -i ~/.ssh/afcr_vps_key "${VPS_USER}@${VPS_HOST}" \
+          echo ">>> Conectando por SSH a ${VPS_USER}@${VPS_HOST}..."
+          ssh -i ~/.ssh/afcr_vps_key \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=accept-new \
+            -o IdentitiesOnly=yes \
+            -o ConnectTimeout=15 \
+            "${VPS_USER}@${VPS_HOST}" \
             "VPS_APP_DIR='${VPS_APP_DIR}' BACKEND_APP_USER='${BACKEND_APP_USER}' BACKEND_APP_DIR='${BACKEND_APP_DIR}' BACKEND_VENV_DIR='${BACKEND_VENV_DIR}' BACKEND_SERVICE_NAME='${BACKEND_SERVICE_NAME}' bash -s" <<'REMOTE'
           set -Eeuo pipefail
-          test -d "${VPS_APP_DIR}/.git"
+          echo "=== Sesion remota iniciada en VPS ==="
+          echo "Usuario SSH: $(id -un)"
+          echo "Directorio App: ${VPS_APP_DIR}"
+          echo "Usuario Servicio: ${BACKEND_APP_USER}"
+
+          if [[ ! -d "${VPS_APP_DIR}" ]]; then
+            echo "ERROR: El directorio ${VPS_APP_DIR} no existe en el VPS." >&2
+            echo "Por favor clona el repositorio en ${VPS_APP_DIR} antes del primer despliegue." >&2
+            exit 1
+          fi
+
+          if [[ ! -d "${VPS_APP_DIR}/.git" ]]; then
+            echo "ERROR: ${VPS_APP_DIR} existe pero no contiene un repositorio Git (.git no encontrado)." >&2
+            exit 1
+          fi
+
+          echo ">>> Configurando safe.directory para Git..."
+          git config --global --add safe.directory "${VPS_APP_DIR}" || true
+
+          echo ">>> Sincronizando repositorio con origin/main..."
           git -C "${VPS_APP_DIR}" fetch origin main
           git -C "${VPS_APP_DIR}" checkout main
           git -C "${VPS_APP_DIR}" merge --ff-only origin/main
+
+          echo ">>> Ejecutando script de despliegue ${BACKEND_APP_DIR}/scripts/deploy-vps.sh..."
+          if [[ ! -f "${BACKEND_APP_DIR}/scripts/deploy-vps.sh" ]]; then
+            echo "ERROR: No se encontró ${BACKEND_APP_DIR}/scripts/deploy-vps.sh" >&2
+            exit 1
+          fi
+
           BACKEND_APP_USER="${BACKEND_APP_USER}" \
           BACKEND_APP_DIR="${BACKEND_APP_DIR}" \
           BACKEND_VENV_DIR="${BACKEND_VENV_DIR}" \
           BACKEND_SERVICE_NAME="${BACKEND_SERVICE_NAME}" \
             bash "${BACKEND_APP_DIR}/scripts/deploy-vps.sh"
+
+          echo "=== Despliegue en VPS completado con éxito ==="
           REMOTE
 
       - name: Verify public API health
         run: curl --fail --silent --show-error --retry 5 --retry-delay 3 https://api.afcrtecnologia.com/ping
+
